@@ -1,0 +1,5 @@
+'vhdl_files_glob' = [
+    './fw/lib/vhdl/*.vhd',
+    './fw/lib/vhdl/*/*.vhd',
+    './fw/tb/*/*/*.vhd',
+]
