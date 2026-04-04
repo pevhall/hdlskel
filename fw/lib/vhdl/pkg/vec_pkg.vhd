@@ -7,13 +7,23 @@ use work.basic_pkg.all;
 package vec_pkg is
 
   type vec_slv_t      is array (natural range <>) of std_ulogic_vector;
+  type vec_signed_t   is array (natural range <>) of u_signed;
   type vec_unsigned_t is array (natural range <>) of u_unsigned;
 
-  type vec2_slv_t is array (natural range <>) of vec_slv_t;
+  type vec2_slv_t      is array (natural range <>) of vec_slv_t;
   type vec2_unsigned_t is array (natural range <>) of vec_unsigned_t;
+
+  subtype vec_slv4_t  is vec_slv_t(open)( 4-1 downto 0);
+  subtype vec_slv32_t is vec_slv_t(open)(32-1 downto 0);
+
+  constant VOID_INTEGER_VECTOR : integer_vector(0 to -1);
+
+  function zeros_vec_int  (len : integer) return integer_vector;
+  function zeros_vec_slv32(len : integer) return vec_slv32_t;
 
   -- properties
   function get_elem_w(vec : vec_slv_t) return natural;
+  function get_elem_w(vec : vec_signed_t) return natural;
   function get_elem_w(vec : vec_unsigned_t) return natural;
 
   -- create
@@ -24,6 +34,10 @@ package vec_pkg is
   function to_vec_slv(vec : vec_unsigned_t) return vec_slv_t;
   function to_vec_unsigned(vec : vec_slv_t) return vec_unsigned_t;
   function to_vec_unsigned(v : integer_vector; elem_w : natural) return vec_unsigned_t;
+  function to_vec_signed(vec : vec_slv_t) return vec_signed_t;
+  function to_vec_int(vec : vec_signed_t) return integer_vector;
+  function to_vec_int(vec : vec_unsigned_t) return integer_vector;
+
   function transpose(vec : vec_slv_t) return vec_slv_t;
 
   -- maths
@@ -38,12 +52,34 @@ package vec_pkg is
   function to_flat(vec : vec_slv_t) return std_ulogic_vector;
   function to_flat(vec : vec_unsigned_t) return std_ulogic_vector;
   function to_vec_slv(flat : std_ulogic_vector; slv_w : natural) return vec_slv_t;
+  function to_vec_slv32(flat : std_ulogic_vector) return vec_slv_t;
 
 end package;
 
 package body vec_pkg is
+  constant VOID_INTEGER_VECTOR : integer_vector(0 to -1) := (others => 0);
+
+  function zeros_vec_int  (len : integer) return integer_vector is
+    variable z : integer_vector(0 to len-1) := (others => 0);
+  begin
+    return z;
+  end function;
+
+  function zeros_vec_slv32(len : integer) return vec_slv32_t is
+    variable z : vec_slv32_t(0 to len-1) := (others => (others => '0'));
+  begin
+    return z;
+  end function;
 
   function get_elem_w(vec : vec_slv_t) return natural is
+  begin
+    if vec'length = 0 then
+      return 0;
+    end if;
+    return vec(vec'low)'length;
+  end function;
+
+  function get_elem_w(vec : vec_signed_t) return natural is
   begin
     if vec'length = 0 then
       return 0;
@@ -101,6 +137,37 @@ package body vec_pkg is
     return vec;
   end function;
 
+  function to_vec_signed(vec : vec_slv_t) return vec_signed_t is
+    constant ELEM_W : natural := get_elem_w(vec);
+    variable vec_signed : vec_signed_t(vec'range)(ELEM_W-1 downto 0);
+  begin
+    for ii in vec'range loop
+      vec_signed(ii) := signed(vec(ii));
+    end loop;
+    return vec_signed;
+  end function;
+
+  function to_vec_int(vec : vec_signed_t) return integer_vector is
+    constant ELEM_W : natural := get_elem_w(vec);
+    variable vec_int : integer_vector(vec'range);
+  begin
+    assert ELEM_W <= 32 severity FAILURE;
+    for ii in vec'range loop
+      vec_int(ii) := to_integer(vec(ii));
+    end loop;
+    return vec_int;
+  end function;
+
+  function to_vec_int(vec : vec_unsigned_t) return integer_vector is
+    constant ELEM_W : natural := get_elem_w(vec);
+    variable vec_int : integer_vector(vec'range);
+  begin
+    assert ELEM_W <= 31 severity FAILURE;
+    for ii in vec'range loop
+      vec_int(ii) := to_integer(vec(ii));
+    end loop;
+    return vec_int;
+  end function;
   function transpose(vec : vec_slv_t) return vec_slv_t is
     variable result : vec_slv_t(0 to get_elem_w(vec)-1)(vec'length-1 downto 0);
   begin
@@ -181,6 +248,11 @@ package body vec_pkg is
       vec(ii) := from_flat_vec(flat, ii, slv_w);
     end loop;
     return vec;
+  end function;
+
+  function to_vec_slv32(flat : std_ulogic_vector) return vec_slv_t is
+  begin
+    return to_vec_slv(flat, 32);
   end function;
 
 end package body;

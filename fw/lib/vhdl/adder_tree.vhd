@@ -84,7 +84,7 @@ begin
         if ce_i = '1' then
           pl := EX_LEN;
           for idx in 0 to LATENCY-1 loop
-            l := maximum(1, pl/OPS_PER_STEP);
+            l := ceil_div(pl, OPS_PER_STEP);
             z_vec_num_reg(idx+1)(0 to l-1) <= reduce_step(z_vec_num(idx)(0 to pl-1));
             pl := l;
           end loop;

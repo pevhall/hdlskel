@@ -1,6 +1,6 @@
 use work.ramface_rqst_local_decode_ipkg;
 package ramface_regs_rw_ipkg is
-  constant LATENCY : natural := 1 + ramface_rqst_local_decode_ipkg.LATENCY;
+  constant RAMFACE_LATENCY : natural := 1 + ramface_rqst_local_decode_ipkg.LATENCY;
 end package;
 --------------------------------------------------------------------------------
 library ieee;
@@ -23,7 +23,7 @@ entity ramface_regs_rw is
 
     REGS_LEN    : natural;
     REGS_DATA_W : natural;
-    LATENCY     : natural := ramface_regs_rw_ipkg.LATENCY
+    RAMFACE_LATENCY : natural := ramface_regs_rw_ipkg.RAMFACE_LATENCY
   );
   port (
     clk_i : in  std_ulogic;
@@ -81,7 +81,7 @@ begin
   report "Not yet implemented"
   severity FAILURE;
 
-  assert ramface_regs_rw_ipkg.LATENCY = LATENCY
+  assert ramface_regs_rw_ipkg.RAMFACE_LATENCY = RAMFACE_LATENCY
   report "Not yet implemented"
   severity FAILURE;
 

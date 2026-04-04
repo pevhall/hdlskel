@@ -19,6 +19,7 @@ package body misc_pkg is
     constant IDX_HIGH : integer := + WS(0 TO IDX)-1;
     constant IDX_LOW  : natural := + WS(0 TO IDX-1);
   begin
+      -- report "RANGE = "&integer'image(IDX_HIGH)&" DOWNTO "&integer'image(IDX_LOW)&", LEN = "&integer'image(slv_i'length)&", fr "&integer'image(flat_io'high) & " downto "&integer'image(flat_io'low);
     flat_io(IDX_HIGH downto IDX_LOW) := slv_i;
   end procedure;
 

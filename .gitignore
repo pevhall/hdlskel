@@ -1,0 +1,7 @@
+nvc
+vivado*
+!*.xpr
+build
+__pycache__
+*.pickle
+compile_order.txt

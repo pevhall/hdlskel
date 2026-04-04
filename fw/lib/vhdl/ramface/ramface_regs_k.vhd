@@ -1,6 +1,6 @@
 use work.ramface_rqst_local_decode_ipkg;
 package ramface_regs_k_ipkg is
-  constant LATENCY : natural := 1 + ramface_rqst_local_decode_ipkg.LATENCY;
+  constant RAMFACE_LATENCY : natural := 1 + ramface_rqst_local_decode_ipkg.LATENCY;
 end package;
 --------------------------------------------------------------------------------
 library ieee;
@@ -16,14 +16,14 @@ use work.ramface_regs_k_ipkg;
 
 entity ramface_regs_k is
   generic (
-    BASE_ADDR      : natural;
-    RAMFACE_ADDR_W : natural;
-    RAMFACE_DATA_W : natural;
-    RAMFACE_WREN_W : natural := RAMFACE_DATA_W/8;
+    BASE_ADDR       : natural;
+    RAMFACE_ADDR_W  : natural;
+    RAMFACE_DATA_W  : natural;
+    RAMFACE_WREN_W  : natural := RAMFACE_DATA_W/8;
+    RAMFACE_LATENCY : natural := ramface_regs_k_ipkg.RAMFACE_LATENCY;
 
     REGS_DATA_W : natural;
-    REGS_K_INT  : integer_vector;
-    LATENCY     : natural := ramface_regs_k_ipkg.LATENCY
+    REGS_K_INT  : integer_vector
   );
   port (
     clk_i : in  std_ulogic;
@@ -90,7 +90,7 @@ architecture rtl of ramface_regs_k is
 
 begin
 
-  assert ramface_regs_k_ipkg.LATENCY = LATENCY
+  assert ramface_regs_k_ipkg.RAMFACE_LATENCY = RAMFACE_LATENCY
   report "Not yet implemented"
   severity FAILURE;
 

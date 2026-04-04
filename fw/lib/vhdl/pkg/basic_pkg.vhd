@@ -14,6 +14,7 @@ package basic_pkg is
   function to_sl(l : std_ulogic_vector) return std_ulogic;
   function to_slv(l : std_ulogic) return std_ulogic_vector;
   function to_slv(num : integer; w : natural) return std_ulogic_vector;
+  function to_slv(str : string) return std_ulogic_vector;
 
   -- maths
   function ceil_div(num : integer; div : integer) return integer;
@@ -67,6 +68,19 @@ package body basic_pkg is
   function to_slv(num : integer; w : natural) return std_ulogic_vector is
   begin
     return std_ulogic_vector(to_signed(num, w));
+  end function;
+
+  function to_slv(str : string) return std_ulogic_vector is
+    variable lv : std_ulogic_vector(str'length*8-1 downto 0);
+    variable char_lv : std_ulogic_vector(7 downto 0);
+    variable lv_idx : natural := 0;
+  begin
+    for ii in str'range loop
+      char_lv := to_slv(character'pos(str(ii)),8);
+      to_flat_vec(lv, lv_idx, char_lv);
+      inc(lv_idx);
+    end loop;
+    return lv;
   end function;
 
   function ceil_div(num : integer; div : integer) return integer is
