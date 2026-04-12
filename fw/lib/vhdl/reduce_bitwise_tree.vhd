@@ -62,7 +62,7 @@ begin
     dst_data_o <= src_vec_data_i(0);
 
   else generate
-    constant OPS_PER_STEP : natural := ceil_log_base(SRC_LEN, LATENCY);
+    constant OPS_PER_STEP : natural := 1+ceil_log_base(SRC_LEN, LATENCY); --TODO: CHECK THIS!!!!!!!!!!!!!!!!!!!!!!!!!!
     constant EX_LEN   : natural := OPS_PER_STEP * LATENCY;
 
     signal z_vec_data : vec2_slv_t(0 to LATENCY)(0 to EX_LEN-1)(DATA_W-1 downto 0) := (others => (others => (others => '0')));

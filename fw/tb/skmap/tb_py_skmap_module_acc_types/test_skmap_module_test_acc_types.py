@@ -6,20 +6,14 @@ import skmap
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer
 
-async def reg_loopback(dut):
-    while True:
-        await RisingEdge(dut.clk_i)
-        for ii in range(len(dut.regs_var_wr_data_o)):
-            dut.regs_var_rd_data_i[ii].value = dut.regs_var_wr_data_o[ii].value
         
 
 @cocotb.test()
-async def test_skmap_module(dut):
+async def test_skmap_module_test_acc_types(dut):
     print('TESTING123!!!!')
 
     dut.ramface_ce_i.value = 1
     cocotb.start_soon(Clock(dut.clk_i, 1, unit="ns").start())
-    cocotb.start_soon(reg_loopback(dut))
 
     ramface_ctrl = tbskel.ramface.make_RamfaceCtrlBytes_default_ports(dut)
     await RisingEdge(dut.clk_i)

@@ -16,8 +16,14 @@ package basic_pkg is
   function to_slv(num : integer; w : natural) return std_ulogic_vector;
   function to_slv(str : string) return std_ulogic_vector;
 
+  --
+  function promote_to_sw_w(w : natural) return natural;
+
+  --range conversion
+  function rng_dt(lv : std_ulogic_vector) return std_ulogic_vector;
   -- maths
   function ceil_div(num : integer; div : integer) return integer;
+  function ceil_multiple(num : integer; multiple : integer) return integer;
   function ceil_log_base(num : natural; base : natural) return natural;
   function ceil_log2(num : natural) return natural;
   procedure inc(num_io : inout integer; inc_i : in integer := 1);
@@ -83,14 +89,42 @@ package body basic_pkg is
     return lv;
   end function;
 
+  function promote_to_sw_w(w : natural) return natural is
+  begin
+    return 2**ceil_log2(ceil_multiple(w, 8));
+  end function;
+
+  function rng_dt(lv : std_ulogic_vector) return std_ulogic_vector is
+    variable lv_dt : std_ulogic_vector(lv'length-1 downto 0) := lv;
+  begin
+    return lv_dt;
+  end function;
+
   function ceil_div(num : integer; div : integer) return integer is
   begin
     return (num + div-1) / div;
   end function;
 
+  function ceil_multiple(num : integer; multiple : integer) return integer is
+  begin
+    return ceil_div(num, multiple)*multiple;
+  end function;
+  
   function ceil_log_base(num : natural; base : natural) return natural is
     variable temp   : natural := num;
-    variable result : natural := 1;
+    variable result : natural := 0;
+  begin
+    while temp > base - 1 loop
+      result := result + 1;
+      temp   := ceil_div(temp, base);
+    end loop;
+
+    return result;
+  end function;
+
+  function floor_log_base(num : natural; base : natural) return natural is
+    variable temp   : natural := num;
+    variable result : natural := 0;
   begin
     while temp > base - 1 loop
       result := result + 1;

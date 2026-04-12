@@ -24,13 +24,13 @@ package skmap_pkg is
   constant SKMAP_LEN_VAR_W : natural := 8;
 
   subtype skmap_sync_t is std_ulogic_vector(SKMAP_SYNC_W-1 downto 0);
-  subtype skmap_ver_major_t is integer range 0 to 2**skmap_ver_major_w-1;
-  subtype skmap_ver_minor_t is integer range 0 to 2**skmap_ver_minor_w-1;
+  subtype skmap_ver_major_t is integer range 0 to 2**SKMAP_VER_MAJOR_W-1;
+  subtype skmap_ver_minor_t is integer range 0 to 2**SKMAP_VER_MINOR_W-1;
   subtype skmap_flags_t is std_ulogic_vector(SKMAP_FLAGS_W-1 downto 0);
-  subtype skmap_len_kids_t is integer range 0 to 2**SKMAP_LEN_KIDS_W-1;
-  subtype skmap_len_sub_t  is integer range 0 to 2**SKMAP_LEN_SUB_W -1;
-  subtype skmap_len_k_t is integer range 0 to 2**SKMAP_LEN_K_W-1;
-  subtype skmap_len_var_t is integer range 0 to 2**SKMAP_LEN_VAR_W-1;
+  subtype skmap_len_kids_t  is integer range 0 to 2**SKMAP_LEN_KIDS_W-1;
+  subtype skmap_len_sub_t   is integer range 0 to 2**SKMAP_LEN_SUB_W -1;
+  subtype skmap_len_k_t     is integer range 0 to 2**SKMAP_LEN_K_W-1;
+  subtype skmap_len_var_t   is integer range 0 to 2**SKMAP_LEN_VAR_W-1;
 
   constant SKMAP_SYNC : skmap_sync_t := x"CC";
   type skmap_head_t is record

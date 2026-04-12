@@ -53,6 +53,7 @@ architecture rtl of ramface_rply_combine is
 
   signal mstr_rply_flat_multi_drive : std_ulogic;
   signal mstr_rply_flat : std_ulogic_vector(FLAT_W-1 downto 0);
+  signal mstr_rply_en : std_ulogic;
 begin
 
   process(all)
@@ -76,6 +77,7 @@ begin
     src_sel_1hot_i  => wrkr_rply_vec_en,
     src_vec_data_i  => wrkr_rply_vec_flat,
     dst_sel_error_o => mstr_rply_flat_multi_drive,
+    dst_sel_or_reduce_o => mstr_rply_en,
     dst_data_o      => mstr_rply_flat
   );
 
@@ -85,6 +87,7 @@ begin
     mstr_rply_v := to_ramface_rply(mstr_rply_flat);
     mstr_rply_v.fail := mstr_rply_v.fail or mstr_rply_flat_multi_drive;
     mstr_rply_o <= mstr_rply_v;
+    mstr_rply_o.en <= mstr_rply_en;
   end process;
 
 

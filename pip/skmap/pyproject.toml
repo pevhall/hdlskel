@@ -1,0 +1,27 @@
+# [build-system]
+# requires = [""]
+# build-backend = "setuptools.build_meta"
+
+[project]
+name = "skmap"
+version = "0.1.0"
+authors = [
+  { name="Pev Hall", email="pev.hall@gmail.com" },
+]
+description = "hdlskel skmap memory mapped python library"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "rich"
+]
+
+# [project.scripts]
+# skamp = "skamp.skamp:skmap"
+
+# [project.urls]
+# Homepage = "https://github.com/pevhall/skmap"
+# Issues = "https://github.com/pevhall/skmap/issues"

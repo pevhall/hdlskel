@@ -18,6 +18,9 @@ package body skmap_module_ipkg is
   constant RAMFACE_LATENCY : natural := skmap_module_ipkg.PRIV_RPLY_COMBINE_LATENCY + PRIV_RAMFACE_REGS_LATENCY;
 
 end package body;
+
+--------------------------------------------------------------------------------
+
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -36,7 +39,6 @@ entity skmap_module is
     SKMAP_VER_MAJOR : skmap_ver_major_t;
     SKMAP_VER_MINOR : skmap_ver_minor_t;
     SKMAP_KIDS : integer_vector := VOID_INTEGER_VECTOR;
-    SKMAP_LEN_VAR : skmap_len_var_t := 0;
 
     BASE_ADDR       : natural;
     RAMFACE_ADDR_W  : natural;
@@ -70,6 +72,7 @@ architecture rtl of skmap_module is
 
   constant RAMFACE_REG_LATENCY  : natural := skmap_module_ipkg.PRIV_RAMFACE_REGS_LATENCY;
   constant RPLY_COMBINE_LATENCY : natural := RAMFACE_LATENCY - RAMFACE_REG_LATENCY;
+  constant SKMAP_LEN_VAR : skmap_len_var_t := REGS_VAR_LEN;
 
   constant REGS_DATA_W : natural := 32;
   constant SKMAP_SUBHEAD_PAD_LEN : natural := get_ramface_ram_pad(SKMAP_HEAD_LEN + SKMAP_KIDS'length + REGS_K_INT'length, REGS_DATA_W, RAMFACE_DATA_W);

@@ -90,7 +90,13 @@ begin
     begin
       if rising_edge(clk_i) then
         if ce_i = '1' then
-          dst_sel_or_reduce <= or src_sel_1hot_i;
+          -- dst_sel_or_reduce <= or src_sel_1hot_i;
+          dst_sel_or_reduce <= '0';
+          for ii in src_sel_1hot_i'range loop
+            if src_sel_1hot_i(ii) = '1' then
+              dst_sel_or_reduce <= '1';
+            end if;
+          end loop;
 
           dst_sel_error <= '0';
           dst_data <= (others => '0' );
