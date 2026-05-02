@@ -38,6 +38,9 @@ package vec_pkg is
   function to_vec_int(vec : vec_signed_t) return integer_vector;
   function to_vec_int(vec : vec_unsigned_t) return integer_vector;
 
+  -- other conversions
+  function pack_sw_ints(vec : integer_vector; constant ELEM_W : natural) return integer_vector;
+
   function transpose(vec : vec_slv_t) return vec_slv_t;
 
   -- maths
@@ -168,6 +171,34 @@ package body vec_pkg is
     end loop;
     return vec_int;
   end function;
+
+  function pack_sw_ints(vec : integer_vector; constant ELEM_W : natural) return integer_vector is
+    constant SW_ELEM_W     : natural := promote_to_sw_w(ELEM_W);
+    constant ELEM_PER_INT  : natural := 32 / SW_ELEM_W;
+    constant LEN           : natural := ceil_div(vec'length*SW_ELEM_W, 32);
+    constant SW_ELEM_SHIFT : natural := 2**SW_ELEM_W;
+    variable tmp : integer;
+    variable result : integer_vector(0 to LEN-1) := (others => 0);
+    variable idx_elem : natural := 0;
+    variable idx_len  : natural := 0;
+  begin
+    for ii in vec'range loop
+      tmp := vec(ii);
+      assert tmp <= 2**ELEM_W-1;
+      if idx_elem*SW_ELEM_W + ELEM_W = 32 and tmp >= 2**(ELEM_W-1) then
+        tmp := tmp - 2**ELEM_W;
+      end if;
+      report "vec("&to_string(ii)&") = "&integer'image(vec(ii))&", idx_len = "&integer'image(idx_len)& ", idx_elem = "&integer'image(idx_elem);
+      result(idx_len) := result(idx_len) + tmp*SW_ELEM_SHIFT**idx_elem;
+      inc(idx_elem);
+      if idx_elem = ELEM_PER_INT then
+        inc(idx_len);
+        idx_elem := 0;
+      end if;
+    end loop;
+    return result;
+  end function;
+
   function transpose(vec : vec_slv_t) return vec_slv_t is
     variable result : vec_slv_t(0 to get_elem_w(vec)-1)(vec'length-1 downto 0);
   begin

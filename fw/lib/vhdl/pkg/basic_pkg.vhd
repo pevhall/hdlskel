@@ -4,6 +4,9 @@ use ieee.numeric_std.all;
 
 package basic_pkg is
 
+  subtype uint8_t is integer range 0    to 2**8-1;
+  subtype sint8_t is integer range 2**7 to 2**7-1;
+
   function zeros(w : natural) return std_ulogic_vector;
 
   --

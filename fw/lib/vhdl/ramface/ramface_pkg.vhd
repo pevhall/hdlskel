@@ -52,10 +52,10 @@ package body ramface_pkg is
 
   function get_ramface_local_depth(RAM_LEN : natural; RAM_DATA_W : natural; RAMFACE_DATA_W : natural) return natural is
   begin
-    report "RAM_LEN = "&integer'image(RAM_LEN);
-    report "RAM_DATA_W = "&integer'image(RAM_DATA_W);
-    report "RAMFACE_DATA_W = "&integer'image(RAMFACE_DATA_W);
-    report "RESULT = "&integer'image(ceil_div(RAM_LEN*RAM_DATA_W, RAMFACE_DATA_W));
+    -- report "RAM_LEN = "&integer'image(RAM_LEN);
+    -- report "RAM_DATA_W = "&integer'image(RAM_DATA_W);
+    -- report "RAMFACE_DATA_W = "&integer'image(RAMFACE_DATA_W);
+    -- report "RESULT = "&integer'image(ceil_div(RAM_LEN*RAM_DATA_W, RAMFACE_DATA_W));
 
     return ceil_div(RAM_LEN*RAM_DATA_W, RAMFACE_DATA_W);
   end function;

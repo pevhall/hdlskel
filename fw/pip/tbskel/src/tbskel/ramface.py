@@ -98,6 +98,7 @@ class RamfaceCtrl:
                 assert not self.rply_o.fail.value
 
                 l = min(len_left, self.WREN_W-start)
+                print(f'{self.rply_o.data.value=}')
                 data_cyc = self.rply_o.data.value.to_unsigned()
                 print(f'{data_cyc=:x}, {start=}, {l=}')
                 for word_idx in range(start,start+l):

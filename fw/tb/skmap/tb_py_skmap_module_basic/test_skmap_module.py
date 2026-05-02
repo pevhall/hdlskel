@@ -6,6 +6,33 @@ import skmap
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer
 
+class ModuleUnkowen(skmap.Module):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    @classmethod
+    def name(cls) -> str:
+        return "Unkowen";
+
+    @classmethod
+    def id(cls) -> str:
+        assert False
+
+    @classmethod
+    def ver_major(cls) -> int:
+        assert False
+
+    def _init_reg_map_k(self):
+        for ii in range(self.head.len_k):
+            reg = RegK(self, f'UNKOWN_K_{ii}', SIZE_WORD*8, "Unkowen constant {ii}")
+            self._add_reg_k(reg)
+
+    def _init_reg_map_var(self):
+        for ii in range(self.head.len_var):
+            reg = Reg(self, f'UNKOWN_VAR_{ii}', SIZE_WORD*8, f"Unkowen variable {ii}", acc=Acc.na, ass=Ass.error)
+            self._add_reg_var(reg)
+
 async def reg_loopback(dut):
     while True:
         await RisingEdge(dut.clk_i)

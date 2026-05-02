@@ -62,9 +62,9 @@ entity skmap_module is
       data(RAMFACE_DATA_W -1 downto 0)
     );
 
+    regs_var_rd_data_i : in  vec_slv32_t(0 to REGS_VAR_LEN-1);
     regs_var_wr_wren_o : out vec_slv4_t (0 to REGS_VAR_LEN-1);
-    regs_var_wr_data_o : out vec_slv32_t(0 to REGS_VAR_LEN-1);
-    regs_var_rd_data_i : in  vec_slv32_t(0 to REGS_VAR_LEN-1)
+    regs_var_wr_data_o : out vec_slv32_t(0 to REGS_VAR_LEN-1)
   );
 end entity;
 
