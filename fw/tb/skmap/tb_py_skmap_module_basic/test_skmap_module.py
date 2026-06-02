@@ -42,7 +42,6 @@ async def reg_loopback(dut):
 
 @cocotb.test()
 async def test_skmap_module(dut):
-    print('TESTING123!!!!')
 
     dut.ramface_ce_i.value = 1
     cocotb.start_soon(Clock(dut.clk_i, 1, unit="ns").start())

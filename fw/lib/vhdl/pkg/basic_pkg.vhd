@@ -4,8 +4,10 @@ use ieee.numeric_std.all;
 
 package basic_pkg is
 
-  subtype uint8_t is integer range 0    to 2**8-1;
-  subtype sint8_t is integer range 2**7 to 2**7-1;
+  subtype uint8_t  is integer range 0     to 2**8-1;
+  subtype sint8_t  is integer range 2**7  to 2**7-1;
+  subtype uint16_t is integer range 0     to 2**16-1;
+  subtype sint16_t is integer range 2**15 to 2**15-1;
 
   function zeros(w : natural) return std_ulogic_vector;
 
@@ -13,11 +15,17 @@ package basic_pkg is
   function if_then_else(b : boolean; num1 : integer; num2 : integer) return integer;
 
   -- conversions
+  function to_int(b : boolean) return integer;
   function to_sl(b : boolean) return std_ulogic;
   function to_sl(l : std_ulogic_vector) return std_ulogic;
   function to_slv(l : std_ulogic) return std_ulogic_vector;
   function to_slv(num : integer; w : natural) return std_ulogic_vector;
   function to_slv(str : string) return std_ulogic_vector;
+
+  function to_uint8 (v : sint8_t)  return uint8_t;
+  function to_uint16(v : sint16_t) return uint16_t;
+  function to_sint8 (v : uint8_t)  return sint8_t;
+  function to_sint16(v : uint16_t) return sint16_t;
 
   --
   function promote_to_sw_w(w : natural) return natural;
@@ -51,6 +59,14 @@ package body basic_pkg is
       return num1;
     end if;
     return num2;
+  end function;
+
+  function to_int(b : boolean) return integer is
+  begin
+    if b then
+      return 1;
+    end if;
+    return 0;
   end function;
 
   function to_sl(b : boolean) return std_ulogic is
@@ -90,6 +106,26 @@ package body basic_pkg is
       inc(lv_idx);
     end loop;
     return lv;
+  end function;
+
+  function to_uint8 (v : sint8_t)  return uint8_t is
+  begin
+    return if_then_else( v < 0, v + 2**8, v);
+  end function;
+
+  function to_uint16(v : sint16_t) return uint16_t is
+  begin
+    return if_then_else( v < 0, v + 2**16, v);
+  end function;
+
+  function to_sint8 (v : uint8_t)  return sint8_t is
+  begin
+    return if_then_else( v >= 2**7, v - 2**8, v);
+  end function;
+
+  function to_sint16(v : uint16_t) return sint16_t is
+  begin
+    return if_then_else( v >= 2**15, v - 2**16, v);
   end function;
 
   function promote_to_sw_w(w : natural) return natural is

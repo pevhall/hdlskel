@@ -1,101 +1,15 @@
 from enum import Enum, auto, IntEnum
-from typing import Optional, Type, Literal
+from typing import Optional, Type, Literal, Union
 from abc import ABC, abstractmethod
 
-import rich
+# import rich
 from rich.table import Table
 
 from .console import console
 from .regio import Regio
 from .head import Head, SIZE_HEAD, SIZE_WORD, SYNC
-
-def ceil_log2(x : int) -> int:
-    return (x - 1).bit_length() if x > 0 else 0
-
-def ceil_div(n : int, d : int) -> int:
-    return (n + d - 1) // d
-
-def ceil_multiple(num : int, multiple : int) -> int:
-    return ceil_div(num, multiple)*multiple
-
-def promote_to_sw_w(w : int) -> int:
-    return 2**ceil_log2(ceil_multiple(w, 8))
-
-def bytearray_to_int_list(ba:bytearray, size:int, endian : Literal['little','big']='little') -> list[int]:
-    if len(ba) % size != 0:
-        raise ValueError("bytearray length must be a multiple of size")
-
-    out = []
-    for i in range(0, len(ba), size):
-        chunk = ba[i:i+size]
-        out.append(int.from_bytes(chunk, endian))
-    return out
-
-class Acc(Enum):
-    na = auto()
-    k  = auto()
-    ro = auto()
-    rc = auto()
-    rw = auto()
-    ws = auto()
-
-    def __str__(self):
-        return self.name
-
-class Ass(IntEnum):
-    none    = -1
-    passed  = 0
-    debug   = 1
-    info    = 2
-    warn    = 3
-    error   = 4
-    failure = 5
-
-    def __str__(self):
-        if self.name == 'none':
-            return '-'
-        return self.name
-
-    @property
-    def color(self)->str:
-        return {
-            Ass.none:    "white",
-            Ass.passed:  "green",
-            Ass.debug:   "cyan",
-            Ass.info:    "yellow",
-            Ass.warn:    "orange",
-            Ass.error:   "red",
-            Ass.failure: "bright_red",
-        }[self]
-
-class ValueKind(Enum):
-    uint = auto()
-    sint = auto()
-    char = auto()
-    bits = auto()
-    flag = auto()
-
-    @property
-    def char_str(self):
-        return {
-            ValueKind.bits: "x",
-            ValueKind.uint: "u",
-            ValueKind.sint: "s",
-            ValueKind.char: "c",
-            ValueKind.flag: "b",
-        }[self]
-
-class ValueType:
-    def __init__(self, kind : ValueKind, width : int):
-        assert(width >= 0)
-        self.kind = kind
-        self.width = width
-
-    def __repr__(self):
-        return f'{self.kind.char_str}{self.width}'
-
-value_type_u8 = ValueType(kind=ValueKind.uint, width=8)
-value_type_x32 = ValueType(kind=ValueKind.uint, width=8)
+from .basic_types import Acc, Ass, ValueKind, ValueType, value_type_u8, value_type_x32
+from .basic import ceil_log2, ceil_div, ceil_multiple, promote_to_sw_w, bytes_to_list_int, list_int_to_bytes, cast_uint_to_sint
 
 # class Fmt(Enum):
 #     default = auto()
@@ -118,119 +32,355 @@ class Reg:
         # self.ass    = ass
         self.desc   = desc
         # self.fmt    = fmt
-        self.value_type = value_type
         self.size   = promote_to_sw_w(value_type.width)>>3
         self.elem_size = self.size
         self.addr : Optional[int]  = None
-        self.vec_len  = 1
-
 
     def value_type_str(self) -> str:
         return f'{self.value_type}'
 
-    def value_bytearray_from_cache(self) -> bytearray:
+    def read_bytes_cached(self) -> bytes:
         assert isinstance(self.addr, int)
         return self.module.read_cache(self.addr, self.size)
 
-    def value_int_from_cache(self)  -> int:
-        b = self.value_bytearray_from_cache()
+    async def read_bytes(self) -> bytes:
+        assert isinstance(self.addr, int)
+        if self.acc == Acc.k:
+            return self.read_bytes_cached()
+        return await self.module.read_bytes(self.addr, self.size)
+
+    def _bytes_to_uint(self, b:bytes) -> int:
         value_int = int.from_bytes(b, byteorder='little')
-        print(f'{value_int=:x} = int.from_bytes({b=})')
+        if self.value_type.width != (self.size*8):
+            mask = (1<<self.value_type.width)-1
+            value_int &= mask
         return value_int
 
-    def value_rich_str(self) -> str:
-        value_int = self.value_int_from_cache()
+    def _bytes_to_sint(self, b:bytes) -> int:
+        value_int = self._bytes_to_uint(b)
+        sgn_bit = (1<<(self.value_type.width-1))
+        if value_int >= sgn_bit:
+            value_int -= sgn_bit*2
+        return value_int
+
+    def read_uint_cached(self) -> int:
+        b = self.read_bytes_cached()
+        return self._bytes_to_uint(b)
+
+    def read_sint_cached(self) -> int:
+        b = self.read_bytes_cached()
+        return self._bytes_to_sint(b)
+
+    def read_char_cached(self) -> str:
+        assert self.value_type.width == 8
+        value_uint = self.read_uint_cached()
+        return chr(value_uint)
+
+    def read_cached(self):
+        match self.value_type.kind:
+            case ValueKind.uint:
+                return self.read_uint_cached()
+            case ValueKind.sint:
+                return self.read_sint_cached()
+            case ValueKind.bits:
+                return self.read_uint_cached()
+            case ValueKind.flag:
+                return self.read_uint_cached()
+            case ValueKind.char:
+                return self.read_char_cached()
+
+    async def read_uint(self) -> int:
+        b = await self.read_bytes()
+        value_int = int.from_bytes(b, byteorder='little')
+        # print(f'{value_int=:x} = int.from_bytes({b=})')
+        return value_int
+
+    async def read_sint(self) -> int:
+        value_uint = await self.read_uint()
+        return cast_uint_to_sint(value_uint, self.value_type.width)
+
+    async def read_char(self) -> str:
+        assert self.value_type.width == 8
+        value_uint = await self.read_uint()
+        return chr(value_uint)
+
+    def read_rich_str_cached(self) -> str:
+        match self.value_type.kind:
+            case ValueKind.uint:
+                value_str = str(self.read_uint_cached())
+            case ValueKind.sint:
+                value_str = str(self.read_sint_cached())
+            case ValueKind.bits:
+                value_str = f'0x{self.read_uint_cached():0{ceil_div(self.value_type.width,8)}X}'
+            case ValueKind.flag:
+                value_str = f'0b{self.read_uint_cached():0{self.value_type.width}b}'
+            case ValueKind.char:
+                value_str = self.read_char_cached()
+
+        # print(f'{value_int=:x} = int.from_bytes({b=})')
         #TODO change to hex for bits / x
-        return str(value_int)
+        return value_str
+
+    async def write_bytes(self, b : bytes):
+        assert self.acc in (Acc.rw, Acc.ws)
+        assert isinstance(self.addr, int)
+        assert len(b) <= self.size
+        assert len(b) >= ceil_div(self.value_type.width, 8)
+        return await self.module.write_bytes(self.addr, b)
+
+    async def write_uint(self, v : int):
+        b = v.to_bytes(self.size, byteorder='little', signed=False)
+        return await self.write_bytes(b)
+
+    async def write_sint(self, v : int):
+        b = v.to_bytes(self.size, byteorder='little', signed=True)
+        return await self.write_bytes(b)
 
     def add_to_table(self, table):
-        table.add_row(str(self.addr), self.value_type_str(),  str(self.acc),  self.name, self.value_rich_str(), self.desc)
+        table.add_row(str(self.addr), self.value_type_str(),  str(self.acc),  self.name, self.read_rich_str_cached(), self.desc)
 
 class RegVec(Reg):
 
-    def __init__(self,  *args, vec_len:Optional[int]=None, **kwargs):
+    def __init__(self,  *args, **kwargs):
         super().__init__(*args, **kwargs)
-        assert(vec_len is not None)
-        self.vec_len = vec_len
-        self.size  *= vec_len
+        assert isinstance(self.value_type.vec_len, int)
+        self.elem_offset = self.size
+        self.size  *= self.value_type.vec_len
 
-    def value_vec_int_from_cache(self)  -> list[int]:
-        b = self.value_bytearray_from_cache()
-        value_vec_int = bytearray_to_int_list(b, self.elem_size)
-        # print(f'{value_int=:x} = int.from_bytes({b=})')
+    def _bytes_to_list_uint(self, b:bytes) -> list[int]:
+        value_vec_int = bytes_to_list_int(b, self.elem_offset)
+        if self.elem_size != (self.value_type.width*8):
+            mask = (1<<self.value_type.width)-1
+            for ii in range(len(value_vec_int)):
+                value_vec_int[ii] &= mask
         return value_vec_int
 
+    def _bytes_to_list_sint(self, b:bytes) -> list[int]:
+        value_vec_int = self._bytes_to_list_uint(b)
+        for ii in range(len(value_vec_int)):
+            value_vec_int[ii] = cast_uint_to_sint(value_vec_int[ii], self.elem_size)
+        return value_vec_int
+
+    def read_vec_uint_cached(self) -> list[int]:
+        b = self.read_bytes_cached()
+        return self._bytes_to_list_uint(b)
+
+    def read_vec_sint_cached(self) -> list[int]:
+        b = self.read_bytes_cached()
+        return self._bytes_to_list_sint(b)
+
+    async def read_vec_uint(self) -> list[int]:
+        b = self.read_bytes_cached()
+        return self._bytes_to_list_uint(b)
+
+    async def read_vec_sint(self) -> list[int]:
+        b = await self.read_bytes()
+        return self._bytes_to_list_sint(b)
+
+    def read_idx_bytes_cached(self, idx : int) -> bytes:
+        assert isinstance(self.addr, int)
+        return self.module.read_cache(self.addr+idx*self.elem_offset, self.elem_size)
+
+    async def read_idx_bytes(self, idx : int) -> bytes:
+        assert isinstance(self.addr, int)
+        if self.acc == Acc.k:
+            return self.read_idx_bytes_cached(idx)
+        return await self.module.read_bytes(self.addr+idx*self.elem_offset, self.elem_size)
+
+    async def write_idx_bytes(self, idx : int, b : bytes):
+        assert self.acc in (Acc.rw, Acc.ws)
+        assert isinstance(self.addr, int)
+        assert len(b) <= self.elem_size
+        assert len(b) >= ceil_div(self.value_type.width, 8)
+        return await self.module.write_bytes(self.addr+idx*self.elem_offset, b)
+
+    def read_idx_uint_cached(self, idx : int) -> int:
+        b = self.read_idx_bytes_cached(idx)
+        return self._bytes_to_uint(b)
+
+    def read_idx_sint_cached(self, idx : int) -> int:
+        b = self.read_idx_bytes_cached(idx)
+        return self._bytes_to_sint(b)
+
+    async def read_idx_uint(self, idx : int) -> int:
+        b = await self.read_idx_bytes(idx)
+        return self._bytes_to_uint(b)
+
+    async def read_idx_sint(self, idx : int) -> int:
+        b = await self.read_idx_bytes(idx)
+        return self._bytes_to_sint(b)
+
+    async def write_idx_uint(self, idx : int, val : int):
+        b = val.to_bytes(self.elem_size, byteorder='little', signed=False)
+        await self.write_idx_bytes(idx, b)
+
+    async def write_idx_sint(self, idx : int, val : int):
+        b = val.to_bytes(self.elem_size, byteorder='little', signed=True)
+        await self.write_idx_bytes(idx, b)
+
+    def _vec_uint_to_str(self, value_vec_uint) -> str:
+        assert self.elem_size==8
+        assert self.elem_offset==8
+        value_str = ''.join([chr(uint) for uint in value_vec_uint])
+        return value_str
+
+    def read_str_cached(self)  -> str:
+        value_vec_uint = self.read_vec_uint_cached()
+        return self._vec_uint_to_str(value_vec_uint)
+
+    async def read_str(self)  -> str:
+        value_vec_uint = await self.read_vec_uint()
+        return self._vec_uint_to_str(value_vec_uint)
+
+    async def write_vec_uint(self, value_vec_uint : list[int]):
+        b = list_int_to_bytes(value_vec_uint, self.elem_size, endian='little', signed=False)
+        await self.write_bytes(b)
+
+    async def write_vec_sint(self, value_vec_uint : list[int]):
+        b = list_int_to_bytes(value_vec_uint, self.elem_size, endian='little', signed=True)
+        await self.write_bytes(b)
+
     def value_type_str(self) -> str:
-        return f'{super().value_type_str()}[{self.vec_len}]'
+        return f'{super().value_type_str()}[{self.value_type.vec_len}]'
 
-    def value_rich_str(self) -> str:
+    def read_rich_str_cached(self) -> str:
         # assert self.fmt == Fmt.hex
-        value_vec_int = self.value_vec_int_from_cache()
+        value_vec_int = self.read_vec_uint_cached()
         return str(value_vec_int)
-
 
 class RegK(Reg):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs, acc = Acc.k) #, ass = Ass.none)
 
-    def value_int(self)  -> int:
-        return self.value_int_from_cache()
+    async def read_int(self)  -> int:
+        return self.read_uint_cached()
 
 class RegVecK(RegVec):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs, acc = Acc.k) #, ass = Ass.none)
 
-    def value_vec_int(self)  -> int:
-        return self.value_int_from_cache()
+    async def read_int(self)  -> int:
+        return self.read_uint_cached()
 
 class RFlag:
-    def __init__(self, name : str, ass : Ass, desc : str):
+    def __init__(self, name : str, bit : int, ass : Ass, desc : str, vec_len:Optional[int]=None):
         self.name = name
+        self.bit  = bit
         self.ass  = ass
         self.desc = desc
+        self.vec_len = vec_len
 
-    def ass_check(self, v : bool) -> Ass:
+    def assign(self, reg_flags : 'RegFlags'):
+        self.reg_flags = reg_flags
+
+    def _ass_check(self, v : Union[list[bool], bool]) -> Ass:
         if self.ass == Ass.none:
             return Ass.none
+        if isinstance(v, (list, tuple)):
+            v = any(v)
         if not v:
             return Ass.passed
         return self.ass
 
-    def value_rich_str(self, v : bool):
-        if self.ass == Ass.none:
-            return f'{v}'
-        ass_checked = self.ass_check(v)
-        return to_rich_str(f'{self.ass}: {v}', ass_checked.color)
+    def _value_rich_str(self):
+        if self.vec_len is None:
+            v = self.read_bool_cached()
+            ass_checked = self._ass_check(v)
+            if self.ass == Ass.none:
+                return f'{v}'
+            return to_rich_str(f'{self.ass}: {v}', ass_checked.color)
 
+        lv = self.read_list_bool_cached()
+        ass_checked = self._ass_check(lv)
+        s = ''
+        if self.ass != Ass.none:
+           s += to_rich_str(f'{self.ass}: ', ass_checked.color) 
+        s = '0b'
+        for v in lv:
+            v = str(int(v))
+            s += to_rich_str(v, ass_checked.color) 
+        return s
+
+    async def read_bool(self) -> bool:
+        assert self.vec_len is None or self.vec_len == 1
+        return (await self.reg_flags.read_uint() & (1<<self.bit)) != 0
+
+    def read_bool_cached(self) -> bool:
+        assert self.vec_len is None or self.vec_len == 1
+        return (self.reg_flags.read_uint_cached() & (1<<self.bit)) != 0
+
+    async def read_list_bool(self) -> list[bool]:
+        assert self.vec_len is not None
+        value_list_bool = []
+        value_uint = await self.reg_flags.read_uint()
+        for ii in range(self.vec_len):
+            value_list_bool.append(value_uint & ((ii+1)<<self.bit) != 0)
+        return value_list_bool
+
+    def read_list_bool_cached(self) -> list[bool]:
+        assert self.vec_len is not None
+        value_list_bool = []
+        value_uint =  self.reg_flags.read_uint_cached()
+        for ii in range(self.vec_len):
+            value_list_bool.append(value_uint & ((ii+1)<<self.bit) != 0)
+        return value_list_bool
+
+    async def ass_check(self) -> Ass:
+        return self._ass_check(await self.read_bool())
+
+    def ass_check_cached(self) -> Ass:
+        return self._ass_check(self.read_bool_cached())
+
+class RFlagK(RFlag):
+
+    def __init__(self,  *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    async def read_bool(self) -> bool:
+        return self.read_bool_cached()
+
+    async def ass_check(self) -> Ass:
+        return self.ass_check_cached()
 
 class RegFlags(Reg):
 
-    def __init__(self, *args, width : int, flags: dict[int, RFlag], **kwargs):
+    def __init__(self, *args, width : int, flags: list[RFlag], **kwargs):
         # assert 'value_type' not in kwargs
         # kwargs['value_type'] = ValueType(kind=ValueKind.flag, width=width)
         super().__init__(*args, value_type=ValueType(kind=ValueKind.flag, width=width), **kwargs) #, ass = Ass.none)
         self.flags = flags
+        self.bit_flags = {}
+        self.name_flags = {}
+        for f in flags:
+            f.assign(self)
+            self.bit_flags[f.bit] = f
+            self.name_flags[f.name] = f
 
     def add_to_table(self, table):
         Reg.add_to_table(self, table)
-        value_vec_int = self.value_int_from_cache()
-        for b, f in self.flags.items():
-            v = bool((value_vec_int >> b) & 1)
-            table.add_row('-', 'b',  f'{b}',  f.name, f.value_rich_str(v), f.desc)
+        # value_int = self.read_uint_cached()
+        for f in self.flags:
+            # b = f.bit
+            # v = bool((value_int >> b) & 1)
+            table.add_row('-', 'b',  f'{f.bit}',  f.name, f._value_rich_str(), f.desc)
 
-        table.add_row(str(self.addr), self.value_type_str(),  str(self.acc),  self.name, self.value_rich_str(), self.desc)
+        table.add_row(str(self.addr), self.value_type_str(),  str(self.acc),  self.name, self.read_rich_str_cached(), self.desc)
 
     def ass_check(self) -> Ass:
         result : Ass = Ass.none
-        value_vec_int = self.value_int_from_cache()
-        for b, f in self.flags.items():
-            v = bool((value_vec_int >> b) & 1)
-            ass = f.ass_check(v)
+        value_int = self.read_uint_cached()
+        for f in self.flags:
+            v = bool((value_int >> f.bit) & 1)
+            ass = f._ass_check(v)
             if ass > result:
                 result = ass
         return Ass(result)
 
+class RegFlagsK(RegFlags):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, acc = Acc.k, **kwargs) #, ass = Ass.none)
 
+RegKTypes = Union[RegK, RegFlagsK]
 class Module(ABC):
 
     def __init__(self, regio : Regio, addr : int, module_head : Head, module_data : bytearray):
@@ -239,9 +389,9 @@ class Module(ABC):
         self.head      = module_head
         self.cache     = module_data
         self.kids      = [0] * self.head.len_k
-        self.arr_reg_k   : list[RegK] = []
+        self.arr_reg_k   : list[RegKTypes] = []
         self.arr_reg_var : list[Reg]  = []
-        self.map_reg_k   : dict[str, RegK] = {}
+        self.map_reg_k   : dict[str, RegKTypes] = {}
         self.map_reg_var : dict[str, Reg]  = {}
         self.use_cache = True
         self.byte_align = 1
@@ -274,13 +424,13 @@ class Module(ABC):
     def _cache_addr(self, addr:int) -> int:
         return addr - self.base_addr
 
-    def read_cache(self, addr:int, size : int) -> bytearray:
+    def read_cache(self, addr:int, size : int) -> bytes:
         cache_addr = self._cache_addr(addr)
         ba = self.cache[cache_addr:cache_addr + size]
-        print(f'{ba=}, {addr=}, {cache_addr=}, {size=}')
-        return ba
+        # print(f'{ba=}, {addr=}, {cache_addr=}, {size=}')
+        return bytes(ba)
 
-    async def read(self, addr:int, size : int) -> bytearray:
+    async def read_bytes(self, addr:int, size : int) -> bytes:
         if self.use_cache:
             return self.read_cache(addr, size)
         else:
@@ -288,11 +438,17 @@ class Module(ABC):
             b = await self.regio.read(addr, size)
             self.cache[cache_addr:cache_addr + size] = b
             return b
+
+    async def write_bytes(self, addr:int, b : bytes):
+        cache_addr = self._cache_addr(addr)
+        await self.regio.write(addr, b)
+        self.cache[cache_addr:cache_addr + len(b)] = b
+
     def _byte_idx_add_reg(self, reg):
         print(f'{reg.size=}')
         self.byte_idx += reg.size
 
-    def _add_reg_k(self, reg : RegK):
+    def _add_reg_k(self, reg : RegKTypes):
         reg.addr = self.byte_idx + self.base_addr
         self.arr_reg_k.append(reg)
         self.map_reg_k[reg.name] = reg
@@ -344,19 +500,15 @@ class Module(ABC):
 
         for reg in self.arr_reg_k:
             reg.add_to_table(table)
-            # table.add_row(str(reg.addr), reg.value_type_str(),  str(reg.acc),  reg.name, reg.value_rich_str(), reg.desc)
+
         for reg in self.arr_reg_var:
             reg.add_to_table(table)
-            # table.add_row(str(reg.addr), reg.value_type_str(),  str(reg.acc),  reg.name, reg.value_rich_str(), reg.desc)
-            # table.add_row(str(reg.addr), reg.vec_len_str(), str(reg.width), str(reg.acc), reg.ass_rich_str(), reg.name, reg.value_rich_str(), reg.desc)
-
 
         return table
 
     def reg_map_print(self) :
         table = self.reg_map_table()
         console.print(table)
-
 
 class ModuleUnkowen(Module):
 
@@ -377,7 +529,7 @@ class ModuleUnkowen(Module):
 
     def _init_reg_map_k(self):
         for ii in range(self.head.len_k):
-            reg = RegK(self, name=f'UNKOWN_K_{ii}', value_type=value_type_x32, desc="Unkowen constant {ii}")
+            reg = RegK(self, name=f'UNKOWN_K_{ii}', value_type=value_type_x32, desc=f"Unkowen constant {ii}")
             self._add_reg_k(reg)
 
     def _init_reg_map_var(self):

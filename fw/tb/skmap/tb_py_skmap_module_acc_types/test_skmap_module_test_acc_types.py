@@ -47,7 +47,6 @@ class ModuleTestAcc(skmap.Module):
         self.REGS_RC_W = reg.value_int()
 
     def _init_reg_map_var(self):
-        print("_init_reg_map_var called");
         print(self.REGS_RW_LEN)
         # reg = skmap.RegVec(self, name=f'regs_rw', length=self.REGS_RW_LEN, width=self.REGS_RW_ELEM_W, desc=f"Read write regsiters", acc=skmap.Acc.na, ass=skmap.Ass.error)
         reg = skmap.RegVec(self, vec_len=self.REGS_RO_LEN, name=f'regs_ro', value_type=skmap.ValueType(kind=skmap.ValueKind.bits, width=self.REGS_RO_ELEM_W), desc=f"Read only regsiters", acc=skmap.Acc.ro)
@@ -68,7 +67,6 @@ skmap.register_Module(ModuleTestAcc)
 
 @cocotb.test()
 async def test_skmap_module_test_acc_types(dut):
-    print('TESTING123!!!!')
 
     dut.ramface_ce_i.value = 1
     cocotb.start_soon(Clock(dut.clk_i, 1, unit="ns").start())
