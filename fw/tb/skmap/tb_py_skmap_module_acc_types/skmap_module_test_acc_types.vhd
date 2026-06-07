@@ -105,7 +105,7 @@ begin
     skmap_map_acc_rw(regs_var_rd_data, regs_var_wr_data, byte_idx, regs_rw);
     skmap_map_acc_ws(regs_var_rd_data, regs_var_wr_data, regs_var_wr_wren, byte_idx, regs_ws, regs_ws_strb);
     if rising_edge(clk_i) then
-      skmap_map_acc_rc(regs_var_rd_data, regs_var_wr_wren, byte_idx, reg_rc_set);
+      skmap_map_acc_rc_flags(regs_var_rd_data, regs_var_wr_wren, byte_idx, reg_rc_set);
     else
       skmap_map_acc_byte_inc(byte_idx, reg_rc_set'length);
     end if;

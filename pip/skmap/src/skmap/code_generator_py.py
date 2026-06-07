@@ -7,7 +7,7 @@ from typing import Union
 
 from code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ResolvableFunction
 # from basic import promote_to_sw_w, ceil_div
-from basic_skmap import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
+from basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
 
 def name_to_reg_k(name : str) -> str:
     return "self.k_"+name
@@ -120,7 +120,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     is_vec_int = reg.t.vec_len != None and reg.t.kind in (ValueKind.uint, ValueKind.sint, ValueKind.bits)
     s += f'    @property\n'
     s += f'    def {reg.name}_value_type(self) -> skmap.ValueType:\n'
-    s += f'        return {reg_name}.value_type\n\n'
+    s += f'        return {value_type_str(reg.t)}\n\n'
 
     # s += f'    @property\n'
     # s += f'    def {reg.name}_value_kind(self) -> skmap.ValueKind:\n'
@@ -183,7 +183,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
                 s += f'        return await {reg_name}.{func_read_idx}(idx)\n\n'
                 s += f'    async def {reg.name}_write_idx(self, idx : int, val : int):\n'
                 s += f'        await {reg_name}.{func_write_idx}(idx, val)\n\n'
-        case Acc.ws:
+        case Acc.wt:
             s += f'    def {reg.name}_cached(self) -> {t_str}:\n'
             s += f'        return {reg_name}.{func_read_cached}()\n\n'
             s += f'    async def {reg.name}_read(self) -> {t_str}:\n'
@@ -218,6 +218,11 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
             func_read_cached = 'read_list_bool_cached'
             func_read        = 'read_list_bool'
             func_write       = 'write_list_bool'
+
+            s += f'    @property\n'
+            s += f'    def {f.name}_len(self) -> int:\n'
+            s += f'      return {py_resolve_str(f.vec_len)}\n\n'
+
         else:
             t_str = 'bool'
             func_read_cached = 'read_bool_cached'
@@ -240,7 +245,7 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
                 s += f'        return await {f_name}.{func_read}()\n\n'
                 s += f'    async def {f.name}_write(self, value : {t_str}):\n'
                 s += f'        await {f_name}.{func_write}(value)\n\n'
-            case Acc.ws:
+            case Acc.wt:
                 s += f'    def {f.name}_cached(self) -> {t_str}:\n'
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
                 s += f'    async def {f.name}_read(self) -> {t_str}:\n'
@@ -249,11 +254,11 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
                 s += f'        await {f_name}.{func_write}(value)\n\n'
             case _:
                 assert False
-        if reg.acc in ( Acc.ro, Acc.rw, Acc.ws ):
+        if reg.acc in ( Acc.ro, Acc.rw, Acc.wt ):
             s += f'    async def {reg.name}_update_cache(self) -> {t_str}:\n'
             s += f'        _ = await {f_name}.read_bytes() \n\n'
 
-        if reg.acc == Acc.ws:
+        if reg.acc == Acc.wt:
             reg_name = reg_to_py_inst_str(reg)
             func_write      = write_value_function_str(reg.t)
             s += f'    def {reg.name}_clear(self) -> {t_str}:\n'

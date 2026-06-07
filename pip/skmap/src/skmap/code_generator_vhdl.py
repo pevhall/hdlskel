@@ -7,10 +7,13 @@ from typing import Literal
 
 from code_generator_parse_recipe import parse_recipe_file, RecipeK, RecipeVar, RecipeReg
 from basic import promote_to_sw_w, ceil_div
-from basic_skmap import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR, align_addr_width
+from basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
 
-def port_name_strb(port_name : str):
-    return port_name[:-2]+"_strb_o"
+def port_name_trig(port_name : str):
+    return port_name[:-2]+"_trigger_o"
+
+def port_name_clear(port_name : str):
+    return port_name[:-2]+"_clear_o"
 
 def port_name(name : str, direction : Literal['in', 'out']):
     port_ext_in = "_i"
@@ -177,7 +180,7 @@ entity {recipe.name} is
                 for jj, f in enumerate(varv.flags):
                     f.name_ext = port_name(f.name, varv.direction)
                     if f.is_vec:
-                        rng = f"({varv.t.vec_len}-1 downto 0)"
+                        rng = f"({f.vec_len}-1 downto 0)"
                         vhdl_t = f'std_logic_vector{rng}'
                     else:
                         vhdl_t = f'std_logic'
@@ -186,15 +189,19 @@ entity {recipe.name} is
             else:
                 varv.name_ext = port_name(varv.name, varv.direction)
                 varv.is_var = False
-                if varv.acc == Acc.ws:
+                if varv.acc in (Acc.wt, Acc.rc):
                     # print(f'{varv.t=}')
                     if varv.t.is_vec:
                         rng = f"({varv.t.vec_len}-1 downto 0)"
                         vhdl_t = f'std_logic_vector{rng}'
                     else:
                         vhdl_t = f'std_logic'
-                    name_strb = port_name_strb(varv.name_ext)
-                    vhdl_f.write(f'\n    {name_strb} : out {vhdl_t};')
+                    if varv.acc == Acc.wt:
+                        name_port = port_name_trig(varv.name_ext)
+                    else:
+                        assert varv.acc == Acc.rc
+                        name_port = port_name_clear(varv.name_ext)
+                    vhdl_f.write(f'\n    {name_port} : out {vhdl_t};')
 
                 vhdl_t = var_type_to_vhdl_str(varv.t)
                 vhdl_f.write(f'\n    {varv.name_ext} : {varv.direction} {vhdl_t}')
@@ -347,18 +354,22 @@ begin
                 case Acc.ro:
                     vhdl_f.write(f'    skmap_map_acc_ro(regs_var_rd_data, byte_idx_v, {varv.name_ext}, {align_str});\n')
                 case Acc.rw:
-                    vhdl_f.write(f'    skmap_map_acc_rw(regs_var_rd_data, regs_var_wr_data, byte_idx_v, {varv.name_ext}, {align_str});\n')
+                        vhdl_f.write(f'    skmap_map_acc_rw(regs_var_rd_data, regs_var_wr_data, byte_idx_v, {varv.name_ext}, {align_str});\n')
                 case Acc.rw:
                     vhdl_f.write(f'    skmap_map_acc_rw(regs_var_rd_data, regs_var_wr_data, byte_idx_v, {varv.name_ext}, {align_str});\n')
-                case Acc.ws:
-                    name_strb = port_name_strb(varv.name_ext)
-                    vhdl_f.write(f'    skmap_map_acc_ws(regs_var_rd_data, regs_var_wr_data, regs_var_wr_wren, byte_idx_v, {varv.name_ext}, {name_strb}, {align_str});\n');
+                case Acc.wt:
+                    name_trig = port_name_trig(varv.name_ext)
+                    vhdl_f.write(f'    skmap_map_acc_wt(regs_var_rd_data, regs_var_wr_data, regs_var_wr_wren, byte_idx_v, {varv.name_ext}, {name_trig}, {align_str});\n');
                 case Acc.rc:
-                    vhdl_f.write(f"""    if rising_edge(clk_i) then
-      skmap_map_acc_rc(regs_var_rd_data, regs_var_wr_wren, byte_idx_v, {varv.name_ext}, {align_str});
+                    if varv.t.kind == ValueKind.flag:
+                        vhdl_f.write(f"""    if rising_edge(clk_i) then
+      skmap_map_acc_rc_flags(regs_var_rd_data, regs_var_wr_wren, byte_idx_v, {varv.name_ext}, {align_str});
     else
       skmap_map_acc_byte_inc(byte_idx_v, {varv.name_ext}'length, {align_str});
     end if;\n""");
+                    else:
+                        name_clear = port_name_clear(varv.name_ext)
+                        vhdl_f.write(f'    skmap_map_acc_rc(regs_var_rd_data, regs_var_wr_wren, byte_idx_v, {varv.name_ext}, {name_clear}, {align_str});\n');
                 case _:
                     print(f'ERROR {varv.acc=}')
                     assert(False)

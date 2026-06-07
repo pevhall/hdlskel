@@ -21,7 +21,7 @@ class Head:
     len_var   : int
 
 
-    def __init__(self, data : bytearray):
+    def __init__(self, data : bytes):
         self.id        = data[0:SIZE_ID].decode()
         ii = SIZE_ID;
         self.sync      = data[ii]; ii += 1

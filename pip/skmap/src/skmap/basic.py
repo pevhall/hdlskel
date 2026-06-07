@@ -12,6 +12,14 @@ def ceil_multiple(num : int, multiple : int) -> int:
 def promote_to_sw_w(w : int) -> int:
     return 2**ceil_log2(ceil_multiple(w, 8))
 
+# def align_addr_width(addr : int, width : int):
+#     sw_width = promote_to_sw_w(width)
+#     sw_width_bytes = sw_width//8
+#     # align = min(SKMAP_WORD_BYTES, sw_width//8)
+#     addr = ceil_multiple(addr, sw_width)
+#     return addr, sw_width_bytes
+
+
 def bytes_to_list_int(b:bytes, int_bytes:int, endian : Literal['little','big']='little', signed:bool=False) -> list[int]:
     if len(b) % int_bytes != 0:
         raise ValueError("bytearray length must be a multiple of int_bytes")

@@ -11,7 +11,7 @@ from enum import Enum, auto
 from typing import Union, Optional
 
 from basic import ceil_div, ceil_log2 #promote_to_sw_w, ceil_multiple
-from basic_skmap import Acc, Ass, ValueKind, ValueType, SKMAP_ID_LEN, align_addr_width
+from basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_ID_LEN
 
 dict_char_to_value_kind = {}
 for vk in ValueKind:
@@ -300,8 +300,6 @@ class Recipe:
     @property
     def ver_str(self) -> str:
         return f'v{self.ver_major}.{self.ver_minor}'
-
-
 
 def parse_recipe_file(file : Path) -> Recipe:
     with open(file, "rb") as toml_f:

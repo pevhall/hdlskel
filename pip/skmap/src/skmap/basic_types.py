@@ -5,7 +5,7 @@ SKMAP_VER_MAJOR = 0
 SKMAP_VER_MINOR = 1
 SKMAP_VER_PATCH = 0
 
-SKAMP_VER_STR = f'v{SKMAP_VER_MAJOR}.{SKMAP_VER_MINOR}.{SKMAP_VER_PATCH}'
+SKMAP_VER_STR = f'v{SKMAP_VER_MAJOR}.{SKMAP_VER_MINOR}.{SKMAP_VER_PATCH}'
 SKMAP_WORD_BYTES = 4
 SKMAP_WORD_BITS =SKMAP_WORD_BYTES*8
 
@@ -17,7 +17,7 @@ class Acc(Enum):
     ro = auto()
     rc = auto()
     rw = auto()
-    ws = auto()
+    wt = auto()
 
     def __str__(self):
         return self.name
@@ -30,7 +30,7 @@ class Acc(Enum):
             Acc.ro: False,
             Acc.rc: False,
             Acc.rw: True,
-            Acc.ws: True,
+            Acc.wt: True,
         }[self]
 
 class Ass(IntEnum):
@@ -40,23 +40,26 @@ class Ass(IntEnum):
     info    = 2
     warn    = 3
     error   = 4
-    failure = 5
+    fatal = 5
 
     def __str__(self):
         if self.name == 'none':
             return '-'
         return self.name
 
+    def str(self) -> str:
+        return self.name
+
     @property
     def color(self)->str:
         return {
-            Ass.none:    "white",
-            Ass.passed:  "green",
-            Ass.debug:   "cyan",
-            Ass.info:    "yellow",
-            Ass.warn:    "orange",
-            Ass.error:   "red",
-            Ass.failure: "bright_red",
+            Ass.none:   "white",
+            Ass.passed: "green",
+            Ass.debug:  "turquoise4",
+            Ass.info:   "cornflower_blue",
+            Ass.warn:   "orange1",
+            Ass.error:  "orange_red1",
+            Ass.fatal:  "red3",
         }[self]
 
 class ValueKind(Enum):

@@ -105,6 +105,7 @@ begin
 
   process(clk_i)
     variable addr_v : natural;
+    variable wr_data_v : std_ulogic_vector(RAMFACE_DATA_W-1 downto 0);
   begin
     if rising_edge(clk_i) then
       if ramface_ce_i = '1' then
@@ -118,7 +119,13 @@ begin
         regs_ramface_wr_wren <= (others => (others => '0'));
         if local_ramface_rqst_en_wr = '1' then
           regs_ramface_wr_wren(addr_v) <= local_ramface_rqst.wren;
-          regs_ramface_wr_data(addr_v) <= local_ramface_rqst.data;
+          wr_data_v := regs_ramface_wr_data(addr_v);
+          for ii in 0 to RAMFACE_WREN_W-1 loop
+            if local_ramface_rqst.wren(ii) = '1' then
+              to_flat_vec(wr_data_v, ii, from_flat_vec(local_ramface_rqst.data, ii, WORD_W));
+            end if;
+          end loop;
+          regs_ramface_wr_data(addr_v) <= wr_data_v;
         end if;
 
       end if;

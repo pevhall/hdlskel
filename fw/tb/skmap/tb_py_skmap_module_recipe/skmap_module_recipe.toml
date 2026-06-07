@@ -10,7 +10,7 @@ k = [
   {name = "RW_LEN",   t = "u8", desc = "RW length"},
   {name = "RW_VAL_W", t = "u8", desc = "RW value width"},
   {name = "FLAGSK",    t = "b", desc = "K Flags", flags = [
-     { name = "FLAGK0", desc = "FlagK 0", vec_len = "{RO_VAL_W}"},
+     # { name = "FLAGK0", desc = "FlagK 0", vec_len = "{RO_VAL_W}"},
      { name = "FLAGK1", ass = "debug",   desc = "FlagK 1"},
      { name = "FLAGK2", ass = "warn",   desc = "FlagK 2"},
   ]}
@@ -19,12 +19,14 @@ k = [
 var = [
   {name = "regs_ro",  t = "x{RO_VAL_W}[{RO_LEN}]", acc = "ro", desc = "RO registers"},
   {name = "regs_rw",  t = "x{RW_VAL_W}[{RW_LEN}]", acc = "rw", desc = "RW registers"},
-  {name = "regs_ws",  t = "x5", acc = "ws", desc = "WS registers"},
-  {name = "flags",    t = "b", acc = "rc", desc = "WS registers", flags = [
-     { name = "flag0", ass = "debug",   desc = "Flag 0"},
-     { name = "flag1", ass = "info",    desc = "Flag 1"},
-     { name = "flag2", ass = "warn",    desc = "Flag 2"},
-     { name = "flag3", ass = "error",   desc = "Flag 3"},
-     { name = "flag4", ass = "failure", desc = "Flag 4"},
+  {name = "regs_wt",  t = "x5", acc = "wt", desc = "WT registers"},
+  {name = "regs_rc",  t = "x{RW_VAL_W}[{RW_LEN}]", acc = "rc", desc = "RC registers"},
+  {name = "flags",    t = "b", acc = "rc", desc = "RC flags", flags = [
+     { name = "flag0", ass = "debug", desc = "Flag 0"},
+     { name = "flag1", ass = "info",  desc = "Flag 1"},
+     { name = "flag2", ass = "warn",  desc = "Flag 2"},
+     { name = "flag3", ass = "error", desc = "Flag 3"},
+     { name = "flag4", ass = "fatal", desc = "Flag 4"},
+     { name = "flag_vec", ass = "debug", desc = "Flag vec", vec_len=3},
    ]}
 ]

@@ -122,7 +122,7 @@ class Reg:
         return value_str
 
     async def write_bytes(self, b : bytes):
-        assert self.acc in (Acc.rw, Acc.ws)
+        assert self.acc in (Acc.rw, Acc.wt)
         assert isinstance(self.addr, int)
         assert len(b) <= self.size
         assert len(b) >= ceil_div(self.value_type.width, 8)
@@ -188,7 +188,7 @@ class RegVec(Reg):
         return await self.module.read_bytes(self.addr+idx*self.elem_offset, self.elem_size)
 
     async def write_idx_bytes(self, idx : int, b : bytes):
-        assert self.acc in (Acc.rw, Acc.ws)
+        assert self.acc in (Acc.rw, Acc.wt)
         assert isinstance(self.addr, int)
         assert len(b) <= self.elem_size
         assert len(b) >= ceil_div(self.value_type.width, 8)
@@ -240,8 +240,8 @@ class RegVec(Reg):
         b = list_int_to_bytes(value_vec_uint, self.elem_size, endian='little', signed=True)
         await self.write_bytes(b)
 
-    def value_type_str(self) -> str:
-        return f'{super().value_type_str()}[{self.value_type.vec_len}]'
+    # def value_type_str(self) -> str:
+    #     return f'{super().value_type_str()}[{self.value_type.vec_len}]'
 
     def read_rich_str_cached(self) -> str:
         # assert self.fmt == Fmt.hex
@@ -364,7 +364,7 @@ class RegFlags(Reg):
             # v = bool((value_int >> b) & 1)
             table.add_row('-', 'b',  f'{f.bit}',  f.name, f._value_rich_str(), f.desc)
 
-        table.add_row(str(self.addr), self.value_type_str(),  str(self.acc),  self.name, self.read_rich_str_cached(), self.desc)
+        # table.add_row(str(self.addr), self.value_type_str(),  str(self.acc),  self.name, self.read_rich_str_cached(), self.desc)
 
     def ass_check(self) -> Ass:
         result : Ass = Ass.none
@@ -394,7 +394,7 @@ class Module(ABC):
         self.map_reg_k   : dict[str, RegKTypes] = {}
         self.map_reg_var : dict[str, Reg]  = {}
         self.use_cache = True
-        self.byte_align = 1
+        self.byte_align = 0
 
         assert(self.head.sync == SYNC)
         assert(self.head.flags == 0)
@@ -410,14 +410,16 @@ class Module(ABC):
         byte_idx_expected = self.byte_idx + self.head.len_k * SIZE_WORD
         self._init_reg_map_k()
         self.byte_idx = ceil_div(self.byte_idx, SIZE_WORD) * SIZE_WORD
-        print(f'{byte_idx_expected=} {self.byte_idx=}, {self.head.len_k=}')
+        # print(f'{byte_idx_expected=} {self.byte_idx=}, {self.head.len_k=}')
         assert(byte_idx_expected == self.byte_idx)
 
-        byte_idx_expected = self.byte_idx + self.head.len_var * SIZE_WORD
+        self.base_addr_var = self.byte_idx
+        self.size_var = self.head.len_var * SIZE_WORD
+        byte_idx_expected = self.byte_idx + self.size_var
         self._init_reg_map_var()
-        print(f'{byte_idx_expected=} {self.byte_idx=}, {self.head.len_var=}')
+        # print(f'{byte_idx_expected=} {self.byte_idx=}, {self.head.len_var=}')
         self.byte_idx = ceil_div(self.byte_idx, SIZE_WORD) * SIZE_WORD
-        assert(byte_idx_expected == self.byte_idx)
+        assert byte_idx_expected == self.byte_idx, f'head var len = {self.head.len_var=}, map var len {self.byte_idx/SIZE_WORD-self.base_addr_var/SIZE_WORD}'
 
         self.use_cache = False
 
@@ -435,31 +437,53 @@ class Module(ABC):
             return self.read_cache(addr, size)
         else:
             cache_addr = self._cache_addr(addr)
+            # print(f'self.regio.read({addr}, {size})')
             b = await self.regio.read(addr, size)
             self.cache[cache_addr:cache_addr + size] = b
             return b
 
     async def write_bytes(self, addr:int, b : bytes):
         cache_addr = self._cache_addr(addr)
+        # print(f'self.regio.write({addr}, {b})')
         await self.regio.write(addr, b)
         self.cache[cache_addr:cache_addr + len(b)] = b
 
+    async def update_cache(self):
+        assert not self.use_cache
+        _ = await self.read_bytes(self.base_addr_var, self.size_var)
+        # self.read_bytes(self.base_addr+
+
+
     def _byte_idx_add_reg(self, reg):
-        print(f'{reg.size=}')
         self.byte_idx += reg.size
 
+    def _byte_idx_align_addr_width(self, width):
+        if self.byte_align == 0:
+            align_bytes = promote_to_sw_w(width)//8
+        else:
+            assert self.byte_align > 0
+            align_bytes = self.byte_align
+        print(f'{ceil_multiple(self.byte_idx, align_bytes)} = ceil_multiple({self.byte_idx}, {align_bytes})')
+        self.byte_idx = ceil_multiple(self.byte_idx, align_bytes)
+
     def _add_reg_k(self, reg : RegKTypes):
+        self._byte_idx_align_addr_width(reg.value_type.width)
         reg.addr = self.byte_idx + self.base_addr
         self.arr_reg_k.append(reg)
         self.map_reg_k[reg.name] = reg
         self._byte_idx_add_reg(reg)
+        self._byte_idx_align_addr_width(reg.value_type.width)
 
     def _add_reg_var(self, reg : Reg):
+        self._byte_idx_align_addr_width(reg.value_type.width)
+
         reg.addr = self.byte_idx + self.base_addr
         self.arr_reg_var.append(reg)
         self.map_reg_var[reg.name] = reg
         self._byte_idx_add_reg(reg)
-        print(f'{self.byte_idx=}')
+
+        self._byte_idx_align_addr_width(reg.value_type.width)
+        print(f'map var {reg.name} at {self.byte_idx=} {self.byte_align=} {reg.value_type.width=}')
 
     @classmethod
     @abstractmethod
