@@ -121,12 +121,24 @@ class Reg:
         #TODO change to hex for bits / x
         return value_str
 
+    def write_bytes_cache(self, b : bytes):
+        assert self.acc in (Acc.rw, Acc.wt) or (self.acc == Acc.rc and not any(b))
+        assert isinstance(self.addr, int)
+        assert len(b) <= self.size
+        assert len(b) >= ceil_div(self.value_type.width, 8)
+        return self.module.write_bytes_cache(self.addr, b)
+
     async def write_bytes(self, b : bytes):
-        assert self.acc in (Acc.rw, Acc.wt)
+        print(f'{self.acc=} {not any(b)=}')
+        assert self.acc in (Acc.rw, Acc.wt) or ((self.acc == Acc.rc) and not any(b))
         assert isinstance(self.addr, int)
         assert len(b) <= self.size
         assert len(b) >= ceil_div(self.value_type.width, 8)
         return await self.module.write_bytes(self.addr, b)
+
+    def write_uint_cache(self, v : int):
+        b = v.to_bytes(self.size, byteorder='little', signed=False)
+        return self.write_bytes_cache(b)
 
     async def write_uint(self, v : int):
         b = v.to_bytes(self.size, byteorder='little', signed=False)
@@ -135,6 +147,16 @@ class Reg:
     async def write_sint(self, v : int):
         b = v.to_bytes(self.size, byteorder='little', signed=True)
         return await self.write_bytes(b)
+
+    def write_sint_cache(self, v : int):
+        b = v.to_bytes(self.size, byteorder='little', signed=True)
+        return self.write_bytes_cache(b)
+
+    def write_zero(self):
+        return self.write_uint(0)
+
+    def write_zero_cache(self):
+        return self.write_sint_cache(0)
 
     def add_to_table(self, table):
         table.add_row(str(self.addr), self.value_type_str(),  str(self.acc),  self.name, self.read_rich_str_cached(), self.desc)
@@ -295,7 +317,7 @@ class RFlag:
         s = ''
         if self.ass != Ass.none:
            s += to_rich_str(f'{self.ass}: ', ass_checked.color) 
-        s = '0b'
+        s += '0b'
         for v in lv:
             v = str(int(v))
             s += to_rich_str(v, ass_checked.color) 
@@ -442,17 +464,23 @@ class Module(ABC):
             self.cache[cache_addr:cache_addr + size] = b
             return b
 
-    async def write_bytes(self, addr:int, b : bytes):
+    def write_bytes_cache(self, addr:int, b:bytes):
         cache_addr = self._cache_addr(addr)
-        # print(f'self.regio.write({addr}, {b})')
-        await self.regio.write(addr, b)
         self.cache[cache_addr:cache_addr + len(b)] = b
 
-    async def update_cache(self):
+    async def write_bytes(self, addr:int, b : bytes):
+        # print(f'self.regio.write({addr}, {b})')
+        await self.regio.write(addr, b)
+        self.write_bytes_cache(addr, b)
+
+    async def read_cache_all(self):
         assert not self.use_cache
         _ = await self.read_bytes(self.base_addr_var, self.size_var)
-        # self.read_bytes(self.base_addr+
 
+    async def write_cache_all(self):
+        cache_addr = self._cache_addr(self.base_addr_var)
+        assert not self.use_cache
+        await self.write_bytes(self.base_addr_var, bytes(self.cache[cache_addr:cache_addr+self.size_var]))
 
     def _byte_idx_add_reg(self, reg):
         self.byte_idx += reg.size
@@ -484,6 +512,15 @@ class Module(ABC):
 
         self._byte_idx_align_addr_width(reg.value_type.width)
         print(f'map var {reg.name} at {self.byte_idx=} {self.byte_align=} {reg.value_type.width=}')
+
+    def write_zero_all_rc_cached(self):
+        for reg_var in self.arr_reg_var:
+            reg_var.write_zero_cache()
+
+    async def write_zero_all_rc(self):
+        for reg_var in self.arr_reg_var:
+            if reg_var.acc == Acc.rc:
+                await reg_var.write_zero()
 
     @classmethod
     @abstractmethod

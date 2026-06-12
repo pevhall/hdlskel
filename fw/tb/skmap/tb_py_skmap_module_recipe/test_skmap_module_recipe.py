@@ -75,8 +75,10 @@ async def test_skmap_module_test_acc_types(dut):
     await module.regs_wt_trigger(0x1F)
 
     print(f'{await module.regs_rw_read()=}')
-    await module.update_cache()
+    await module.read_cache_all()
     print(f'{await module.regs_rw_read()=}')
+    module.reg_map_print()
+    await module.write_zero_all_rc()
     module.reg_map_print()
 
 
