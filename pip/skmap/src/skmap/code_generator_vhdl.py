@@ -98,8 +98,8 @@ def generate_vhdl_module(recipe_file : Path, vhdl_file : Path):
 --    * From {__file__}
 --    * On {datetime.now()} 
 --    * Using HDLSkel SkMap {SKMAP_VER_STR}
---    * For {recipe.name} {recipe.id} {recipe.ver_str}
---    * Checksum {hex(recipe.check_sum())}
+--    * For {recipe.name} {recipe.id} v{recipe.version}
+--    * Checksum {recipe.checksum_str()}
 --------------------------------------------------------------------------------
 
 library ieee;
@@ -301,8 +301,8 @@ begin
   i_skmap_module : entity work.skmap_module
   generic map (
     SKMAP_ID           => "{recipe.id}",
-    SKMAP_VER_MAJOR    => {recipe.ver_major},
-    SKMAP_VER_MINOR    => {recipe.ver_minor},
+    SKMAP_VERSION      => {recipe.version},
+    SKMAP_CHECKSUM     => 16#{recipe.checksum_str()}#,
     SKMAP_KIDS         => SKMAP_KIDS,
     BASE_ADDR          => BASE_ADDR,
     RAMFACE_ADDR_W     => RAMFACE_ADDR_W,

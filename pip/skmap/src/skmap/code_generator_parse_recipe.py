@@ -12,6 +12,7 @@ from typing import Union, Optional
 
 from basic import ceil_div, ceil_log2 #promote_to_sw_w, ceil_multiple
 from basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_ID_LEN
+from head import SIZE_CHECKSUM
 
 dict_char_to_value_kind = {}
 for vk in ValueKind:
@@ -271,8 +272,7 @@ class Recipe:
         self.sw_module : str = d['sw_module']
         self.id        : str = d['id']
         assert len(self.id) <= SKMAP_ID_LEN
-        self.ver_major : int = d['ver_major']
-        self.ver_minor : int = d['ver_minor']
+        self.version   : int = d['version']
         self.k = []
         self.name_to_k : dict[str, RecipeK]= {}
 
@@ -284,12 +284,12 @@ class Recipe:
         self.var = []
         for dvv in d['var']:
             self.var.append(RecipeVar(dvv, self.name_to_k))
+        self.checksum = self._checksum()
 
-    def check_sum(self):
+    def _checksum(self):
         m = hashlib.md5()
         m.update(self.id.encode())
-        m.update(self.ver_major.to_bytes(1))
-        m.update(self.ver_minor.to_bytes(1))
+        m.update(self.version.to_bytes(1))
         for vk in self.k:
             md5_update(m, vk.t.width)
         for vv in self.var:
@@ -297,9 +297,8 @@ class Recipe:
         checksum = int.from_bytes(m.digest())
         return checksum & 0xFFFF
 
-    @property
-    def ver_str(self) -> str:
-        return f'v{self.ver_major}.{self.ver_minor}'
+    def checksum_str(self) -> str:
+        return f'{self.checksum:0{SIZE_CHECKSUM}X}'
 
 def parse_recipe_file(file : Path) -> Recipe:
     with open(file, "rb") as toml_f:

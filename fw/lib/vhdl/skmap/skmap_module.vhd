@@ -35,10 +35,10 @@ use work.skmap_module_ipkg;
 
 entity skmap_module is
   generic (
-    SKMAP_ID : string;
-    SKMAP_VER_MAJOR : skmap_ver_major_t;
-    SKMAP_VER_MINOR : skmap_ver_minor_t;
-    SKMAP_KIDS : integer_vector := VOID_INTEGER_VECTOR;
+    SKMAP_ID        : skmap_id_t;
+    SKMAP_VERSION   : skmap_version_t;
+    SKMAP_CHECKSUM  : skmap_checksum_t;
+    SKMAP_KIDS      : integer_vector := VOID_INTEGER_VECTOR;
 
     BASE_ADDR       : natural;
     RAMFACE_ADDR_W  : natural;
@@ -81,8 +81,9 @@ architecture rtl of skmap_module is
 
   constant SKMAP_HEAD : skmap_head_t := (
     id          => SKMAP_ID,
-    ver_major   => SKMAP_VER_MAJOR,
-    ver_minor   => SKMAP_VER_MINOR,
+    version     => SKMAP_VERSION,
+    flags       => zeros(SKMAP_FLAGS_W),
+    checksum    => SKMAP_CHECKSUM,
     len_kids    => SKMAP_KIDS'length,
     len_sub     => SKMAP_SUBHEAD_PAD_LEN,
     len_k       => REGS_K_INT'length,

@@ -1,3 +1,4 @@
+import logging
 from enum import Enum, auto, IntEnum
 from typing import Optional, Type, Literal, Union
 from abc import ABC, abstractmethod
@@ -534,7 +535,12 @@ class Module(ABC):
 
     @classmethod
     @abstractmethod
-    def ver_major(cls) -> int:
+    def version(cls) -> int:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def checksum(cls) -> int:
         pass
 
     @abstractmethod
@@ -585,7 +591,11 @@ class ModuleUnkowen(Module):
         assert False
 
     @classmethod
-    def ver_major(cls) -> int:
+    def version(cls) -> int:
+        assert False
+
+    @classmethod
+    def checksum(cls) -> int:
         assert False
 
     def _init_reg_map_k(self):
@@ -630,20 +640,25 @@ class ModuleFactory():
             self.lookup[module_class.id()] = {}
         module_lookup = self.lookup[module_class.id()]
 
-        assert module_class.ver_major() not in module_lookup
-        module_lookup[module_class.ver_major()] = module_class
+        assert module_class.version() not in module_lookup
+        module_lookup[module_class.version()] = module_class
 
     async def make_Module(self, regio : Regio, addr : int, allow_unknowen = False) -> Module:
         head_data = await regio.read(addr, SIZE_HEAD)
         module_head = Head(head_data)
-        print(f"{module_head=}")
+        logging.info('module_head =  %s', module_head)
         module_size = module_head.module_size()
         module_data = bytearray(head_data + await regio.read(addr+SIZE_HEAD, module_size-SIZE_HEAD))
-        print(f"{module_data=}")
+        # print(f"{module_data=}")
         if module_head.id in self.lookup:
             module_lookup = self.lookup[module_head.id]
-            if module_head.ver_major in module_lookup:
-                return module_lookup[module_head.ver_major](regio, addr, module_head, module_data)
+            if module_head.version in module_lookup:
+                module_class = module_lookup[module_head.version]
+                if module_head.checksum == module_class.checksum():
+                    return module_class(regio, addr, module_head, module_data)
+                else:
+                    logging.error('Bad check sum for %s v%d, module_head.checksum =  %s, module_class.checksum = %s', module_class.name(), module_class.version(), module_head.checksum, module_class.checksum())
+
 
 
         assert allow_unknowen

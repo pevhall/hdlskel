@@ -1,8 +1,7 @@
 name = "recipe_test_bench_module"
 sw_module = "RecipeTestBenchModule"
-id = "RecipeTB"
-ver_major = 1
-ver_minor = 2
+id = "TBRecip"
+version = 1
 
 k = [
   {name = "RO_LEN",   t = "u8", desc = "RO length"},

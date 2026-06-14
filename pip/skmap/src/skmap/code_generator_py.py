@@ -159,9 +159,10 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
             s += f'    async def {reg.name}_read(self, clear : bool) -> {t_str}:\n'
             s += f'        val = await {reg_name}.{func_read}()\n'
             s += f'        if clear:\n'
-            s += f'            await {reg_name}.clear()\n'
+            s += f'            await self.{reg.name}_clear()\n'
+            s += f'        return val\n\n'
             s += f'    async def {reg.name}_clear(self):\n'
-            s += f'        await {reg_name}.write_uint(0)\n\n'
+            s += f'        await {reg_name}.write_zero()\n\n'
             if is_vec_int:
                 s += f'    def {reg.name}_cached_idx(self, idx : int) -> int:\n'
                 s += f'        return {reg_name}.{func_read_idx_cached}(idx)\n\n'
@@ -294,8 +295,8 @@ def generate_py_module(recipe_file : Path, py_file : Path):
 #    * From {__file__}
 #    * On {datetime.now()} 
 #    * Using HDLSkel SkMap {SKMAP_VER_STR}
-#    * For {recipe.name} {recipe.id} {recipe.ver_str}
-#    * Checksum {hex(recipe.check_sum())}
+#    * For {recipe.name} {recipe.id} v{recipe.version}
+#    * Checksum 0x{recipe.checksum_str()}
 #-------------------------------------------------------------------------------
 
 import typing
@@ -315,8 +316,12 @@ class {recipe.sw_module}(skmap.Module):
         return "{recipe.id}"
 
     @classmethod
-    def ver_major(cls) -> int:
-        return {recipe.ver_major}\n\n""")
+    def version(cls) -> int:
+        return {recipe.version}
+
+    @classmethod
+    def checksum(cls) -> int:
+        return 0x{recipe.checksum_str()}\n\n""")
 
         for kv in recipe.k:
             py_f.write(all_reg_value_functions_str(kv))
