@@ -1,4 +1,5 @@
-from typing import Literal
+
+from typing import Literal, Optional
 
 def ceil_log2(x : int) -> int:
     return (x - 1).bit_length() if x > 0 else 0
@@ -42,3 +43,7 @@ def cast_uint_to_sint(value : int, bit_width : int) -> int:
         value -= sgn_bit*2
     return value
 
+def to_rich_str(s : str, color : Optional[str]=None):
+    if color is not None:
+        s = f'[{color}]{s}[/]'
+    return s

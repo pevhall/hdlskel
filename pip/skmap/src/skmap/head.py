@@ -62,9 +62,6 @@ class Head:
     def checksum_str(self) -> str:
         return f'{self.checksum:0{SIZE_CHECKSUM}X}'
 
-    def name_v_str(self) -> str:
-        return f'{self.id} v{self.version}'
-
     def module_size_words(self) -> int:
         return SIZE_HEAD_WORDS + self.len_sub + self.len_kids + self.len_k + self.len_var
 
