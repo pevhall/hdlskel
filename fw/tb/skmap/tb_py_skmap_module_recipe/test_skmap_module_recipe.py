@@ -1,6 +1,8 @@
 
+import asyncio
 import cocotb
 import tbskel.ramface
+import regio.tcp_server
 import skmap
 
 from cocotb.clock import Clock
@@ -81,8 +83,9 @@ async def test_skmap_module_test_acc_types(dut):
     await module.write_zero_all_rc()
     module.reg_map_print()
 
-
-    # assert wr_data == rd_data
+    server = regio.tcp_server.RegioTcpServer(ramface_ctrl)
+    await server.start()
+    print('DONE')
 
     for _ in range(100):
         await RisingEdge(dut.clk_i)
