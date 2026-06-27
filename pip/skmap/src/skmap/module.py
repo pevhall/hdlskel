@@ -40,12 +40,12 @@ class Module(ABC):
         assert(self.head.flags == 0)
 
         self.byte_idx = SIZE_HEAD
-        assert(self.head.len_sub == 0)
-        self.byte_idx += self.head.len_sub*SIZE_WORD
 
         for kk in range(self.head.len_kids):
             self.kids[kk] = int.from_bytes(module_data[self.byte_idx:self.byte_idx+SIZE_WORD])
             self.byte_idx += SIZE_WORD
+        assert(self.head.len_sub == 0)
+        self.byte_idx += self.head.len_sub*SIZE_WORD
 
         byte_idx_expected = self.byte_idx + self.head.len_k * SIZE_WORD
         self._init_reg_map_k()
