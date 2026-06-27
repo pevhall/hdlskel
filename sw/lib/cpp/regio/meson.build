@@ -1,9 +1,3 @@
-# Library: regio
-
-# project('hdlskel_regio', 'cpp',
-#     default_options: ['cpp_std=c++20']
-# )
-
 hdlskel_regio_inc = include_directories('include')
 
 hdlskel_regio_lib = library(

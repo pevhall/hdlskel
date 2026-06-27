@@ -79,6 +79,16 @@ class ValueKind(Enum):
             ValueKind.flag: "b",
         }[self]
 
+    def str(self):
+        return {
+            ValueKind.bits: "bits",
+            ValueKind.uint: "uint",
+            ValueKind.sint: "sint",
+            ValueKind.char: "char",
+            ValueKind.flag: "flag",
+        }[self]
+
+
     @property
     def is_int(self) -> bool:
         return self == ValueKind.uint or self == ValueKind.sint

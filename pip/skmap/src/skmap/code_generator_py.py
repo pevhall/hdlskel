@@ -8,50 +8,37 @@ from typing import Union
 from code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ResolvableFunction
 # from basic import promote_to_sw_w, ceil_div
 from basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
+import code_generator_sw_common as common
 
 def name_to_reg_k(name : str) -> str:
     return "self.k_"+name
+common.name_to_reg_k = name_to_reg_k
 
 def name_to_reg_var(name : str) -> str:
     return "self.var_"+name
+common.name_to_reg_var = name_to_reg_var
 
-def reg_to_py_inst_str(reg : RecipeReg) -> str:
-    if isinstance(reg, RecipeK):
-        return name_to_reg_k(reg.name)
-    assert isinstance(reg, RecipeVar)
-    return name_to_reg_var(reg.name)
 
-def py_resolve_str(v : Union[int, RecipeK, ResolvableFunction]) -> str:
-    if isinstance(v, int):
-        return str(v)
-    if isinstance(v, RecipeK):
-        return f'self.{v.name}'
-    if isinstance(v, ResolvableFunction):
-        return f'({v.lhs} {v.op} {v.rhs})' #type: ignore
-    raise runtimeError(f"Unexpected {type(v)=}")
+def resolve_k_value(v : RecipeK) -> str:
+    return f'self.{v.name}'
+common.resolve_k_value = resolve_k_value
 
-def resolvable_py_member_function(value : Union[ResolvableFunction, RecipeK, int]) -> str:
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, RecipeK):
-        return f'self.{value.name}'
-    assert isinstance(value, ResolvableFunction), f"{type(value)=}"
-    lhs = resolvable_py_member_function(value.lhs)
-    rhs = resolvable_py_member_function(value.rhs)
-    return f'({lhs} {value.op} {rhs})'
+reg_to_inst_str = common.reg_to_inst_str
+resolvable_str = common.resolvable_str
+resolvable_member_function = common.resolvable_member_function
 
 def value_type_str(value_type : Union[ValueType, ValueTypeUnresolved]):
     assert value_type.width is not None
-    w = resolvable_py_member_function(value_type.width)
+    w = resolvable_member_function(value_type.width)
     t_str = f"skmap.ValueType(kind=skmap.{value_type.kind}, width={w}"
     if value_type.is_vec:
         assert value_type.vec_len is not None
-        vec_len = resolvable_py_member_function(value_type.vec_len)
+        vec_len = resolvable_member_function(value_type.vec_len)
         t_str += f", vec_len={vec_len}"
     t_str += ")"
     return t_str
 
-def value_py_type_str(t : Union[ValueType, ValueTypeUnresolved]):
+def value_ret_type_str(t : Union[ValueType, ValueTypeUnresolved]):
     if t.kind == ValueKind.char:
         return 'str'
     match t.kind:
@@ -69,45 +56,14 @@ def value_py_type_str(t : Union[ValueType, ValueTypeUnresolved]):
         rt = f'typing.List[{rt}]'
     return rt
 
-def _value_kind_function_str(k : ValueKind) -> str:
-    match k:
-        case ValueKind.uint:
-            return 'uint'
-        case ValueKind.sint:
-            return 'sint'
-        case ValueKind.bits:
-            return 'uint'
-        case ValueKind.flag:
-            return 'uint'
-        case _:
-            assert False
-
-def _value_type_function_str(t : Union[ValueType, ValueTypeUnresolved]) -> str:
-    f = ''
-    if t.kind == ValueKind.char:
-        if t.is_vec:
-            f += 'str'
-        else:
-            f += 'char'
-    else:
-        if t.is_vec:
-            f += 'vec_'
-        f += _value_kind_function_str(t.kind)
-    return f
-
-def read_value_function_str(t : Union[ValueType, ValueTypeUnresolved], cached : bool) -> str:
-    f = 'read_'+_value_type_function_str(t)
-    if cached:
-        f += '_cached'
-    return f
-
-def write_value_function_str(t : Union[ValueType, ValueTypeUnresolved]) -> str:
-    return 'write_'+_value_type_function_str(t)
+_value_kind_function_str = common._value_kind_function_str
+read_value_function_str  = common.read_value_function_str
+write_value_function_str  = common.write_value_function_str
 
 def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     assert reg.t.width is not None
-    reg_name = reg_to_py_inst_str(reg)
-    t_str = value_py_type_str(reg.t)
+    reg_name = reg_to_inst_str(reg)
+    t_str = value_ret_type_str(reg.t)
     func_read_cached = read_value_function_str(reg.t, cached=True)
     func_read        = read_value_function_str(reg.t, cached=False)
     func_write      = write_value_function_str(reg.t)
@@ -128,15 +84,15 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     #
     # s += f'    @property\n'
     # s += f'    def {reg.name}_w(self) -> int:\n'
-    # s += f'        return {py_resolve_str(reg.t.width)}\n\n'
+    # s += f'        return {resolvable_str(reg.t.width)}\n\n'
     # if reg.t.vec_len is not None:
     #     s += f'    @property\n'
     #     s += f'    def {reg.name}_len(self) -> int:\n'
-    #     s += f'        return {py_resolve_str(reg.t.vec_len)}\n\n'
+    #     s += f'        return {resolvable_str(reg.t.vec_len)}\n\n'
     # if reg.t.vec_len is not None:
     #     s += f'    @property\n'
     #     s += f'    def {reg.name}_len(self) -> int:\n'
-    #     s += f'        return {py_resolve_str(reg.t.vec_len)}()\n\n'
+    #     s += f'        return {resolvable_str(reg.t.vec_len)}()\n\n'
 
     match reg.acc:
         case Acc.k:
@@ -222,7 +178,7 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
 
             s += f'    @property\n'
             s += f'    def {f.name}_len(self) -> int:\n'
-            s += f'      return {py_resolve_str(f.vec_len)}\n\n'
+            s += f'      return {resolvable_str(f.vec_len)}\n\n'
 
         else:
             t_str = 'bool'
@@ -259,8 +215,8 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
             s += f'    async def {reg.name}_update_cache(self) -> {t_str}:\n'
             s += f'        _ = await {f_name}.read_bytes() \n\n'
 
-        if reg.acc == Acc.wt:
-            reg_name = reg_to_py_inst_str(reg)
+        if reg.acc == Acc.rc:
+            reg_name = reg_to_inst_str(reg)
             func_write      = write_value_function_str(reg.t)
             s += f'    def {reg.name}_clear(self) -> {t_str}:\n'
             s += f'        await {reg_name}.write_uint(0)\n\n'
@@ -279,12 +235,9 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
     #         return {name_to_reg_k(f.name)}.{v_func}()
     # """
 
-
-def all_reg_value_functions_str(reg : RecipeReg) -> str:
-    if reg.t.kind == ValueKind.flag:
-        return all_reg_value_functions_str_is_flag(reg)
-    else:
-        return all_reg_value_functions_str_not_flag(reg)
+common.all_reg_value_functions_str_is_flag = all_reg_value_functions_str_is_flag
+common.all_reg_value_functions_str_not_flag = all_reg_value_functions_str_not_flag
+all_reg_value_functions_str = common.all_reg_value_functions_str
 
 def generate_py_module(recipe_file : Path, py_file : Path):
     recipe = parse_recipe_file(recipe_file)
@@ -337,13 +290,13 @@ class {recipe.sw_module}(skmap.Module):
             if kv.t.kind == ValueKind.flag:
                 assert kv.flags is not None
                 for f in kv.flags:
-                    vec_len_param = '' if f.vec_len is None else f' vec_len={py_resolve_str(f.vec_len)},'
-                    bit = resolvable_py_member_function(f.bit)
+                    vec_len_param = '' if f.vec_len is None else f' vec_len={resolvable_str(f.vec_len)},'
+                    bit = resolvable_member_function(f.bit)
                     py_f.write(f"        {name_to_reg_k(f.name)} = skmap.RFlagK(name='{f.name}', bit={bit}, ass=skmap.Ass.{f.ass.str()},{vec_len_param} desc='{f.desc}')\n")
                 py_f.write("        flags = [")
                 for f in kv.flags: py_f.write(f" {name_to_reg_k(f.name)}, ")
                 py_f.write("]\n")
-                width = resolvable_py_member_function(kv.t.width)
+                width = resolvable_member_function(kv.t.width)
                 py_f.write(f"        {name_k} = skmap.RegFlagsK(self, name='{kv.name}', width={width}, flags=flags, desc='{kv.desc}')\n")
             else:
                 t_str = value_type_str(kv.t)
@@ -362,7 +315,7 @@ class {recipe.sw_module}(skmap.Module):
                 py_f.write("        flags = [")
                 for f in varv.flags: py_f.write(f" {name_to_reg_var(f.name)}, ")
                 py_f.write("]\n")
-                w = resolvable_py_member_function(varv.t.width)
+                w = resolvable_member_function(varv.t.width)
                 py_f.write(f"        {name_var} = skmap.RegFlags(self, name='{varv.name}', width={w}, acc=skmap.Acc.{varv.acc}, flags=flags, desc='{varv.desc}')\n")
             else:
                 t_str = value_type_str(varv.t)
@@ -384,7 +337,7 @@ def parse_args():
     parser.add_argument(
         "py_file",
         type=Path,
-        help="Path to VHDL file to generate"
+        help="Path to Python file to generate"
     )
     return parser.parse_args()
 

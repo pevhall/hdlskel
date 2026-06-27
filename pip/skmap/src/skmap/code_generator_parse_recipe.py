@@ -205,6 +205,7 @@ class RecipeFlag:
         self.vec_len = None
         if 'vec_len' in d:
             self.vec_len = parse_unresolved_word(d['vec_len'], name_to_k=name_to_k)
+        # print(f'{self.name=} {self.vec_len=}')
         flags, flags_width  = parse_recipe_flags(d, name_to_k=name_to_k)
         self.flags = flags
         if flags is None:

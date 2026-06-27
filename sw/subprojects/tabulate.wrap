@@ -1,0 +1,8 @@
+[wrap-git]
+url = https://github.com/p-ranav/tabulate
+revision = v1.5
+directory = tabulate-1.5
+depth = 1
+
+[provide]
+tabulate = tabulate_dep

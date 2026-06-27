@@ -372,7 +372,18 @@ class RegFlags(Reg):
 
         # table.add_row(str(self.addr), self.value_type_str(),  str(self.acc),  self.name, self.read_rich_str_cached(), self.desc)
 
-    def ass_check(self) -> Ass:
+    def ass_check_cached(self) -> Ass:
+        result : Ass = Ass.none
+        value_int = self.read_uint_cached()
+        for f in self.flags:
+            v = bool((value_int >> f.bit) & 1)
+            ass = f._ass_check(v)
+            if ass > result:
+                result = ass
+        return Ass(result)
+
+    async def ass_check(self) -> Ass:
+        value_int = await self.read_uint()
         result : Ass = Ass.none
         value_int = self.read_uint_cached()
         for f in self.flags:
