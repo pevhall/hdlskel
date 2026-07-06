@@ -4,6 +4,7 @@ import cocotb
 import tbskel.ramface
 import regio.tcp_server
 import skmap
+import logging
 
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer
@@ -61,8 +62,9 @@ async def test_skmap_module_test_acc_types(dut):
     ramface_ctrl = tbskel.ramface.make_RamfaceCtrlBytes_default_ports(dut)
     await RisingEdge(dut.clk_i)
 
+    logging.basicConfig(level=logging.DEBUG)
     # await skmap.Module.read_init_module_data(ramface_ctrl, 0)
-    module = await skmap.make_Module(ramface_ctrl, 0)
+    module = await skmap.make_module(ramface_ctrl, 0)
     assert isinstance(module, RecipeTestBenchModule)
     if 1:
         RW_LEN = module.regs_rw_value_type.vec_len 

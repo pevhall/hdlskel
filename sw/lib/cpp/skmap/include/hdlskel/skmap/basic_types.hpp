@@ -83,23 +83,26 @@ public:
         : m_kind(kind)
         , m_width(width)
         , m_vec_len(vec_len)
+        , m_sw_elem_offset(promote_to_sw_w(width)/8)
     { }
     addr_t sw_elem_width() const { return promote_to_sw_w(m_width); }
     addr_t elem_width() const { return m_width; }
     addr_t sw_elem_size() const { return sw_elem_width()/8; }
+    addr_t sw_elem_offset() const { return m_sw_elem_offset; }
     ValueKind kind() const { return m_kind; }
     std::string str() const;
     std::optional<uint> vec_len() const { return m_vec_len; }
     bool is_vec() const { return m_vec_len.has_value(); }
     addr_t size() const {
-        addr_t s = sw_elem_size();
-        if(m_vec_len) { s *= *m_vec_len; }
-        return s;
+        if(m_vec_len) { return sw_elem_offset()* (*m_vec_len); }
+        else { return sw_elem_size(); }
     }
+    void _sw_elem_offset(addr_t size) { m_sw_elem_offset = size; }
 private:
     ValueKind m_kind;
     uint m_width;
     std::optional<uint> m_vec_len;
+    addr_t m_sw_elem_offset;
 };
 
 inline ValueType make_ValueType(ValueKind kind, uint width, std::optional<uint> vec_len = {}) {

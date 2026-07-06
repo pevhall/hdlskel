@@ -41,7 +41,7 @@ architecture rtl of skmap_module_test_acc_types is
   constant SKMAP_ID : string := "Test_Acc";
   constant SKMAP_VER_MAJOR : skmap_ver_major_t := 1;
   constant SKMAP_VER_MINOR : skmap_ver_minor_t := 0;
-  constant SKMAP_KIDS : integer_vector := VOID_INTEGER_VECTOR;
+  constant SKMAP_KIDS : integer_vector := NULL_INTEGER_VECTOR;
   constant REGS_RO_LEN    : natural := 3;
   constant REGS_RO_ELEM_W : natural := 3;
   constant REGS_RW_LEN    : natural := REGS_RO_LEN;

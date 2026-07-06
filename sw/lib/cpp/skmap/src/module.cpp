@@ -33,7 +33,7 @@ std::shared_ptr<Module> ModuleFactory::instance_get_module(id_t id, version_t ve
     static ModuleUnknown module_unkowen;
     std::cout << __FILE__ << ":" << __LINE__ << ": m_lookup = { ";
     for(const auto & k : m_lookup) { std::cout <<id_to_str(k.first)<<", "; }
-    std::cout << std::endl;
+    std::cout <<"}"<< std::endl;
 
     if (not m_lookup.contains(id) ) {
         if (allow_unkowen) {
@@ -64,14 +64,24 @@ void Module::init_first(std::shared_ptr<regio::Regio> regio, addr_t base_addr, s
     m_cache     = std::move(cached);
 }
 
+addr_t Module::align_byte(addr_t val_size) {
+    return std::max(promote_to_sw_w(val_size*8)/8, m_byte_align);
+}
+
 void Module::align_byte_idx(addr_t size) {
-    m_byte_idx = ceil_multiple(m_byte_idx, size);
+    if (size != 0) {
+        addr_t align = align_byte(size);
+        m_byte_idx = ceil_multiple(m_byte_idx, align);
+    }
 }
 
 void Module::add_reg(std::shared_ptr<Reg> reg) {
+    auto i = m_byte_idx;
+    align_byte_idx(reg->elem_size());
     reg->initalise(this, m_byte_idx);
     m_byte_idx += reg->size() ;
     align_byte_idx(reg->elem_size());
+    // std::cout << __FILE__ << ":" << __LINE__ << ":" <<  m_byte_idx <<" = " <<i<< " + " <<reg->size()<<".  es "<< reg->elem_size()<<"\n";
 }
 void Module::add_reg_k  (std::shared_ptr<Reg> reg) {
     add_reg(reg);
@@ -177,34 +187,61 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
     regio->read(head_size, data_span.subspan(head_size, data.size()-head_size));
 
     auto module = ModuleFactory::get_module(head.id, head.version, allow_unkowen);
+    module->m_byte_align = 1;
+    module->m_byte_idx = head_size;
 
+    addr_t byte_idx_sub_end = module->m_byte_idx + head.len_sub*word_size;
+
+    enum class SubID : uint8_t {
+        PAD = 0x0,
+        BYTE_ALIGN = 0x1A,
+    };
+
+    addr_t var_byte_align = 1;
+
+    while (module->m_byte_idx != byte_idx_sub_end) {
+        uint8_t sub_id = static_cast<uint8_t>(data[module->m_byte_idx]);
+        switch (sub_id) {
+            case static_cast<uint8_t>(SubID::PAD):
+                module->m_byte_idx = byte_idx_sub_end;
+                break;
+            case static_cast<uint8_t>(SubID::BYTE_ALIGN):
+                var_byte_align = static_cast<addr_t>(data[module->m_byte_idx+1]);
+                std::cout << "Sub Head: Byte Align "<<var_byte_align<<"\n";
+                module->m_byte_idx += word_size;
+                break;
+            default:
+                std::ostringstream oss;
+                oss << "Unkowen sub_id 0x" << std::hex<< +sub_id << std::dec;
+                throw std::runtime_error(oss.str());
+        }
+    } 
+    //
     // auto module = std::make_shared<ModuleUnknown>();
     module->init_first(regio, base_addr, std::move(data));
 
-    module->m_byte_idx = head_size;
     // for (uint ii = 0; ii < head.len_kids; ii++) {}
     module->m_byte_idx += head.len_kids*word_size;
 
-    for (uint ii = 0; ii < head.len_sub; ii++) {
-    } // TODO check sub is all zero
-    module->m_byte_idx += head.len_sub*word_size;
-
     addr_t byte_idx_expected = module->m_byte_idx + head.len_k*word_size;
+    std::cout <<"Initalsing map_k\n";
     module->init_reg_map_k();
     module->align_byte_idx(word_size);
     if( module->m_byte_idx != byte_idx_expected ) {
         std::ostringstream oss;
-        oss << "make_module::k end idx (expected "<<module->m_byte_idx<<", got "<<byte_idx_expected<<")";
+        oss << "make_module::k end idx (got "<<module->m_byte_idx<<", expected "<<byte_idx_expected<<")";
         throw std::runtime_error(oss.str());
     }
     // assert(module->m_byte_idx == byte_idx_expected);
 
+    module->m_byte_align = var_byte_align;
     byte_idx_expected = module->m_byte_idx + head.len_var*word_size;
+    std::cout <<"Initalsing map_var\n";
     module->init_reg_map_var();
     module->align_byte_idx(word_size);
     if( module->m_byte_idx != byte_idx_expected ) {
         std::ostringstream oss;
-        oss << "make_module::var end idx (expected "<<module->m_byte_idx<<", got "<<byte_idx_expected<<")";
+        oss << "make_module::var end idx (got "<<module->m_byte_idx<<", expected "<<byte_idx_expected<<")";
         throw std::runtime_error(oss.str());
     }
     assert(module->m_byte_idx == byte_idx_expected);

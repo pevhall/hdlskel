@@ -168,15 +168,9 @@ package body skmap_map_acc_pkg is
     constant VAL_W : natural;
     constant BYTE_ALIGN : integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
   ) return natural is
+    variable val_sw_size : natural := promote_to_sw_w(VAL_W)/8;
   begin
-    if BYTE_ALIGN = SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG then
-      return promote_to_sw_w(VAL_W)/8;
-    end if;
-
-    assert BYTE_ALIGN >= 0
-    report "Unsupported"
-    severity FAILURE;
-    return BYTE_ALIGN;
+    return maximum(val_sw_size, BYTE_ALIGN);
   end function;
 
   procedure skmap_map_acc_k (

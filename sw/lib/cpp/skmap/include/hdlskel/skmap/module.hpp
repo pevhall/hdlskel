@@ -81,6 +81,7 @@ public:
     void write_cache(addr_t addr_off, addr_t update_size);
     bool cache_only() const { return m_cache_only; }
     bool cache_only(bool cache_only) { return m_cache_only = cache_only; }
+    addr_t align_byte(addr_t val_size);
 
 private:
     void align_byte_idx(addr_t size);
@@ -90,6 +91,7 @@ private:
     bool m_cache_only;
     addr_t m_base_addr;
     addr_t m_byte_idx;
+    addr_t m_byte_align;
     std::shared_ptr<regio::Regio> m_regio;
     std::vector<std::byte> m_cache;
     std::vector<std::shared_ptr<Reg>> m_vec_k;

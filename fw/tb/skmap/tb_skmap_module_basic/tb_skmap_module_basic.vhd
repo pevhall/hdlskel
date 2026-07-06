@@ -24,7 +24,7 @@ architecture sim of tb_skmap_module_basic is
  constant SKMAP_ID : string := "TestBsic";
  constant SKMAP_VER_MAJOR : skmap_ver_major_t := 1;
  constant SKMAP_VER_MINOR : skmap_ver_minor_t := 0;
- constant SKMAP_KIDS : integer_vector := VOID_INTEGER_VECTOR;
+ constant SKMAP_KIDS : integer_vector := NULL_INTEGER_VECTOR;
  constant SKMAP_LEN_VAR : skmap_len_var_t := 0;
 
  constant BASE_ADDR       : natural := 16#1000#;

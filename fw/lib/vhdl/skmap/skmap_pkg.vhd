@@ -60,6 +60,14 @@ package skmap_pkg is
   function to_vec_slv32(head : skmap_head_t) return vec_slv32_t;
   function to_vec_int(head : skmap_head_t) return integer_vector;
 
+  -- sub
+  constant SKMAP_SUB_ID_W : natural := 8;
+  subtype skmap_sub_id_t is natural range 0 to 2**SKMAP_SUB_ID_W-1;
+  constant SKMAP_SUB_ID_PAD        : skmap_sub_id_t := 16#00#;
+  constant SKMAP_SUB_ID_BYTE_ALIGN : skmap_sub_id_t := 16#1A#;
+  function make_skmap_sub_byte_align(byte_align : natural) return integer_vector;
+
+
 end package;
 
 package body skmap_pkg is
@@ -96,6 +104,17 @@ package body skmap_pkg is
   function to_vec_int(head : skmap_head_t) return integer_vector is
   begin
     return to_vec_int(to_vec_signed(to_vec_slv32(head)));
+  end function;
+
+  function make_skmap_sub_byte_align(byte_align : natural) return integer_vector is
+    variable sub : integer_vector(0 to 0) := (0 => SKMAP_SUB_ID_BYTE_ALIGN + 2**8*byte_align);
+  begin
+    report "byte_align = "&integer'image(byte_align);
+    assert byte_align < 2**8;
+    if byte_align = 0 then
+      return NULL_INTEGER_VECTOR;
+    end if;
+    return sub;
   end function;
 
 end package body;

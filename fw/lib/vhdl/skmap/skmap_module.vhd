@@ -38,7 +38,8 @@ entity skmap_module is
     SKMAP_ID        : skmap_id_t;
     SKMAP_VERSION   : skmap_version_t;
     SKMAP_CHECKSUM  : skmap_checksum_t;
-    SKMAP_KIDS      : integer_vector := VOID_INTEGER_VECTOR;
+    SKMAP_KIDS      : integer_vector := NULL_INTEGER_VECTOR;
+    SKMAP_BYTE_ALIGN : natural := 0;
 
     BASE_ADDR       : natural;
     RAMFACE_ADDR_W  : natural;
@@ -46,7 +47,7 @@ entity skmap_module is
     RAMFACE_WREN_W  : natural := RAMFACE_DATA_W/8;
     RAMFACE_LATENCY : natural := skmap_module_ipkg.RAMFACE_LATENCY;
 
-    REGS_K_INT      : integer_vector := VOID_INTEGER_VECTOR;
+    REGS_K_INT      : integer_vector := NULL_INTEGER_VECTOR;
     REGS_VAR_LEN    : natural
   );
   port (
@@ -75,8 +76,11 @@ architecture rtl of skmap_module is
   constant SKMAP_LEN_VAR : skmap_len_var_t := REGS_VAR_LEN;
 
   constant REGS_DATA_W : natural := 32;
-  constant SKMAP_SUBHEAD_PAD_LEN : natural := get_ramface_ram_pad(SKMAP_HEAD_LEN + SKMAP_KIDS'length + REGS_K_INT'length, REGS_DATA_W, RAMFACE_DATA_W);
-  constant RAMFACE_K_SKMAP_LEN : natural := SKMAP_HEAD_LEN + SKMAP_KIDS'length + SKMAP_SUBHEAD_PAD_LEN + REGS_K_INT'length;
+  constant SKMAP_SUB_NO_PAD : integer_vector := make_skmap_sub_byte_align(SKMAP_BYTE_ALIGN);
+  constant SKMAP_SUBHEAD_PAD_LEN : natural := get_ramface_ram_pad(SKMAP_HEAD_LEN + SKMAP_KIDS'length + REGS_K_INT'length + SKMAP_SUB_NO_PAD'length, REGS_DATA_W, RAMFACE_DATA_W);
+  
+  constant SKMAP_SUB : integer_vector :=  SKMAP_SUB_NO_PAD & zeros_vec_int(SKMAP_SUBHEAD_PAD_LEN) ;
+  constant RAMFACE_K_SKMAP_LEN : natural := SKMAP_HEAD_LEN + SKMAP_KIDS'length + SKMAP_SUB'length + REGS_K_INT'length;
   constant RAMFACE_K_DEPTH : natural := get_ramface_local_depth(RAMFACE_K_SKMAP_LEN, REGS_DATA_W, RAMFACE_DATA_W);
 
   constant SKMAP_HEAD : skmap_head_t := (
@@ -85,14 +89,14 @@ architecture rtl of skmap_module is
     flags       => zeros(SKMAP_FLAGS_W),
     checksum    => SKMAP_CHECKSUM,
     len_kids    => SKMAP_KIDS'length,
-    len_sub     => SKMAP_SUBHEAD_PAD_LEN,
+    len_sub     => SKMAP_SUB'length,
     len_k       => REGS_K_INT'length,
     len_var     => SKMAP_LEN_VAR
   );
   constant RAMFACE_K_REGS_INT : integer_vector := (
       to_vec_int(SKMAP_HEAD)
     & SKMAP_KIDS
-    & zeros_vec_int(SKMAP_SUBHEAD_PAD_LEN)
+    & SKMAP_SUB
     & REGS_K_INT
   );
   constant BASE_ADDR_REGS_RW : natural := BASE_ADDR + RAMFACE_K_DEPTH;

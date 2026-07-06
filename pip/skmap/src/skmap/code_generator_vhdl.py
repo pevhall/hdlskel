@@ -70,14 +70,15 @@ def var_type_to_vhdl_str(t : ValueType) -> str:
             case ValueKind.bits: return f"std_logic_vector{elem_rng}"
             case ValueKind.flag: return f"std_logic_vector{elem_rng}"
 
-def regs_len_str(regs : list[RecipeReg], name : str) -> str:
+def regs_len_str(regs : list[RecipeReg], name : str, k : bool = False) -> str:
     s = (f"""
   function get_{name} return natural is
     variable byte_idx : natural := 0;
   begin\n""")
     for r in regs:
-        s += (f"    skmap_map_acc_byte_inc(byte_idx, VAL_W=>{r.t.width}, ")
-        s += ("BYTE_ALIGN=>BYTE_ALIGN")
+        s += (f"    skmap_map_acc_byte_inc(byte_idx, VAL_W=>{r.t.width}")
+        if not k:
+            s += (", BYTE_ALIGN=>BYTE_ALIGN")
         if r.t.is_vec:
             s += (f", VEC_LEN=>{r.t.vec_len}");
         s += (f"); -- {r.name}\n")
@@ -121,7 +122,7 @@ use work.skmap_module_ipkg;
 entity {recipe.name} is
   generic (
     BASE_ADDR       : natural;
-    SKMAP_KIDS : integer_vector := VOID_INTEGER_VECTOR;
+    SKMAP_KIDS : integer_vector := NULL_INTEGER_VECTOR;
     SKMAP_BYTE_ALIGN : integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG;
 
     RAMFACE_ADDR_W  : natural;
@@ -232,7 +233,7 @@ architecture rtl of {recipe.name} is
   constant {kv.name} : boolean_vector := get_{kv.name};\n """)
                         
 
-        vhdl_f.write(regs_len_str(recipe.k, 'REGS_K_INT_LEN'));
+        vhdl_f.write(regs_len_str(recipe.k, 'REGS_K_INT_LEN', k = True));
 
         vhdl_f.write(f"""
   function get_REGS_K_INT return integer_vector is
@@ -244,13 +245,13 @@ architecture rtl of {recipe.name} is
         #     kv = recipe.k[ii]
         for kv in recipe.k:
             if kv.t.kind == ValueKind.flag:
-                vhdl_f.write(f"    skmap_map_acc_k(k_vec_int_io=>k_vec_int, byte_idx_io=>byte_idx, flags_i=>{kv.name},  BYTE_ALIGN=>BYTE_ALIGN);\n")
+                vhdl_f.write(f"    skmap_map_acc_k(k_vec_int_io=>k_vec_int, byte_idx_io=>byte_idx, flags_i=>{kv.name});\n")
             else:
                 if(kv.t.width > 32):
                    raise RuntimeError(f"Currently k must support 32bit integers {kv.t.width=} {kv.t.kind=}")
 
                 is_signed_str = 'TRUE' if kv.t.kind == ValueKind.sint else 'FALSE'
-                vhdl_f.write(f"    skmap_map_acc_k(k_vec_int_io=>k_vec_int, byte_idx_io=>byte_idx, val_i=>{kv.name}, w_i=>{kv.t.width}, signed_i=>{is_signed_str}, BYTE_ALIGN=>BYTE_ALIGN);\n")
+                vhdl_f.write(f"    skmap_map_acc_k(k_vec_int_io=>k_vec_int, byte_idx_io=>byte_idx, val_i=>{kv.name}, w_i=>{kv.t.width}, signed_i=>{is_signed_str});\n")
                 # name = kv.name
                 # if addr_byte % 4 == 0:
                 #     if addr_byte != 0: vhdl_f.write(f",\n")
@@ -304,6 +305,7 @@ begin
     SKMAP_VERSION      => {recipe.version},
     SKMAP_CHECKSUM     => 16#{recipe.checksum_str()}#,
     SKMAP_KIDS         => SKMAP_KIDS,
+    SKMAP_BYTE_ALIGN   => SKMAP_BYTE_ALIGN,
     BASE_ADDR          => BASE_ADDR,
     RAMFACE_ADDR_W     => RAMFACE_ADDR_W,
     RAMFACE_DATA_W     => RAMFACE_DATA_W,

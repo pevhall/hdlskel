@@ -110,7 +110,6 @@ std::vector<bool> Reg::read_vec_bool_cached() const {
     for(size_t ii = 0; ii < elem_w(); ii++) {
         uint8_t bit_mask = 1<<bit;
         vec[ii] = (static_cast<uint8_t>(data[byte]) & bit_mask) != 0;
-        std::cout << std::hex<<"vec["<<ii<<"] = "<<static_cast<int>(data[byte])<<" & "<< +bit_mask<<"\n"<<std::dec;
         if (bit==0) {
             byte--;
             bit = 7;
@@ -149,6 +148,11 @@ std::string Reg::str_value_cached() const {
         };
     }
     return ss.str();
+}
+
+void RegVec::initalise(Module* module, addr_t addr) {
+    Reg::initalise(module, addr);
+    m_value_type._sw_elem_offset(module->align_byte(m_value_type.sw_elem_size()));
 }
 
 size_t RegVec::vec_len() const {

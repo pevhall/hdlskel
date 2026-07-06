@@ -24,5 +24,5 @@ RegFlagsK = reg.RegFlagsK
 RFlag     = reg.RFlag
 RFlagK    = reg.RFlagK
 
-make_Module     = module.make_Module
+make_module     = module.make_module
 register_Module = module.register_Module

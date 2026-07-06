@@ -16,7 +16,7 @@ package vec_pkg is
   subtype vec_slv4_t  is vec_slv_t(open)( 4-1 downto 0);
   subtype vec_slv32_t is vec_slv_t(open)(32-1 downto 0);
 
-  constant VOID_INTEGER_VECTOR : integer_vector(0 to -1);
+  constant NULL_INTEGER_VECTOR : integer_vector(0 to -1);
 
   function zeros_vec_int  (len : integer) return integer_vector;
   function zeros_vec_slv32(len : integer) return vec_slv32_t;
@@ -60,7 +60,7 @@ package vec_pkg is
 end package;
 
 package body vec_pkg is
-  constant VOID_INTEGER_VECTOR : integer_vector(0 to -1) := (others => 0);
+  constant NULL_INTEGER_VECTOR : integer_vector(0 to -1) := (others => 0);
 
   function zeros_vec_int  (len : integer) return integer_vector is
     variable z : integer_vector(0 to len-1) := (others => 0);

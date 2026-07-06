@@ -18,8 +18,6 @@ from .reg import Reg, RegVec, RegK, RegVecK, RegFlags, RegFlagsK
 #     hex = auto()
 #
 
-
-
 RegKTypes = Union[RegK, RegFlagsK]
 class Module(ABC):
 
@@ -44,8 +42,29 @@ class Module(ABC):
         for kk in range(self.head.len_kids):
             self.kids[kk] = int.from_bytes(module_data[self.byte_idx:self.byte_idx+SIZE_WORD])
             self.byte_idx += SIZE_WORD
-        assert(self.head.len_sub == 0)
-        self.byte_idx += self.head.len_sub*SIZE_WORD
+        upto_sub = True
+        byte_idx_sub_end = self.byte_idx + self.head.len_sub*SIZE_WORD
+
+        class SubID(IntEnum):
+            PAD = 0x00
+            BYTE_ALIGN = 0x1A
+
+        sub_byte_align = self.byte_align
+        while self.byte_idx < byte_idx_sub_end:
+            # sub_id : int = int.from_bytes(module_data[self.byte_idx:self.byte_idx+1])
+            sub_id = module_data[self.byte_idx]
+            match sub_id:
+                case SubID.PAD:
+                    break
+                case SubID.BYTE_ALIGN:
+                    sub_byte_align = module_data[self.byte_idx+1]
+                    logging.info(f'sub_head BYTE_ALIGN = {sub_byte_align=}')
+                    print(f'sub_head BYTE_ALIGN = {sub_byte_align=}')
+                    self.byte_idx += SIZE_WORD
+                case _:
+                    raise Exception(f"Unkowen {sub_id=}")
+
+        self.byte_idx = byte_idx_sub_end
 
         byte_idx_expected = self.byte_idx + self.head.len_k * SIZE_WORD
         self._init_reg_map_k()
@@ -56,6 +75,8 @@ class Module(ABC):
         self.base_addr_var = self.byte_idx
         self.size_var = self.head.len_var * SIZE_WORD
         byte_idx_expected = self.byte_idx + self.size_var
+
+        self.byte_align = sub_byte_align
         self._init_reg_map_var()
         # print(f'{byte_idx_expected=} {self.byte_idx=}, {self.head.len_var=}')
         self.byte_idx = ceil_div(self.byte_idx, SIZE_WORD) * SIZE_WORD
@@ -103,12 +124,15 @@ class Module(ABC):
     def _byte_idx_add_reg(self, reg):
         self.byte_idx += reg.size
 
+    def _byte_aligment_from_val_width(self, width): 
+        val_sw_bytes = promote_to_sw_w(width)//8
+        align_bytes = max(self.byte_align, val_sw_bytes)
+        return align_bytes
+
     def _byte_idx_align_addr_width(self, width):
-        if self.byte_align == 0:
-            align_bytes = promote_to_sw_w(width)//8
-        else:
-            assert self.byte_align > 0
-            align_bytes = self.byte_align
+        if width == 0:
+            return 0
+        align_bytes = self._byte_aligment_from_val_width(width)
         print(f'{ceil_multiple(self.byte_idx, align_bytes)} = ceil_multiple({self.byte_idx}, {align_bytes})')
         self.byte_idx = ceil_multiple(self.byte_idx, align_bytes)
 
@@ -260,10 +284,11 @@ class ModuleFactory():
         assert module_class.version() not in module_lookup
         module_lookup[module_class.version()] = module_class
 
-    async def make_Module(self, regio : Regio, addr : int, allow_unknowen = False) -> Module:
+    async def make_module(self, regio : Regio, addr : int, allow_unknowen = False) -> Module:
         head_data = await regio.read(addr, SIZE_HEAD)
         module_head = Head(head_data)
         logging.info('module_head =  %s', module_head)
+        print(f'{module_head=}')
         module_size = module_head.module_size()
         module_data = bytearray(head_data + await regio.read(addr+SIZE_HEAD, module_size-SIZE_HEAD))
         # print(f"{module_data=}")
@@ -276,14 +301,12 @@ class ModuleFactory():
                 else:
                     logging.error('Bad check sum for %s v%d, module_head.checksum =  %s, module_class.checksum = %s', module_class.name(), module_class.version(), module_head.checksum, module_class.checksum())
 
-
-
         assert allow_unknowen
         return ModuleUnkowen(regio, addr, module_head, module_data)
 
-async def make_Module(regio : Regio, addr : int, allow_unknowen = False) -> Module:
+async def make_module(regio : Regio, addr : int, allow_unknowen = False) -> Module:
     factory = ModuleFactory()
-    return await factory.make_Module(regio, addr, allow_unknowen)
+    return await factory.make_module(regio, addr, allow_unknowen)
 
 def register_Module(module_class : Type[Module]):
     factory = ModuleFactory()

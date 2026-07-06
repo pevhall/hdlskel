@@ -17,7 +17,7 @@ class Reg {
 public:
     virtual ~Reg() = default;
     Reg(const std::string& name, Acc acc, ValueType value_type, const std::string & desc);
-    void initalise(Module* module, addr_t addr);
+    virtual void initalise(Module* module, addr_t addr);
     addr_t elem_size() const {return m_value_type.sw_elem_size();}
     addr_t elem_w() const {return m_value_type.elem_width();}
     addr_t size() const {return m_value_type.size();}
@@ -30,7 +30,6 @@ public:
     // std::string acc_str() const {return m_acc.str(); };
     Module * module() const { assert (m_module); return m_module; }
     bool cache_only() const;
-
 
     void update_cache();
     void write_cache();
@@ -76,6 +75,7 @@ public:
     {
         if(not value_type.is_vec()) { throw std::runtime_error("Value type must be vector");}
     }
+    void initalise(Module* module, addr_t addr) override;
     void update_cache() { Reg::update_cache(); }
     void write_cache() { Reg::write_cache(); }
     void write_zero() { Reg::write_zero(); }

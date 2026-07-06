@@ -150,8 +150,8 @@ class RegVec(Reg):
     def __init__(self,  *args, **kwargs):
         super().__init__(*args, **kwargs)
         assert isinstance(self.value_type.vec_len, int)
-        self.elem_offset = self.size
-        self.size  *= self.value_type.vec_len
+        self.elem_offset = self.module._byte_aligment_from_val_width(self.size*8);
+        self.size = self.elem_offset * self.value_type.vec_len
 
     def _bytes_to_list_uint(self, b:bytes) -> list[int]:
         value_vec_int = bytes_to_list_int(b, self.elem_offset)

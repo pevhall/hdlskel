@@ -56,7 +56,7 @@ std::string Head::to_str() const {
 
     oss << "{" << id_str() << ", v" << static_cast<int>(version) << ", f=" << static_cast<int>(flags)
         << ", c=" << checksum_str()
-        << " l=" << len_sub << "s+" << +len_kids << "c+" << +len_k << "k+" << +len_var << "v" << "}";
+        << " l=" << +len_sub << "s+" << +len_kids << "c+" << +len_k << "k+" << +len_var << "v" << "}";
 
     return oss.str();
 }
