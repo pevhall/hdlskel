@@ -27,6 +27,7 @@ end package body;
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+use ieee.math_real.all;
 
 use work.basic_pkg.all;
 use work.vec_pkg.all;
@@ -62,8 +63,21 @@ begin
     dst_data_o <= src_vec_data_i(0);
 
   else generate
-    constant OPS_PER_STEP : natural := 1+ceil_log_base(SRC_LEN, LATENCY); --TODO: CHECK THIS!!!!!!!!!!!!!!!!!!!!!!!!!!
-    constant EX_LEN   : natural := OPS_PER_STEP * LATENCY;
+    -- constant OPS_PER_STEP : natural := integer(ceil(real(SRC_LEN) ** (1.0/real(LATENCY)))); --TODO: CHECK THIS!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+    constant LEN_LOG_LATE : natural := ceil_log_base(SRC_LEN, LATENCY);
+    constant OPS_PER_STEP : natural := maximum(2, LEN_LOG_LATE);
+    constant EX_LEN   : natural := OPS_PER_STEP ** LATENCY;
+    -- S ** (1/L)
+
+    -- function ignore return std_ulogic is
+    -- begin
+    --   report "SRC_LEN = "&integer'image(SRC_LEN);
+    --   report "LATENCY = "&integer'image(LATENCY);
+    --   report "OPS_PER_STEP = "&integer'image(OPS_PER_STEP);
+    --   return '1';
+    -- end function;
+    -- constant IGN : std_ulogic := ignore;
 
     signal z_vec_data : vec2_slv_t(0 to LATENCY)(0 to EX_LEN-1)(DATA_W-1 downto 0) := (others => (others => (others => '0')));
     alias z_vec_data_0   is z_vec_data(0);

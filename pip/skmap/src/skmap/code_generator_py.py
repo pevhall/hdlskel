@@ -211,15 +211,16 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
                 s += f'        await {f_name}.{func_write}(value)\n\n'
             case _:
                 assert False
-        if reg.acc in ( Acc.ro, Acc.rw, Acc.wt ):
-            s += f'    async def {reg.name}_update_cache(self) -> {t_str}:\n'
-            s += f'        _ = await {f_name}.read_bytes() \n\n'
 
-        if reg.acc == Acc.rc:
-            reg_name = reg_to_inst_str(reg)
-            func_write      = write_value_function_str(reg.t)
-            s += f'    def {reg.name}_clear(self) -> {t_str}:\n'
-            s += f'        await {reg_name}.write_uint(0)\n\n'
+    reg_name = reg_to_inst_str(reg)
+    if reg.acc in ( Acc.ro, Acc.rw, Acc.wt ):
+        s += f'    async def {reg.name}_update_cache(self):\n'
+        s += f'        _ = await {reg_name}.read_bytes() \n\n'
+
+    if reg.acc == Acc.rc:
+        func_write      = write_value_function_str(reg.t)
+        s += f'    async def {reg.name}_clear(self):\n'
+        s += f'        await {reg_name}.write_zero()\n\n'
 
     return s
     #     for f in reg.flags:
@@ -251,8 +252,6 @@ def generate_py_module(recipe_file : Path, py_file : Path):
 #    * For {recipe.name} {recipe.id} v{recipe.version}
 #    * Checksum 0x{recipe.checksum_str()}
 #-------------------------------------------------------------------------------
-
-import typing
 
 import skmap
 

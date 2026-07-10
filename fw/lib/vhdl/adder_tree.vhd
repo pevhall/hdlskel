@@ -18,6 +18,7 @@ end package body;
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+use ieee.math_real.all;
 
 use work.basic_pkg.all;
 use work.vec_pkg.all;
@@ -52,8 +53,8 @@ begin
 
   else generate
 
-    constant OPS_PER_STEP : natural := ceil_log_base(SRC_LEN, LATENCY);
-    constant EX_LEN       : natural := OPS_PER_STEP * LATENCY;
+    constant OPS_PER_STEP : natural := integer(ceil(real(SRC_LEN) ** (1.0/real(LATENCY)))); --TODO: CHECK THIS!!!!!!!!!!!!!!!!!!!!!!!!!!
+    constant EX_LEN       : natural := OPS_PER_STEP ** LATENCY;
 
     signal z_vec_num : vec2_unsigned_t(0 to LATENCY)(0 to EX_LEN-1)(NUM_W-1 downto 0) := (others => (others => (others => '0')));
 

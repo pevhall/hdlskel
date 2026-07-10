@@ -16,6 +16,7 @@ class RamfaceCtrl:
         self.rply_o  = rply_o
         self.LATENCY = LATENCY
         # print(dir(rqst_i.wren))
+
         # print(rqst_i.wren.range)
         # print(dir(rqst_i.wren.value))
         self.WREN_W  = port_length(self.rqst_i.wren)
@@ -62,7 +63,7 @@ class RamfaceCtrl:
         word_start = addr % self.WREN_W
         a = addr // self.WREN_W
         read_cycles = (length + word_start + self.WREN_W-1)//self.WREN_W 
-        print(f'{a=} = {addr=} // {self.WREN_W=}, {read_cycles=}')
+        # print(f'{a=} = {addr=} // {self.WREN_W=}, {read_cycles=}')
         cycles_total = read_cycles + self.LATENCY + 1
 
         # MASK = 1<<(self.WREN_W-1)
@@ -76,10 +77,10 @@ class RamfaceCtrl:
 
         WORD_MASK = (1<<self.WORD_W)-1
         for cyc_idx in range(cycles_total):
-            print(f'{cyc_idx=} {read_cycles=}')
+            # print(f'{cyc_idx=} {read_cycles=}')
 
             if cyc_idx < read_cycles:
-                print('read')
+                # print('read')
 
                 self.rqst_i.en.value   = 1
                 self.rqst_i.addr.value = a
@@ -87,20 +88,21 @@ class RamfaceCtrl:
                 self.rqst_i.data.value = 0
                 a += 1
             elif cyc_idx == read_cycles:
-                print('done')
+                # print('done')
                 self.rqst_i.en.value   = 0
                 self.rqst_i.addr.value = 0
                 self.rqst_i.wren.value = 0
                 self.rqst_i.data.value = 0
 
             if cyc_idx > self.LATENCY:
+                # print(f'{self.rply_o.en.value=}')
                 assert self.rply_o.en.value
                 assert not self.rply_o.fail.value
 
                 l = min(len_left, self.WREN_W-start)
-                print(f'{self.rply_o.data.value=}')
+                # print(f'{self.rply_o.data.value=}')
                 data_cyc = self.rply_o.data.value.to_unsigned()
-                print(f'{data_cyc=:x}, {start=}, {l=}')
+                # print(f'{data_cyc=:x}, {start=}, {l=}')
                 for word_idx in range(start,start+l):
                     data[data_idx] = (data_cyc>>(word_idx*self.WORD_W)) & WORD_MASK
                     data_idx += 1
@@ -113,7 +115,7 @@ class RamfaceCtrl:
             await RisingEdge(self.clk_i)
             # await Timer(1, units='ps')
 
-        print(f'read {data=}')
+        # print(f'read {data=}')
 
         return data
 
@@ -129,7 +131,7 @@ class RamfaceCtrlBytes(RamfaceCtrl, Regio):
 
     async def read(self, addr : int, length : int) -> bytes:
         l = await self.read_list(addr, length)
-        print(f'{bytes(l)=}')
+        # print(f'{bytes(l)=}')
         return bytes(l)
 
 def make_RamfaceCtrl_default_ports(module):

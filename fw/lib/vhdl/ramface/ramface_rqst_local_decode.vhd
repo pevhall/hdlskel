@@ -57,9 +57,9 @@ architecture rtl of ramface_rqst_local_decode is
 
 begin
 
-  assert FALSE
-  report "BASE_ADDR = "&integer'image(BASE_ADDR) & ", LEN = "&integer'image(LOCAL_RAMFACE_DEPTH)
-  severity NOTE;
+  -- assert FALSE
+  -- report "BASE_ADDR = "&integer'image(BASE_ADDR) & ", LEN = "&integer'image(LOCAL_RAMFACE_DEPTH)
+  -- severity NOTE;
 
   assert ceil_log2(LOCAL_RAMFACE_DEPTH) >= LOCAL_RAMFACE_ADDR_W
   report "LOCAL_RAMFACE_ADDR_W too small to address total length"

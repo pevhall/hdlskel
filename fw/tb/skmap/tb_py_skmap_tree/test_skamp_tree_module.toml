@@ -1,0 +1,20 @@
+name = "test_skmap_tree_module"
+sw_module = "TestSkmapTreeModule"
+id = "TBTrMod"
+version = 1
+
+k = [
+  {name = "TREE_DEPTH",   t = "u8", desc = "Tree depth"},
+  {name = "TREE_WIDTH", t = "u8", desc = "Tree width"},
+]
+
+var = [
+  {name = "trigger_flags",  t = "x5", acc = "wt", desc = "Trigger asserts"},
+  {name = "flags",    t = "b", acc = "rc", desc = "RC flags", flags = [
+     { name = "flag_debug", ass = "debug", desc = "Flag 0"},
+     { name = "flag_info",  ass = "info",  desc = "Flag 1"},
+     { name = "flag_warn",  ass = "warn",  desc = "Flag 2"},
+     { name = "flag_error", ass = "error", desc = "Flag 3"},
+     { name = "flag_fatal", ass = "fatal", desc = "Flag 4"},
+   ]}
+]

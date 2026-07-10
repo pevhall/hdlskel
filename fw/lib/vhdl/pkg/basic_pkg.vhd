@@ -37,6 +37,8 @@ package basic_pkg is
   function ceil_multiple(num : integer; multiple : integer) return integer;
   function ceil_log_base(num : natural; base : natural) return natural;
   function ceil_log2(num : natural) return natural;
+  function ceil_power_of_2(num : natural) return natural;
+  function is_power_of_2(num: integer) return boolean;
   procedure inc(num_io : inout integer; inc_i : in integer := 1);
   procedure inc(num_io : inout unsigned; inc_i : in integer := 1);
 
@@ -92,7 +94,11 @@ package body basic_pkg is
 
   function to_slv(num : integer; w : natural) return std_ulogic_vector is
   begin
-    return std_ulogic_vector(to_signed(num, w));
+    if num < 0 then
+      return std_ulogic_vector(to_signed(num, w));
+    else
+      return std_ulogic_vector(to_unsigned(num, w));
+    end if;
   end function;
 
   function to_slv(str : string) return std_ulogic_vector is
@@ -150,32 +156,38 @@ package body basic_pkg is
   end function;
   
   function ceil_log_base(num : natural; base : natural) return natural is
-    variable temp   : natural := num;
+    variable power   : natural := 1;
     variable result : natural := 0;
   begin
-    while temp > base - 1 loop
-      result := result + 1;
-      temp   := ceil_div(temp, base);
+    assert base > 1 severity FAILURE;
+    -- Increase result until base**result >= num
+    while power < num loop
+      power := power * base;
+      inc(result);
     end loop;
+
+    -- while temp > base - 1 loop
+    --   result := result + 1;
+    --   temp   := ceil_div(temp, base);
+    -- end loop;
 
     return result;
   end function;
 
-  function floor_log_base(num : natural; base : natural) return natural is
-    variable temp   : natural := num;
-    variable result : natural := 0;
+  function ceil_power_of_2(num : natural) return natural is
   begin
-    while temp > base - 1 loop
-      result := result + 1;
-      temp   := temp / base;
-    end loop;
-
-    return result;
+    return 2**ceil_log2(num);
   end function;
 
   function ceil_log2(num : natural) return natural is
   begin
     return ceil_log_base(num, 2);
+  end function;
+
+  function is_power_of_2(num: integer) return boolean is
+  begin
+    report "ceil_log2(num) = "&integer'image(ceil_log2(num));
+    return ceil_power_of_2(num) = num;
   end function;
 
   procedure inc(num_io : inout integer; inc_i : in integer := 1) is

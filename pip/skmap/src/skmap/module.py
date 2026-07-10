@@ -11,7 +11,8 @@ from .regio import Regio
 from .head import Head, SIZE_HEAD, SIZE_WORD, SYNC
 from .basic_types import Acc, Ass, ValueKind, ValueType, value_type_u8, value_type_x32
 from .basic import ceil_log2, ceil_div, ceil_multiple, promote_to_sw_w, bytes_to_list_int, list_int_to_bytes, cast_uint_to_sint, to_rich_str
-from .reg import Reg, RegVec, RegK, RegVecK, RegFlags, RegFlagsK
+from .reg import Reg, RegVec, RegK, RegVecK, RegFlags, RegFlagsK, RFlag
+from .reg_map_table import RegMapTable
 
 # class Fmt(Enum):
 #     default = auto()
@@ -26,11 +27,13 @@ class Module(ABC):
         self.base_addr = addr
         self.head      = module_head
         self.cache     = module_data
-        self.kids      = [0] * self.head.len_k
+        self._kid_addrs= [0] * self.head.len_kids
+        self._kids     : list[Optional['Module']] = [None] * self.head.len_kids
         self.arr_reg_k   : list[RegKTypes] = []
         self.arr_reg_var : list[Reg]  = []
-        self.map_reg_k   : dict[str, RegKTypes] = {}
-        self.map_reg_var : dict[str, Reg]  = {}
+        self.arr_reg_var_ass_flags : list[RegFlags] = []
+        # self.map_reg_k   : dict[str, RegKTypes] = {}
+        # self.map_reg_var : dict[str, Reg]  = {}
         self.use_cache = True
         self.byte_align = 0
 
@@ -40,9 +43,12 @@ class Module(ABC):
         self.byte_idx = SIZE_HEAD
 
         for kk in range(self.head.len_kids):
-            self.kids[kk] = int.from_bytes(module_data[self.byte_idx:self.byte_idx+SIZE_WORD])
+            self._kid_addrs[kk] = int.from_bytes(module_data[self.byte_idx:self.byte_idx+SIZE_WORD], byteorder='little')
             self.byte_idx += SIZE_WORD
-        upto_sub = True
+            assert self._kid_addrs[kk] != 0, "addr 0 should never be a kid"
+        # if 0 and len(self._kid_addrs) > 0:
+        #     print(f'kids = {[hex(a) for a in self._kid_addrs]}')
+
         byte_idx_sub_end = self.byte_idx + self.head.len_sub*SIZE_WORD
 
         class SubID(IntEnum):
@@ -58,8 +64,9 @@ class Module(ABC):
                     break
                 case SubID.BYTE_ALIGN:
                     sub_byte_align = module_data[self.byte_idx+1]
-                    logging.info(f'sub_head BYTE_ALIGN = {sub_byte_align=}')
                     print(f'sub_head BYTE_ALIGN = {sub_byte_align=}')
+                    logging.info(f'sub_head BYTE_ALIGN = {sub_byte_align=}')
+                    assert sub_byte_align.bit_count == 1
                     self.byte_idx += SIZE_WORD
                 case _:
                     raise Exception(f"Unkowen {sub_id=}")
@@ -72,7 +79,7 @@ class Module(ABC):
         # print(f'{byte_idx_expected=} {self.byte_idx=}, {self.head.len_k=}')
         assert(byte_idx_expected == self.byte_idx)
 
-        self.base_addr_var = self.byte_idx
+        self.base_addr_var = self.byte_idx + self.base_addr
         self.size_var = self.head.len_var * SIZE_WORD
         byte_idx_expected = self.byte_idx + self.size_var
 
@@ -86,6 +93,41 @@ class Module(ABC):
 
     def _cache_addr(self, addr:int) -> int:
         return addr - self.base_addr
+
+
+    async def kid_at(self, idx : int) -> 'Module':
+        if self._kids[idx] is None:
+            self._kids[idx] = await make_module(self.regio, self._kid_addrs[idx])
+
+        kid = self._kids[idx]
+        assert kid is not None
+        return kid
+
+    async def kids(self) -> list['Module']:
+        for idx in range(self.len_kids):
+            await self.kid_at(idx)
+        # self._kids : list['Module']
+        return self._kids
+
+    def kids_cached(self) -> list[Optional['Module']]:
+        # self._kids : list[Optional['Module']]
+        return self._kids
+
+    def kids_with_class_cached(self, clss) -> list['Module']:
+        kids = []
+        for k in self._kids:
+            if isinstance(k, clss):
+                kids.append(k)
+        return kids
+
+    def get_kid_with_class_cached(self, clss) -> 'Module':
+        k = self.kids_with_class_cached(clss)
+        assert(len(k) == 1)
+        return k[0]
+
+    @property
+    def len_kids(self) -> int:
+        return self.head.len_kids
 
     def read_cache(self, addr:int, size : int) -> bytes:
         cache_addr = self._cache_addr(addr)
@@ -112,9 +154,15 @@ class Module(ABC):
         await self.regio.write(addr, b)
         self.write_bytes_cache(addr, b)
 
-    async def read_cache_all(self):
+    async def update_cache(self):
         assert not self.use_cache
-        _ = await self.read_bytes(self.base_addr_var, self.size_var)
+        await self.read_bytes(self.base_addr_var, self.size_var)
+        # print(f'{__file__}: self.read_bytes({hex(self.base_addr_var)=}, {self.size_var=}) = {b}')
+
+    async def update_cache_tree(self):
+        await self.update_cache()
+        for kid in await self.kids():
+            await kid.update_cache_tree()
 
     async def write_cache_all(self):
         cache_addr = self._cache_addr(self.base_addr_var)
@@ -133,14 +181,14 @@ class Module(ABC):
         if width == 0:
             return 0
         align_bytes = self._byte_aligment_from_val_width(width)
-        print(f'{ceil_multiple(self.byte_idx, align_bytes)} = ceil_multiple({self.byte_idx}, {align_bytes})')
+        # print(f'{ceil_multiple(self.byte_idx, align_bytes)} = ceil_multiple({self.byte_idx}, {align_bytes})')
         self.byte_idx = ceil_multiple(self.byte_idx, align_bytes)
 
     def _add_reg_k(self, reg : RegKTypes):
         self._byte_idx_align_addr_width(reg.value_type.width)
         reg.addr = self.byte_idx + self.base_addr
         self.arr_reg_k.append(reg)
-        self.map_reg_k[reg.name] = reg
+        # self.map_reg_k[reg.name] = reg
         self._byte_idx_add_reg(reg)
         self._byte_idx_align_addr_width(reg.value_type.width)
 
@@ -149,11 +197,14 @@ class Module(ABC):
 
         reg.addr = self.byte_idx + self.base_addr
         self.arr_reg_var.append(reg)
-        self.map_reg_var[reg.name] = reg
+        if isinstance(reg, RegFlags):
+            if reg.has_ass:
+                self.arr_reg_var_ass_flags.append(reg)
+        # self.map_reg_var[reg.name] = reg
         self._byte_idx_add_reg(reg)
 
         self._byte_idx_align_addr_width(reg.value_type.width)
-        print(f'map var {reg.name} at {self.byte_idx=} {self.byte_align=} {reg.value_type.width=}')
+        # print(f'map var {reg.name} at {self.byte_idx=} {self.byte_align=} {reg.value_type.width=}')
 
     def write_zero_all_rc_cached(self):
         for reg_var in self.arr_reg_var:
@@ -195,28 +246,64 @@ class Module(ABC):
     def _init_post_reg_maps(self) -> None:
         pass
 
-    def reg_map_table(self) -> Table:
-        table = Table(title=f"skmap {self.name} {self.head}")
-        table.add_column("Addr",        justify="right", style="cyan", no_wrap=True)
-        # table.add_column("W",           justify="right", style="blue", no_wrap=True)
-        table.add_column("T",           justify="right", style="blue", no_wrap=True)
-        table.add_column("Acc",         justify="left",  style="blue", no_wrap=True)
-        # table.add_column("Ass",         justify="left",                no_wrap=True)
-        table.add_column("Name",        justify="left",  style="cyan")
-        table.add_column("Value",       justify="right", style=Ass.none.color)
-        table.add_column("Description", justify="left",  style="blue")
+    def print_reg_map(self) :
+        table = RegMapTable(title=self.info_line_str())
+        table.add_module(self)
+        table.print()
 
-        for reg in self.arr_reg_k:
-            reg.add_to_table(table)
+    def info_line_str(self) -> str:
+        return f"{hex(self.base_addr)} {self.name()} {self.head}"
 
-        for reg in self.arr_reg_var:
-            reg.add_to_table(table)
+    async def make_kids(self):
+        await self.kids()
 
-        return table
+    async def make_tree(self):
+        for k in await self.kids():
+            await k.make_tree()
 
-    def reg_map_print(self) :
-        table = self.reg_map_table()
-        console.print(table)
+    def print_tree_cached(self, indent : str =''):
+        print(indent+self.info_line_str())
+        indent = '  ─ '+indent
+        # if idx == self.len_kids-1:
+        #     indent = '└─'+indent
+        # else:
+        #     indent = '├─'+indent 
+        for ii, kid in enumerate(self._kids):
+            if kid is None:
+                print (f'{indent} {self._kid_addrs[ii]} Uninitalised')
+            else:
+                kid.print_tree_cached(indent)
+
+    def check_assert_cached(self, log_ass : Ass = Ass.none, log_f : list[RFlag] = []) -> Ass:
+        ass = Ass.none
+        for reg in self.arr_reg_var_ass_flags:
+            f_ass = reg.ass_check_cached(log_ass, log_f)
+            if f_ass >= ass:
+                ass = f_ass
+        return ass
+
+    def check_assert_tree_cached(self, log_ass : Ass = Ass.none, log_f : list[RFlag] = []) -> Ass:
+        ass = self.check_assert_cached(log_ass, log_f)
+        for kid in self.kids_cached():
+            assert kid is not None
+            ass_kid = kid.check_assert_tree_cached(log_ass, log_f)
+            if ass_kid > ass:
+                ass = ass_kid
+        return ass
+
+    async def clear_assert(self):
+        for reg_f in self.arr_reg_var_ass_flags:
+            reg_f_ass = reg_f.ass_check_cached()
+            if reg_f_ass >= Ass.debug:
+                print(f'{reg_f_ass=}')
+                if reg_f.acc == Acc.rc:
+                    await reg_f.write_zero()
+
+    async def clear_assert_tree(self):
+        await self.clear_assert()
+        for k in await self.kids():
+            await k.clear_assert_tree()
+
 
 class ModuleUnkowen(Module):
 
@@ -288,7 +375,7 @@ class ModuleFactory():
         head_data = await regio.read(addr, SIZE_HEAD)
         module_head = Head(head_data)
         logging.info('module_head =  %s', module_head)
-        print(f'{module_head=}')
+        # print(f'{module_head=}')
         module_size = module_head.module_size()
         module_data = bytearray(head_data + await regio.read(addr+SIZE_HEAD, module_size-SIZE_HEAD))
         # print(f"{module_data=}")

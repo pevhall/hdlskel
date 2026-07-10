@@ -76,7 +76,6 @@ void Module::align_byte_idx(addr_t size) {
 }
 
 void Module::add_reg(std::shared_ptr<Reg> reg) {
-    auto i = m_byte_idx;
     align_byte_idx(reg->elem_size());
     reg->initalise(this, m_byte_idx);
     m_byte_idx += reg->size() ;

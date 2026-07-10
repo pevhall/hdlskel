@@ -45,6 +45,7 @@ package vec_pkg is
 
   -- maths
   function "+"(lhs : integer_vector; rhs : integer) return integer_vector;
+  function "*"(lhs : integer_vector; rhs : integer) return integer_vector;
   function "+"(vec : integer_vector) return integer;
   function "+"(vec : vec_unsigned_t) return u_unsigned;
   function resize(vec : vec_unsigned_t; elem_w : natural) return vec_unsigned_t;
@@ -215,6 +216,15 @@ package body vec_pkg is
   begin
     for ii in lhs'range loop
       result(ii) := lhs(ii) + rhs;
+    end loop;
+    return result;
+  end function;
+
+  function "*"(lhs : integer_vector; rhs : integer) return integer_vector is
+    variable result : integer_vector(lhs'range);
+  begin
+    for ii in lhs'range loop
+      result(ii) := lhs(ii) * rhs;
     end loop;
     return result;
   end function;

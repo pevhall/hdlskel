@@ -3,6 +3,7 @@ from . import head
 from . import reg
 from . import module
 from . import basic_types
+from . import reg_map_table
 
 Head   = head.Head
 Regio  = regio.Regio
@@ -26,3 +27,4 @@ RFlagK    = reg.RFlagK
 
 make_module     = module.make_module
 register_Module = module.register_Module
+print_reg_map_table_flags = reg_map_table.print_table_flags

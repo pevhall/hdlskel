@@ -12,7 +12,7 @@ package body skmap_module_ipkg is
   function get_priv_rply_combine_latency return natural is
     constant WRKR_LEN : natural := 2;
   begin
-    return ramface_rply_combine_ipkg.get_latency(WRKR_LEN=>WRKR_LEN) + PRIV_RAMFACE_REGS_LATENCY;
+    return ramface_rply_combine_ipkg.get_latency(WRKR_LEN=>WRKR_LEN); -- + PRIV_RAMFACE_REGS_LATENCY;
   end function;
   constant PRIV_RPLY_COMBINE_LATENCY : natural := get_priv_rply_combine_latency;
   constant RAMFACE_LATENCY : natural := skmap_module_ipkg.PRIV_RPLY_COMBINE_LATENCY + PRIV_RAMFACE_REGS_LATENCY;
@@ -93,13 +93,27 @@ architecture rtl of skmap_module is
     len_k       => REGS_K_INT'length,
     len_var     => SKMAP_LEN_VAR
   );
+
+  function ignore return boolean is
+  begin
+    report "SKMAP_KIDS'length = "&integer'image(SKMAP_KIDS'length);
+    if(SKMAP_KIDS'length > 0) then
+      report "SKMAP_KIDS(0) = "&integer'image(SKMAP_KIDS(0));
+    end if;
+    report "REGS_K_INT'length = "&integer'image(REGS_K_INT'length);
+    report "to_vec_int(SKMAP_HEAD)'length = "&integer'image(to_vec_int(SKMAP_HEAD)'length);
+    return TRUE;
+  end function;
+  constant IGN : boolean := ignore;
+
   constant RAMFACE_K_REGS_INT : integer_vector := (
       to_vec_int(SKMAP_HEAD)
     & SKMAP_KIDS
     & SKMAP_SUB
     & REGS_K_INT
   );
-  constant BASE_ADDR_REGS_RW : natural := BASE_ADDR + RAMFACE_K_DEPTH;
+  constant BASE_ADDR_REGS_K  : natural := BASE_ADDR / RAMFACE_WREN_W;
+  constant BASE_ADDR_REGS_RW : natural := BASE_ADDR_REGS_K + RAMFACE_K_DEPTH;
 
   signal ramface_rply_regs_k : ramface_rply_t(
     data(RAMFACE_DATA_W -1 downto 0)
@@ -110,10 +124,17 @@ architecture rtl of skmap_module is
 
 begin
 
+  assert is_power_of_2(RAMFACE_WREN_W)
+  report "RAMFACE_WREN_W needs to be power of 2 (for addr divide)"
+  severity FAILURE;
+
+  assert is_power_of_2(SKMAP_BYTE_ALIGN)
+  report "SKMAP_BYTE_ALIGN needs to be power of 2, got "&integer'image(SKMAP_BYTE_ALIGN)&", "&integer'image(ceil_log2(SKMAP_BYTE_ALIGN))
+  severity FAILURE;
 
   i_ramface_regs_k : entity work.ramface_regs_k
   generic map (
-    BASE_ADDR      => BASE_ADDR,
+    BASE_ADDR      => BASE_ADDR_REGS_K,
     RAMFACE_ADDR_W => RAMFACE_ADDR_W,
     RAMFACE_DATA_W => RAMFACE_DATA_W,
     RAMFACE_WREN_W => RAMFACE_WREN_W,

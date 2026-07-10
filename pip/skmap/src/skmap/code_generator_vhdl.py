@@ -291,12 +291,14 @@ begin
         for kv in recipe.k:
             if kv.t.kind == ValueKind.flag:
                 continue
-            vhdl_f.write(f'  assert ')
+            if kv.t.is_vec:
+                # TODO: add type checking for vectors
+                continue
             if kv.t.kind == ValueKind.uint:
-                vhdl_f.write(f'{kv.name} < 2**{kv.t.width} severity FAILURE;\n')
+                vhdl_f.write(f'assert {kv.name} < 2**{kv.t.width} severity FAILURE;\n')
             elif kv.t.kind == ValueKind.sint and kv.t.width <= 32:
-                vhdl_f.write(f'{kv.name} <   2**{kv.t.width-1} severity FAILURE;\n')
-                vhdl_f.write(f'{kv.name} >= -2**{kv.t.width-1} severity FAILURE;\n')
+                vhdl_f.write(f'assert {kv.name} <   2**{kv.t.width-1} severity FAILURE;\n')
+                vhdl_f.write(f'assert {kv.name} >= -2**{kv.t.width-1} severity FAILURE;\n')
 
         vhdl_f.write(f"""
   i_skmap_module : entity work.skmap_module

@@ -109,9 +109,9 @@ package body skmap_pkg is
   function make_skmap_sub_byte_align(byte_align : natural) return integer_vector is
     variable sub : integer_vector(0 to 0) := (0 => SKMAP_SUB_ID_BYTE_ALIGN + 2**8*byte_align);
   begin
-    report "byte_align = "&integer'image(byte_align);
+    -- report "byte_align = "&integer'image(byte_align);
     assert byte_align < 2**8;
-    if byte_align = 0 then
+    if byte_align = 0 or byte_align = 1 then
       return NULL_INTEGER_VECTOR;
     end if;
     return sub;

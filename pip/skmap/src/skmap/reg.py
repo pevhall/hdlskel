@@ -33,6 +33,9 @@ class Reg:
             return self.read_bytes_cached()
         return await self.module.read_bytes(self.addr, self.size)
 
+    async def update_cache(self):
+        _ = await self.read_bytes()
+
     def _bytes_to_uint(self, b:bytes) -> int:
         value_int = int.from_bytes(b, byteorder='little')
         if self.value_type.width != (self.size*8):
@@ -113,7 +116,7 @@ class Reg:
         return self.module.write_bytes_cache(self.addr, b)
 
     async def write_bytes(self, b : bytes):
-        print(f'{self.acc=} {not any(b)=}')
+        # print(f'{self.acc=} {not any(b)=}')
         assert self.acc in (Acc.rw, Acc.wt) or ((self.acc == Acc.rc) and not any(b))
         assert isinstance(self.addr, int)
         assert len(b) <= self.size
@@ -142,8 +145,8 @@ class Reg:
     def write_zero_cache(self):
         return self.write_sint_cache(0)
 
-    def add_to_table(self, table):
-        table.add_row(str(self.addr), self.value_type_str(),  str(self.acc),  self.name, self.read_rich_str_cached(), self.desc)
+    # def add_to_table(self, table):
+    #     table.add_row(str(self.addr), self.value_type_str(),  str(self.acc),  self.name, self.read_rich_str_cached(), self.desc)
 
 class RegVec(Reg):
 
@@ -337,6 +340,9 @@ class RFlag:
     def ass_check_cached(self) -> Ass:
         return self._ass_check(self.read_bool_cached())
 
+    # def add_to_table(self, table):
+    #     table.add_row('-', 'b',  f'{self.bit}',  self.name, self._value_rich_str(), self.desc)
+
 class RFlagK(RFlag):
 
     def __init__(self,  *args, **kwargs):
@@ -362,36 +368,40 @@ class RegFlags(Reg):
             self.bit_flags[f.bit] = f
             self.name_flags[f.name] = f
 
-    def add_to_table(self, table):
-        Reg.add_to_table(self, table)
-        # value_int = self.read_uint_cached()
-        for f in self.flags:
-            # b = f.bit
-            # v = bool((value_int >> b) & 1)
-            table.add_row('-', 'b',  f'{f.bit}',  f.name, f._value_rich_str(), f.desc)
+    # def add_to_table(self, table):
+    #     Reg.add_to_table(self, table)
+    #     # value_int = self.read_uint_cached()
+    #     for f in self.flags:
+    #         # b = f.bit
+    #         # v = bool((value_int >> b) & 1)
+    #         table.add_row('-', 'b',  f'{f.bit}',  f.name, f._value_rich_str(), f.desc)
 
         # table.add_row(str(self.addr), self.value_type_str(),  str(self.acc),  self.name, self.read_rich_str_cached(), self.desc)
 
-    def ass_check_cached(self) -> Ass:
-        result : Ass = Ass.none
+    def ass_check_cached(self, log_ass : Ass = Ass.none, log_f : list[RFlag] = []) -> Ass:
+        result = Ass.none
         value_int = self.read_uint_cached()
+        # print(f'{value_int=}')
         for f in self.flags:
             v = bool((value_int >> f.bit) & 1)
             ass = f._ass_check(v)
+            if log_ass != Ass.none and ass >= log_ass:
+                log_f.append(f)
             if ass > result:
                 result = ass
-        return Ass(result)
+        return result
 
-    async def ass_check(self) -> Ass:
-        value_int = await self.read_uint()
-        result : Ass = Ass.none
-        value_int = self.read_uint_cached()
+    @property
+    def has_ass(self) -> bool:
         for f in self.flags:
-            v = bool((value_int >> f.bit) & 1)
-            ass = f._ass_check(v)
-            if ass > result:
-                result = ass
-        return Ass(result)
+            if f.ass != None:
+                return True
+        return False
+
+
+    async def ass_check(self, log_ass : Ass = Ass.none, log : list[RFlag] = []) -> Ass:
+        await self.update_cache()
+        return self.ass_check_cached(log_ass, log)
 
 class RegFlagsK(RegFlags):
     def __init__(self, *args, **kwargs):
