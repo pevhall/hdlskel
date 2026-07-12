@@ -21,11 +21,11 @@ async def reg_loopback(dut):
         if dut.regs_wt_trigger_o.value != 0:
             wt = int(dut.regs_wt_o.value)
             print(f'{wt=}')
-            dut.flag0_i.value = (wt>>0)&1
-            dut.flag1_i.value = (wt>>1)&1
-            dut.flag2_i.value = (wt>>2)&1
-            dut.flag3_i.value = (wt>>3)&1
-            dut.flag4_i.value = (wt>>4)&1
+            dut.debug_flag0_i.value = (wt>>0)&1
+            dut.info_flag1_i.value  = (wt>>1)&1
+            dut.warn_flag2_i.value  = (wt>>2)&1
+            dut.error_flag3_i.value = (wt>>3)&1
+            dut.fatal_flag4_i.value = (wt>>4)&1
             await RisingEdge(dut.clk_i)
             # dut.flag0_i.value = 0
             # dut.flag1_i.value = 0
@@ -49,11 +49,12 @@ async def test_skmap_module_test_acc_types(dut):
 
     for ii in range(dut.RO_LEN.value):
         dut.regs_ro_i[ii].value = ii
-    dut.flag0_i.value = 0
-    dut.flag1_i.value = 0
-    dut.flag2_i.value = 0
-    dut.flag3_i.value = 0
-    dut.flag4_i.value = 0
+    dut.debug_flag0_i.value = 0
+    dut.info_flag1_i.value = 0
+    dut.warn_flag2_i.value = 0
+    dut.error_flag3_i.value = 0
+    dut.fatal_flag4_i.value = 0
+    dut.debug_flag_vec_i.value = 0
     for ii in range(dut.RW_LEN.value):
         dut.regs_rc_i[ii].value = 0
     cocotb.start_soon(Clock(dut.clk_i, 1, unit="ns").start())
@@ -79,11 +80,13 @@ async def test_skmap_module_test_acc_types(dut):
     await module.regs_wt_trigger(0x1F)
 
     print(f'{await module.regs_rw_read()=}')
-    await module.read_cache_all()
+    await module.update_cache()
     print(f'{await module.regs_rw_read()=}')
-    module.reg_map_print()
+    await module.ctrl_flag_0_write(True)
+    module.print_reg_map()
     await module.write_zero_all_rc()
-    module.reg_map_print()
+    await module.update_cache()
+    module.print_reg_map()
 
     server = regio.tcp_server.RegioTcpServer(ramface_ctrl)
     await server.start()

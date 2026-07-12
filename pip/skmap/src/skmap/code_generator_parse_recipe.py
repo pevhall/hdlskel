@@ -9,6 +9,7 @@ import argparse
 from pathlib import Path
 from enum import Enum, auto
 from typing import Union, Optional
+from dataclasses import dataclass
 
 from basic import ceil_div, ceil_log2 #promote_to_sw_w, ceil_multiple
 from basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_ID_LEN
@@ -267,15 +268,32 @@ class RecipeVar:
 
 RecipeReg = Union[RecipeK, RecipeVar]
 
+
+@dataclass
+class FwOpts:
+    ports_use_basic_types : bool = False
+    hdlskel_vhdl_lib : str = 'hdlskel'
+
 class Recipe:
     def __init__(self, d : dict):
         self.name      : str = d['name']
         self.sw_module : str = d['sw_module']
+        self.fw_module : str = d['fw_module']
         self.id        : str = d['id']
         assert len(self.id) <= SKMAP_ID_LEN
         self.version   : int = d['version']
         self.k = []
         self.name_to_k : dict[str, RecipeK]= {}
+
+
+        self.fw_opts = FwOpts()
+
+        if 'fw_opts' in d:
+            d_fw_opts = d['fw_opts']
+            if 'ports_use_basic_types' in d_fw_opts:
+                self.fw_opts.ports_use_basic_types = d_fw_opts['ports_use_basic_types']
+            if 'hdlskel_vhdl_lib' in d_fw_opts:
+                self.fw_opts.hdlskel_vhdl_lib = d_fw_opts['hdlskel_vhdl_lib']
 
         for dkv in d['k']:
             kv = RecipeK(dkv, self.name_to_k)

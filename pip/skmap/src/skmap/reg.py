@@ -1,7 +1,7 @@
 from typing import Optional, Type, Literal, Union, TYPE_CHECKING
 
 from .basic_types import Acc, Ass, ValueKind, ValueType, value_type_u8, value_type_x32
-from .basic import ceil_log2, ceil_div, ceil_multiple, promote_to_sw_w, bytes_to_list_int, list_int_to_bytes, cast_uint_to_sint, to_rich_str
+from .basic import ceil_log2, ceil_div, ceil_multiple, promote_to_sw_w, bytes_to_list_int, list_int_to_bytes, cast_uint_to_sint, to_rich_str, set_bit
 
 if TYPE_CHECKING:
     from module import Module
@@ -32,9 +32,6 @@ class Reg:
         if self.acc == Acc.k:
             return self.read_bytes_cached()
         return await self.module.read_bytes(self.addr, self.size)
-
-    async def update_cache(self):
-        _ = await self.read_bytes()
 
     def _bytes_to_uint(self, b:bytes) -> int:
         value_int = int.from_bytes(b, byteorder='little')
@@ -123,6 +120,9 @@ class Reg:
         assert len(b) >= ceil_div(self.value_type.width, 8)
         return await self.module.write_bytes(self.addr, b)
 
+    async def write_cache(self):
+        await self.write_bytes(self.read_bytes_cached())
+
     def write_uint_cache(self, v : int):
         b = v.to_bytes(self.size, byteorder='little', signed=False)
         return self.write_bytes_cache(b)
@@ -139,14 +139,17 @@ class Reg:
         b = v.to_bytes(self.size, byteorder='little', signed=True)
         return self.write_bytes_cache(b)
 
+    async def write_bool(self, v : bool):
+        return await self.write_uint(int(v))
+
+    def write_bool_cache(self, v : bool):
+        return self.write_uint_cache(int(v))
+
     def write_zero(self):
         return self.write_uint(0)
 
     def write_zero_cache(self):
         return self.write_sint_cache(0)
-
-    # def add_to_table(self, table):
-    #     table.add_row(str(self.addr), self.value_type_str(),  str(self.acc),  self.name, self.read_rich_str_cached(), self.desc)
 
 class RegVec(Reg):
 
@@ -317,6 +320,21 @@ class RFlag:
     def read_bool_cached(self) -> bool:
         assert self.vec_len is None or self.vec_len == 1
         return (self.reg_flags.read_uint_cached() & (1<<self.bit)) != 0
+
+    async def write_bool(self, v : bool):
+        self.write_bool_cache(v)
+        await self.reg_flags.write_cache()
+
+    def write_bool_cache(self, v : bool):
+        b = bytearray(self.reg_flags.read_bytes_cached())
+        ii_byte = self.bit // 8
+        ii_bit  = self.bit  % 8
+        b[ii_byte] = set_bit(int(b[ii_byte]), ii_bit, v)
+        print(f'b[{ii_byte}] = {b[ii_byte]}')
+        self.reg_flags.write_bytes_cache(bytes(b))
+
+        d = self.reg_flags.read_bytes_cached()
+        print(f'{d=}')
 
     async def read_list_bool(self) -> list[bool]:
         assert self.vec_len is not None

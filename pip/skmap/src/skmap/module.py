@@ -66,7 +66,7 @@ class Module(ABC):
                     sub_byte_align = module_data[self.byte_idx+1]
                     print(f'sub_head BYTE_ALIGN = {sub_byte_align=}')
                     logging.info(f'sub_head BYTE_ALIGN = {sub_byte_align=}')
-                    assert sub_byte_align.bit_count == 1
+                    assert sub_byte_align.bit_count() == 1
                     self.byte_idx += SIZE_WORD
                 case _:
                     raise Exception(f"Unkowen {sub_id=}")
@@ -157,7 +157,6 @@ class Module(ABC):
     async def update_cache(self):
         assert not self.use_cache
         await self.read_bytes(self.base_addr_var, self.size_var)
-        # print(f'{__file__}: self.read_bytes({hex(self.base_addr_var)=}, {self.size_var=}) = {b}')
 
     async def update_cache_tree(self):
         await self.update_cache()
@@ -386,7 +385,7 @@ class ModuleFactory():
                 if module_head.checksum == module_class.checksum():
                     return module_class(regio, addr, module_head, module_data)
                 else:
-                    logging.error('Bad check sum for %s v%d, module_head.checksum =  %s, module_class.checksum = %s', module_class.name(), module_class.version(), module_head.checksum, module_class.checksum())
+                    logging.error('Bad check sum for %s v%d, module_head.checksum =  %s, module_class.checksum = %s', module_class.name(), module_class.version(), hex(module_head.checksum), hex(module_class.checksum()))
 
         assert allow_unknowen
         return ModuleUnkowen(regio, addr, module_head, module_data)

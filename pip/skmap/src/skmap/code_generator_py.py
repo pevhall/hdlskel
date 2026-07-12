@@ -53,7 +53,7 @@ def value_ret_type_str(t : Union[ValueType, ValueTypeUnresolved]):
         case _:
             assert False
     if t.is_vec:
-        rt = f'typing.List[{rt}]'
+        rt = f'list[{rt}]'
     return rt
 
 _value_kind_function_str = common._value_kind_function_str

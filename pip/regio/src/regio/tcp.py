@@ -16,7 +16,7 @@ RPLY_HEAD_SIZE = struct.calcsize(RPLY_HEAD_FMT)
 SIZE_MAX = 0xFFFF
 ADDR_MAX = 0xFFFF_FFFF
 
-PORT_DEFAULT = 0x9A9B
+PORT_DEFAULT = 0x9AB0
 
 @dataclass 
 class RqstHead:

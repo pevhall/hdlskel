@@ -30,45 +30,62 @@ def port_name(name : str, direction : Literal['in', 'out']):
 def var_name(name : str):
     return name + "_v"
 
-def k_type_to_vhdl_str(t : ValueType) -> str:
+def k_type_to_vhdl_str(t : ValueType, basic_ports:bool=False) -> str:
     elem_rng = f"({t.width}-1 downto 0)"
-    if t.is_vec:
-        vec_rng = f"(0 to {t.vec_len}-1)"
-        str_rng = f"(1 to {t.vec_len})"
-        flg_rng = f"({t.width}-1 downto 0)"
-        match t.kind:
-            case ValueKind.uint: return f"integer_vector{vec_rng}"
-            case ValueKind.sint: return f"integer_vector{vec_rng}"
-            case ValueKind.char: return f"string{str_rng}"
-            case ValueKind.bits: return f"vec_slv_t{vec_rng}{elem_rng}"
-            case ValueKind.flag: return f"std_logic_vector{flg_rng}"
+    if basic_ports:
+        if t.is_vec:
+            assert False, "yet to be implemented" 
+        else:
+            match t.kind:
+                case ValueKind.uint: return "natural"
+                case ValueKind.sint: return "integer"
+                case ValueKind.char: return "std_logic_vector(7 downto 0)"
+                case ValueKind.bits: return f"std_logic_vector{elem_rng}"
+                case ValueKind.flag: return f"std_logic_vector{elem_rng}"
     else:
-        match t.kind:
-            case ValueKind.uint: return "natural"
-            case ValueKind.sint: return "integer"
-            case ValueKind.char: return "character"
-            case ValueKind.bits: return f"std_logic_vector{elem_rng}"
-            case ValueKind.flag: return f"std_logic_vector{elem_rng}"
+        if t.is_vec:
+            vec_rng = f"(0 to {t.vec_len}-1)"
+            str_rng = f"(1 to {t.vec_len})"
+            flg_rng = f"({t.width}-1 downto 0)"
+            match t.kind:
+                case ValueKind.uint: return f"integer_vector{vec_rng}"
+                case ValueKind.sint: return f"integer_vector{vec_rng}"
+                case ValueKind.char: return f"string{str_rng}"
+                case ValueKind.bits: return f"vec_slv_t{vec_rng}{elem_rng}"
+                case ValueKind.flag: return f"std_logic_vector{flg_rng}"
+        else:
+            match t.kind:
+                case ValueKind.uint: return "natural"
+                case ValueKind.sint: return "integer"
+                case ValueKind.char: return "character"
+                case ValueKind.bits: return f"std_logic_vector{elem_rng}"
+                case ValueKind.flag: return f"std_logic_vector{elem_rng}"
 
-def var_type_to_vhdl_str(t : ValueType) -> str:
+def var_type_to_vhdl_str(t : ValueType, basic_ports:bool=False) -> str:
     elem_rng = f"({t.width}-1 downto 0)"
-    if t.is_vec:
-        vec_rng = f"(0 to {t.vec_len}-1)"
-        str_rng = f"(1 to {t.vec_len})"
-        flg_rng = f"({t.vec_len}*{t.width}-1 downto 0)"
-        match t.kind:
-            case ValueKind.uint: return f"vec_unsigned_t{vec_rng}{elem_rng}"
-            case ValueKind.sint: return f"vec_signed_t{vec_rng}{elem_rng}"
-            case ValueKind.char: return f"string{str_rng}"
-            case ValueKind.bits: return f"vec_slv_t{vec_rng}{elem_rng}"
-            case ValueKind.flag: return f"std_logic_vector{flg_rng}"
+    if basic_ports:
+        if t.is_vec:
+            assert False, "yet to be implemented" 
+        else:
+            return f"std_logic_vector{elem_rng}"
     else:
-        match t.kind:
-            case ValueKind.uint: return f"unsigned{elem_rng}"
-            case ValueKind.sint: return f"signed{elem_rng}"
-            case ValueKind.char: return f"character"
-            case ValueKind.bits: return f"std_logic_vector{elem_rng}"
-            case ValueKind.flag: return f"std_logic_vector{elem_rng}"
+        if t.is_vec:
+            vec_rng = f"(0 to {t.vec_len}-1)"
+            str_rng = f"(1 to {t.vec_len})"
+            flg_rng = f"({t.vec_len}*{t.width}-1 downto 0)"
+            match t.kind:
+                case ValueKind.uint: return f"vec_unsigned_t{vec_rng}{elem_rng}"
+                case ValueKind.sint: return f"vec_signed_t{vec_rng}{elem_rng}"
+                case ValueKind.char: return f"string{str_rng}"
+                case ValueKind.bits: return f"vec_slv_t{vec_rng}{elem_rng}"
+                case ValueKind.flag: return f"std_logic_vector{flg_rng}"
+        else:
+            match t.kind:
+                case ValueKind.uint: return f"unsigned{elem_rng}"
+                case ValueKind.sint: return f"signed{elem_rng}"
+                case ValueKind.char: return f"character"
+                case ValueKind.bits: return f"std_logic_vector{elem_rng}"
+                case ValueKind.flag: return f"std_logic_vector{elem_rng}"
 
 def regs_len_str(regs : list[RecipeReg], name : str, k : bool = False) -> str:
     s = (f"""
@@ -92,6 +109,9 @@ def regs_len_str(regs : list[RecipeReg], name : str, k : bool = False) -> str:
 def generate_vhdl_module(recipe_file : Path, vhdl_file : Path):
     recipe = parse_recipe_file(recipe_file)
 
+    basic_ports : bool = recipe.fw_opts.ports_use_basic_types
+    hdlskel_lib : str  = recipe.fw_opts.hdlskel_vhdl_lib
+
     with open(vhdl_file, 'w') as vhdl_f:
         # write start 
         vhdl_f.write(f""" --------------------------------------------------------------------------------
@@ -105,21 +125,25 @@ def generate_vhdl_module(recipe_file : Path, vhdl_file : Path):
 
 library ieee;
 use ieee.std_logic_1164.all;
-use ieee.numeric_std.all;
+use ieee.numeric_std.all;\n""")
+        if hdlskel_lib != 'work':
+            vhdl_f.write(f"""
+library {hdlskel_lib};""")
 
-use work.basic_pkg.all;
-use work.vec_pkg.all;
+        vhdl_f.write(f"""
+use {hdlskel_lib}.basic_pkg.all;
+use {hdlskel_lib}.vec_pkg.all;
 
-use work.ramface_pkg.all;
-use work.skmap_pkg.all;
-use work.skmap_map_acc_pkg.all;
+use {hdlskel_lib}.ramface_pkg.all;
+use {hdlskel_lib}.skmap_pkg.all;
+use {hdlskel_lib}.skmap_map_acc_pkg.all;
 
-use work.skmap_module_ipkg;
+use {hdlskel_lib}.skmap_module_ipkg;
 """);
 
         #write module entity declaration begining
         vhdl_f.write(f"""
-entity {recipe.name} is
+entity {recipe.fw_module} is
   generic (
     BASE_ADDR       : natural;
     SKMAP_KIDS : integer_vector := NULL_INTEGER_VECTOR;
@@ -143,7 +167,7 @@ entity {recipe.name} is
                     if jj != len(kv.flags)-1: vhdl_f.write(";")
 
             else:
-                vhdl_t = k_type_to_vhdl_str(kv.t)
+                vhdl_t = k_type_to_vhdl_str(kv.t, basic_ports=basic_ports)
                 vhdl_f.write(f'\n    {kv.name} : {vhdl_t}')
             if ii != len(recipe.k)-1: vhdl_f.write(";")
         vhdl_f.write(f"""
@@ -151,7 +175,19 @@ entity {recipe.name} is
   port (
     clk_i : in  std_ulogic;
 
-    ramface_ce_i : in std_ulogic := '1';
+    ramface_ce_i : in std_ulogic := '1';""")
+
+        if basic_ports:
+            vhdl_f.write(f"""
+    ramface_rqst_en_i   : in  std_ulogic;
+    ramface_rqst_addr_i : in  std_ulogic_vector(RAMFACE_ADDR_W-1 downto 0);
+    ramface_rqst_wren_i : in  std_ulogic_vector(RAMFACE_WREN_W-1 downto 0);
+    ramface_rqst_data_i : in  std_ulogic_vector(RAMFACE_DATA_W-1 downto 0);
+    ramface_rply_en_o   : out std_ulogic;
+    ramface_rply_fail_o : out std_ulogic;
+    ramface_rply_data_o : out std_ulogic_vector(RAMFACE_DATA_W -1 downto 0)""")
+        else:
+            vhdl_f.write(f"""
     ramface_rqst_i : in ramface_rqst_t(
       addr(RAMFACE_ADDR_W-1 downto 0),
       wren(RAMFACE_WREN_W-1 downto 0),
@@ -160,6 +196,7 @@ entity {recipe.name} is
     ramface_rply_o : out ramface_rply_t(
       data(RAMFACE_DATA_W -1 downto 0)
     )""")
+
         if len(recipe.var) > 0:
             vhdl_f.write(";\n")
         for ii, varv in enumerate(recipe.var):
@@ -177,7 +214,7 @@ entity {recipe.name} is
 
             if varv.flags is not None:
                 varv.name_ext = var_name(varv.name)
-                varv.is_var = True
+                varv.uses_var_name = True
                 for jj, f in enumerate(varv.flags):
                     f.name_ext = port_name(f.name, varv.direction)
                     if f.is_vec:
@@ -189,7 +226,7 @@ entity {recipe.name} is
                     if jj != len(varv.flags)-1: vhdl_f.write(";")
             else:
                 varv.name_ext = port_name(varv.name, varv.direction)
-                varv.is_var = False
+                varv.uses_var_name = False
                 if varv.acc in (Acc.wt, Acc.rc):
                     # print(f'{varv.t=}')
                     if varv.t.is_vec:
@@ -204,7 +241,7 @@ entity {recipe.name} is
                         name_port = port_name_clear(varv.name_ext)
                     vhdl_f.write(f'\n    {name_port} : out {vhdl_t};')
 
-                vhdl_t = var_type_to_vhdl_str(varv.t)
+                vhdl_t = var_type_to_vhdl_str(varv.t, basic_ports=basic_ports)
                 vhdl_f.write(f'\n    {varv.name_ext} : {varv.direction} {vhdl_t}')
             if ii != len(recipe.var)-1: vhdl_f.write(";")
         vhdl_f.write(f"""
@@ -301,7 +338,7 @@ begin
                 vhdl_f.write(f'assert {kv.name} >= -2**{kv.t.width-1} severity FAILURE;\n')
 
         vhdl_f.write(f"""
-  i_skmap_module : entity work.skmap_module
+  i_skmap_module : entity {hdlskel_lib}.skmap_module
   generic map (
     SKMAP_ID           => "{recipe.id}",
     SKMAP_VERSION      => {recipe.version},
@@ -317,10 +354,24 @@ begin
     REGS_VAR_LEN       => REGS_VAR_LEN
   ) port map (
     clk_i              => clk_i,
-    ramface_ce_i       => ramface_ce_i,
+
+    ramface_ce_i       => ramface_ce_i,""")
+        if basic_ports:
+            vhdl_f.write(f"""
+    ramface_rqst_i.en   => ramface_rqst_en_i,
+    ramface_rqst_i.addr => u_unsigned(ramface_rqst_addr_i),
+    ramface_rqst_i.wren => ramface_rqst_wren_i,
+    ramface_rqst_i.data => ramface_rqst_data_i,
+    ramface_rply_o.en   => ramface_rply_en_o,
+    ramface_rply_o.fail => ramface_rply_fail_o,
+    ramface_rply_o.data => ramface_rply_data_o,
+""")
+        else:
+            vhdl_f.write(f"""
     ramface_rqst_i     => ramface_rqst_i,
     ramface_rply_o     => ramface_rply_o,
-
+""")
+        vhdl_f.write(f"""
     regs_var_wr_wren_o => regs_var_wr_wren,
     regs_var_wr_data_o => regs_var_wr_data,
     regs_var_rd_data_i => regs_var_rd_data
@@ -330,27 +381,23 @@ begin
     variable byte_idx_v : natural;
 """)
         for varv in recipe.var:
-            if varv.is_var:
+            if varv.uses_var_name:
                 vhdl_t = var_type_to_vhdl_str(varv.t)
                 vhdl_f.write(f'    variable {varv.name_ext} : {vhdl_t};')
         vhdl_f.write("""
   begin
-    byte_idx_v := 0;
-""");
+    byte_idx_v := 0;\n\n""");
         for varv in recipe.var:
-            if varv.is_var:
-                assert varv.direction == "in"
-                vhdl_f.write(f'    {varv.name_ext} := ')
-                assert( varv.flags is not None )
-                if varv.t.is_vec:
-                    for jj, f in enumerate(varv.flags):
-                        vhdl_f.write(f'{f.name_ext}')
-                        if jj != len(varv.flags)-1: vhdl_f.write(" & ")
-                else:
-                    for jj, f in enumerate(reversed(varv.flags)):
-                        vhdl_f.write(f'{f.name_ext}')
-                        if jj != len(varv.flags)-1: vhdl_f.write(" & ")
-                vhdl_f.write(';\n\n')
+            if varv.uses_var_name:
+                if varv.direction == "in":
+                    assert( varv.flags is not None )
+                    assert( not varv.t.is_vec) # TODO: support vec of flags
+                    for f in varv.flags:
+                        if f.is_vec:
+                            vhdl_f.write(f'    {varv.name_ext}({f.vec_len} -1 + {f.bit} downto {f.bit}) := {f.name_ext};\n')
+                        else:
+                            vhdl_f.write(f'    {varv.name_ext}({f.bit}) := {f.name_ext};\n')
+                    vhdl_f.write('\n')
 
         align_str = "BYTE_ALIGN=>BYTE_ALIGN"
         for varv in recipe.var:
@@ -358,11 +405,11 @@ begin
                 case Acc.ro:
                     vhdl_f.write(f'    skmap_map_acc_ro(regs_var_rd_data, byte_idx_v, {varv.name_ext}, {align_str});\n')
                 case Acc.rw:
-                        vhdl_f.write(f'    skmap_map_acc_rw(regs_var_rd_data, regs_var_wr_data, byte_idx_v, {varv.name_ext}, {align_str});\n')
-                case Acc.rw:
-                    vhdl_f.write(f'    skmap_map_acc_rw(regs_var_rd_data, regs_var_wr_data, byte_idx_v, {varv.name_ext}, {align_str});\n')
+                    skmap_func = 'skmap_map_acc_rw_var' if varv.uses_var_name else 'skmap_map_acc_rw'
+                    vhdl_f.write(f'    {skmap_func}(regs_var_rd_data, regs_var_wr_data, byte_idx_v, {varv.name_ext}, {align_str});\n')
                 case Acc.wt:
                     name_trig = port_name_trig(varv.name_ext)
+                    skmap_func = 'skmap_map_acc_wt_var' if varv.uses_var_name else 'skmap_map_acc_wt'
                     vhdl_f.write(f'    skmap_map_acc_wt(regs_var_rd_data, regs_var_wr_data, regs_var_wr_wren, byte_idx_v, {varv.name_ext}, {name_trig}, {align_str});\n');
                 case Acc.rc:
                     if varv.t.kind == ValueKind.flag:
@@ -378,8 +425,20 @@ begin
                     print(f'ERROR {varv.acc=}')
                     assert(False)
             vhdl_f.write("")
-        vhdl_f.write("""
-  end process;
+        vhdl_f.write("\n")
+
+        for varv in recipe.var:
+            if varv.uses_var_name:
+                if varv.direction == "out":
+                    assert( varv.flags is not None )
+                    assert( not varv.t.is_vec) # TODO:
+                    for f in varv.flags:
+                        if f.is_vec:
+                            vhdl_f.write(f'    {f.name_ext} <= {varv.name_ext}({f.vec_len} -1 + {f.bit} downto {f.bit});\n')
+                        else:
+                            vhdl_f.write(f'    {f.name_ext} <= {varv.name_ext}({f.bit});\n')
+                    vhdl_f.write('\n')
+        vhdl_f.write("""  end process;
 
 end architecture;
 """);

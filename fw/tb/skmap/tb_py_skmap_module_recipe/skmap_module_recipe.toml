@@ -1,7 +1,10 @@
 name = "recipe_test_bench_module"
 sw_module = "RecipeTestBenchModule"
+fw_module = "recipe_test_bench_module"
 id = "TBRecip"
 version = 1
+# fw_opts = {ports_use_basic_types = true, hdlskel_vhdl_lib='work'}
+fw_opts = { hdlskel_vhdl_lib='work'}
 
 k = [
   {name = "RO_LEN",   t = "u8", desc = "RO length"},
@@ -16,16 +19,21 @@ k = [
 ]
 
 var = [
+  {name = "ctrl_flags",    t = "b", acc = "rw", desc = "RC flags", flags = [
+     { name = "ctrl_flag_0", bit = 0, desc = "ctrl_flag 0"},
+     { name = "ctrl_flag_8", bit = 8, desc = "ctrl_flag 8"},
+     { name = "ctrl_flag_16_vec", bit = 16, desc = "ctrl_flag_vec 16", vec_len = 5},
+  ]},
   {name = "regs_ro",  t = "x{RO_VAL_W}[{RO_LEN}]", acc = "ro", desc = "RO registers"},
   {name = "regs_rw",  t = "x{RW_VAL_W}[{RW_LEN}]", acc = "rw", desc = "RW registers"},
   {name = "regs_wt",  t = "x5", acc = "wt", desc = "WT registers"},
   {name = "regs_rc",  t = "x{RW_VAL_W}[{RW_LEN}]", acc = "rc", desc = "RC registers"},
   {name = "flags",    t = "b", acc = "rc", desc = "RC flags", flags = [
-     { name = "flag0", ass = "debug", desc = "Flag 0"},
-     { name = "flag1", ass = "info",  desc = "Flag 1"},
-     { name = "flag2", ass = "warn",  desc = "Flag 2"},
-     { name = "flag3", ass = "error", desc = "Flag 3"},
-     { name = "flag4", ass = "fatal", desc = "Flag 4"},
-     { name = "flag_vec", ass = "debug", desc = "Flag vec", vec_len=3},
+     { name = "debug_flag0", ass = "debug", desc = "Flag 0"},
+     { name = "info_flag1", ass = "info",  desc = "Flag 1"},
+     { name = "warn_flag2", ass = "warn",  desc = "Flag 2"},
+     { name = "error_flag3", ass = "error", desc = "Flag 3"},
+     { name = "fatal_flag4", ass = "fatal", desc = "Flag 4"},
+     { name = "debug_flag_vec", ass = "debug", desc = "Flag vec", vec_len=3},
    ]}
 ]

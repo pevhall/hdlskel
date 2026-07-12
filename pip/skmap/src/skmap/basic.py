@@ -21,6 +21,12 @@ def promote_to_sw_w(w : int) -> int:
 #     return addr, sw_width_bytes
 
 
+def set_bits(value : int, bit_mask: int, bit_vals: int) -> int:
+    return (value & ~bit_mask) | (bit_mask & bit_mask)
+
+def set_bit(value : int, bit_pos: int, bit_val: bool) -> int:
+    return set_bits(value, 1<<bit_pos, (int(bit_val))<<bit_pos)
+
 def bytes_to_list_int(b:bytes, int_bytes:int, endian : Literal['little','big']='little', signed:bool=False) -> list[int]:
     if len(b) % int_bytes != 0:
         raise ValueError("bytearray length must be a multiple of int_bytes")

@@ -2,6 +2,6 @@
 
 HDL Skeleton
 
-# SKMap
+# SkMap
 Register map interface between software and firmware
 
