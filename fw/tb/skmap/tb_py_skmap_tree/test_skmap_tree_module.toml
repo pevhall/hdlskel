@@ -1,5 +1,6 @@
 name = "test_skmap_tree_module"
 sw_module = "TestSkmapTreeModule"
+fw_module = "test_skmap_tree_module"
 id = "TBTrMod"
 version = 1
 

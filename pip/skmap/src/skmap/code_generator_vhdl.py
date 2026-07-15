@@ -5,9 +5,9 @@ from pathlib import Path
 from datetime import datetime
 from typing import Literal
 
-from code_generator_parse_recipe import parse_recipe_file, RecipeK, RecipeVar, RecipeReg
-from basic import promote_to_sw_w, ceil_div
-from basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
+from .code_generator_parse_recipe import parse_recipe_file, RecipeK, RecipeVar, RecipeReg
+from .basic import promote_to_sw_w, ceil_div
+from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
 
 def port_name_trig(port_name : str):
     return port_name[:-2]+"_trigger_o"

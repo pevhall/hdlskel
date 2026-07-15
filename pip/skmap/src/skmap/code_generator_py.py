@@ -5,10 +5,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Union
 
-from code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ResolvableFunction
+from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ResolvableFunction
 # from basic import promote_to_sw_w, ceil_div
-from basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
-import code_generator_sw_common as common
+from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
+from . import code_generator_sw_common as common
 
 def name_to_reg_k(name : str) -> str:
     return "self.k_"+name

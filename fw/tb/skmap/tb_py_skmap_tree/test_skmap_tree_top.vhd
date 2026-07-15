@@ -1,6 +1,7 @@
-use work.ramface_regs_rw_ipkg;
-use work.ramface_rply_combine_ipkg;
-use work.skmap_module_ipkg;
+library hdlskel;
+use hdlskel.ramface_regs_rw_ipkg;
+use hdlskel.ramface_rply_combine_ipkg;
+use hdlskel.skmap_module_ipkg;
 
 package test_skmap_tree_top_ipkg is
   -- constant TOTAL_MODULES : natural := 4;
@@ -31,14 +32,15 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
-use work.basic_pkg.all;
-use work.vec_pkg.all;
+library hdlskel;
+use hdlskel.basic_pkg.all;
+use hdlskel.vec_pkg.all;
 
-use work.ramface_pkg.all;
-use work.skmap_pkg.all;
-use work.skmap_map_acc_pkg.all;
+use hdlskel.ramface_pkg.all;
+use hdlskel.skmap_pkg.all;
+use hdlskel.skmap_map_acc_pkg.all;
+use hdlskel.skmap_module_ipkg;
 
-use work.skmap_module_ipkg;
 use work.test_skmap_tree_top_ipkg;
 
 entity test_skmap_tree_top is
@@ -67,8 +69,9 @@ entity test_skmap_tree_top is
   );
 end entity;
 
--- use work.ramface_rply_combine_ipkg;
-use work.skmap_module_ipkg;
+-- use hdlskel.ramface_rply_combine_ipkg;
+library hdlskel;
+use hdlskel.skmap_module_ipkg;
 
 architecture rtl of test_skmap_tree_top is
 
@@ -189,7 +192,7 @@ begin
     );
   end generate;
 
-  i_ramface_rply_combine : entity work.ramface_rply_combine
+  i_ramface_rply_combine : entity hdlskel.ramface_rply_combine
   generic map (
     RAMFACE_DATA_W  => RAMFACE_DATA_W,
     WRKR_LEN    => TOTAL_MODULES,

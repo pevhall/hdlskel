@@ -4,11 +4,11 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 from typing import Union
-
-from code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ResolvableFunction
-# from basic import promote_to_sw_w, ceil_div
-from basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
 from abc import abstractmethod
+
+from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ResolvableFunction
+# from basic import promote_to_sw_w, ceil_div
+from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
 
 @abstractmethod
 def name_to_reg_var(name : str) -> str:

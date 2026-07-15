@@ -5,8 +5,10 @@ preferred_case = "lower"
 [libraries]
 
 # Wildcards and exclude patterns are supported
-defaultlib.files = [
+hdlskel.files = [
     './fw/lib/vhdl/*.vhd',
     './fw/lib/vhdl/*/*.vhd',
+]
+defaultlib.files = [
     './fw/tb/*/*/*.vhd',
 ]

@@ -1,7 +1,1 @@
-# 'vhdl_files_glob' = { 'hdlskel' = [
-'vhdl_files_glob' = [
-    './fw/lib/vhdl/*.vhd',
-    './fw/lib/vhdl/*/*.vhd',
-    './fw/tb/*/*/*.vhd',
-]
-# ]}
+vhdl_files_glob = { 'hdlskel' = [ './fw/lib/vhdl/*.vhd', './fw/lib/vhdl/*/*.vhd' ], 'work' = [ './fw/tb/*/*/*.vhd', ] }

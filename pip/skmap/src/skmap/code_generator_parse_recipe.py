@@ -11,9 +11,9 @@ from enum import Enum, auto
 from typing import Union, Optional
 from dataclasses import dataclass
 
-from basic import ceil_div, ceil_log2 #promote_to_sw_w, ceil_multiple
-from basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_ID_LEN
-from head import SIZE_CHECKSUM
+from .basic import ceil_div, ceil_log2 #promote_to_sw_w, ceil_multiple
+from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_ID_LEN
+from .head import SIZE_CHECKSUM
 
 dict_char_to_value_kind = {}
 for vk in ValueKind:
@@ -25,7 +25,7 @@ def char_to_ValueKind(char : str) -> ValueKind:
 class RecipeK:
     def __init__(self, d : dict, name_to_k : dict[str, 'RecipeK']):
         self.name : str = d['name']
-        self.t = parse_value_type_resolvable(d['t'])
+        self.t = parse_value_type_resolvable(d['t'], name_to_k)
         self.acc = Acc.k
         self.desc : str = d['desc']
         self.name_resolvable = self.name

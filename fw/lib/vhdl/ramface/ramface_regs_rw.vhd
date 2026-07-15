@@ -104,13 +104,15 @@ begin
   );
 
   process(clk_i)
-    variable addr_v : natural;
+    variable addr_v : natural := 0;
     variable wr_data_v : std_ulogic_vector(RAMFACE_DATA_W-1 downto 0);
   begin
     if rising_edge(clk_i) then
       if ramface_ce_i = '1' then
         ramface_rply.en <= '0';
-        addr_v := to_integer(local_ramface_rqst.addr);
+        if local_ramface_rqst.addr'length > 0 then
+          addr_v := to_integer(local_ramface_rqst.addr);
+        end if;
         if local_ramface_rqst_en_rd = '1' then
           ramface_rply.en <= '1';
           ramface_rply.data <= regs_ramface_rd_data(addr_v);
