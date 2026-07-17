@@ -18,6 +18,7 @@ class RegioTcpClient(Regio):
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._lock = asyncio.Lock()
+        super().__init__()
 
     async def connect(self) -> None:
         if self._writer is not None and not self._writer.is_closing():
@@ -54,7 +55,7 @@ class RegioTcpClient(Regio):
         if addr > ADDR_MAX or addr < 0:
             raise ValueError(f"addr {addr}")
 
-    async def write(self, addr: int, data: bytes) -> None:
+    async def dev_write(self, addr: int, data: bytes) -> None:
         size = len(data)
 
         self.check_addr(addr)
@@ -80,7 +81,7 @@ class RegioTcpClient(Regio):
             # Optionally consume any trailing bytes if server sends them. Server sends no payload for write.
             return None
 
-    async def read(self, addr: int, size: int) -> bytes:
+    async def dev_read(self, addr: int, size: int) -> bytes:
         self.check_addr(addr)
         self.check_size(size)
         async with self._lock:

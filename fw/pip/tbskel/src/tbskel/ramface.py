@@ -123,15 +123,15 @@ class RamfaceCtrl:
 class RamfaceCtrlBytes(RamfaceCtrl, Regio):
 
     def __init__(self, clk_i, ce_i, rqst_i, rply_o, LATENCY):
-        super().__init__(clk_i, ce_i, rqst_i, rply_o, LATENCY)
+        RamfaceCtrl.__init__(self, clk_i, ce_i, rqst_i, rply_o, LATENCY)
         assert(self.WORD_W == 8)
+        Regio.__init__(self)
 
-    async def write(self, addr : int, data : bytes) -> None:
+    async def dev_write(self, addr : int, data : bytes) -> None:
         await self.write_list(addr, list(data))
 
-    async def read(self, addr : int, length : int) -> bytes:
+    async def dev_read(self, addr : int, length : int) -> bytes:
         l = await self.read_list(addr, length)
-        # print(f'{bytes(l)=}')
         return bytes(l)
 
 def make_RamfaceCtrl_default_ports(module):

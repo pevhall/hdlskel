@@ -7,8 +7,10 @@ from typing import Union
 
 from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ResolvableFunction
 # from basic import promote_to_sw_w, ceil_div
-from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
+from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR, SKMAP_VER_MAJOR, SKMAP_VER_MINOR, SKMAP_VER_PATCH
 from . import code_generator_sw_common as common
+
+Sw = common.Sw
 
 def name_to_reg_k(name : str) -> str:
     return "self.k_"+name
@@ -64,19 +66,27 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     assert reg.t.width is not None
     reg_name = reg_to_inst_str(reg)
     t_str = value_ret_type_str(reg.t)
-    func_read_cached = read_value_function_str(reg.t, cached=True)
-    func_read        = read_value_function_str(reg.t, cached=False)
-    func_write      = write_value_function_str(reg.t)
+    func_read_cached  = read_value_function_str(reg.t,  cached=True,  sw=Sw.py)
+    func_read         = read_value_function_str(reg.t,  cached=False, sw=Sw.py)
+    func_write_cached = write_value_function_str(reg.t, cached=True,  sw=Sw.py)
+    func_write        = write_value_function_str(reg.t, cached=False, sw=Sw.py)
     kind_f_s = _value_kind_function_str(reg.t.kind)
     func_read_idx_cached = f'read_idx_{kind_f_s}_cached'
+    func_write_idx_cached = f'write_idx_{kind_f_s}_cached'
     func_read_idx = f'read_idx_{kind_f_s}'
     func_write_idx = f'write_idx_{kind_f_s}'
 
     s = ''
     is_vec_int = reg.t.vec_len != None and reg.t.kind in (ValueKind.uint, ValueKind.sint, ValueKind.bits)
+    if reg.t.kind == ValueKind.flag:
+        inst_type = 'RegFlags'
+    if reg.t.is_vec:
+        inst_type = 'RegVec'
+    else:
+        inst_type = 'Reg'
     s += f'    @property\n'
-    s += f'    def {reg.name}_value_type(self) -> skmap.ValueType:\n'
-    s += f'        return {value_type_str(reg.t)}\n\n'
+    s += f'    def {reg.name}_inst(self) -> skmap.{inst_type}:\n'
+    s += f'        return {reg_name}\n\n'
 
     # s += f'    @property\n'
     # s += f'    def {reg.name}_value_kind(self) -> skmap.ValueKind:\n'
@@ -105,7 +115,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
             s += f'    async def {reg.name}_read(self) -> {t_str}:\n'
             s += f'        return await {reg_name}.{func_read}()\n\n'
             if is_vec_int:
-                s += f'    def {reg.name}_cached_idx(self, idx : int) -> int:\n'
+                s += f'    def {reg.name}_read_idx_cached(self, idx : int) -> int:\n'
                 s += f'        return {reg_name}.{func_read_idx_cached}(idx)\n\n'
                 s += f'    async def {reg.name}_read_idx(self, idx : int) -> int:\n'
                 s += f'        return await {reg_name}.{func_read_idx}(idx)\n\n'
@@ -120,7 +130,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
             s += f'    async def {reg.name}_clear(self):\n'
             s += f'        await {reg_name}.write_zero()\n\n'
             if is_vec_int:
-                s += f'    def {reg.name}_cached_idx(self, idx : int) -> int:\n'
+                s += f'    def {reg.name}_read_idx_cached(self, idx : int) -> int:\n'
                 s += f'        return {reg_name}.{func_read_idx_cached}(idx)\n\n'
                 s += f'    async def {reg.name}_read_idx(self, idx : int) -> int:\n'
                 s += f'        return await {reg_name}.{func_read_idx}(idx)\n\n'
@@ -131,13 +141,17 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
             s += f'        return {reg_name}.{func_read_cached}()\n\n'
             s += f'    async def {reg.name}_read(self) -> {t_str}:\n'
             s += f'        return await {reg_name}.{func_read}()\n\n'
+            s += f'    def {reg.name}_write_cached(self, value : {t_str}):\n'
+            s += f'        {reg_name}.{func_write_cached}(value)\n\n'
             s += f'    async def {reg.name}_write(self, value : {t_str}):\n'
             s += f'        await {reg_name}.{func_write}(value)\n\n'
             if is_vec_int:
-                s += f'    def {reg.name}_cached_idx(self, idx : int) -> int:\n'
+                s += f'    def {reg.name}_read_idx_cached(self, idx : int) -> int:\n'
                 s += f'        return {reg_name}.{func_read_idx_cached}(idx)\n\n'
                 s += f'    async def {reg.name}_read_idx(self, idx : int) -> int:\n'
                 s += f'        return await {reg_name}.{func_read_idx}(idx)\n\n'
+                s += f'    def {reg.name}_write_idx_cached(self, idx : int, val : int):\n'
+                s += f'        {reg_name}.{func_write_idx_cached}(idx, val)\n\n'
                 s += f'    async def {reg.name}_write_idx(self, idx : int, val : int):\n'
                 s += f'        await {reg_name}.{func_write_idx}(idx, val)\n\n'
         case Acc.wt:
@@ -149,7 +163,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
                 s += f'    async def {reg.name}_trigger(self, value : {t_str}):\n'
                 s += f'        await {reg_name}.{func_write}(value)\n\n'
             if is_vec_int:
-                s += f'    def {reg.name}_cached_idx(self, idx : int) -> int:\n'
+                s += f'    def {reg.name}_read_idx_cached(self, idx : int) -> int:\n'
                 s += f'        return await {reg_name}.{func_read_idx_cached}(idx)\n\n'
                 s += f'    async def {reg.name}_read_idx(self, idx : int) -> int:\n'
                 s += f'        return await {reg_name}.{func_read_idx}(idx)\n\n'
@@ -218,7 +232,6 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
         s += f'        _ = await {reg_name}.read_bytes() \n\n'
 
     if reg.acc == Acc.rc:
-        func_write      = write_value_function_str(reg.t)
         s += f'    async def {reg.name}_clear(self):\n'
         s += f'        await {reg_name}.write_zero()\n\n'
 
@@ -273,7 +286,23 @@ class {recipe.sw_module}(skmap.Module):
 
     @classmethod
     def checksum(cls) -> int:
-        return 0x{recipe.checksum_str()}\n\n""")
+        return 0x{recipe.checksum_str()}\n
+
+    @classmethod
+    def skmap_ver_major(cls) -> int:
+        return {SKMAP_VER_MAJOR}
+
+    @classmethod
+    def skmap_ver_minor(cls) -> int:
+        return {SKMAP_VER_MINOR}
+
+    @classmethod
+    def skmap_ver_patch(cls) -> int:
+        return {SKMAP_VER_PATCH}
+
+    @classmethod
+    def skmap_ver_str(cls) -> str:
+        return \"{SKMAP_VER_STR}\"\n\n""")
 
         for kv in recipe.k:
             py_f.write(all_reg_value_functions_str(kv))

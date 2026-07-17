@@ -2,7 +2,7 @@ from enum import Enum, auto, IntEnum
 from typing import Optional
 
 SKMAP_VER_MAJOR = 0
-SKMAP_VER_MINOR = 1
+SKMAP_VER_MINOR = 2
 SKMAP_VER_PATCH = 0
 
 SKMAP_VER_STR = f'v{SKMAP_VER_MAJOR}.{SKMAP_VER_MINOR}.{SKMAP_VER_PATCH}'
@@ -61,6 +61,7 @@ class Ass(IntEnum):
             Ass.error:  "orange_red1",
             Ass.fatal:  "red3",
         }[self]
+        # rich colors
 
 class ValueKind(Enum):
     uint = auto()

@@ -51,7 +51,7 @@ async def test_skmap_module_test_acc_types(dut):
         assert ass == skmap.Ass.passed
         m = module_depth[-1]
         await m.trigger_flags_trigger((1<<m.trigger_flags_value_type.width)-1)
-        await module_top.update_cache_tree()
+        await module_top.read_cache_tree()
 
         flags = []
         ass = module_top.check_assert_tree_cached(skmap.Ass.debug, flags)

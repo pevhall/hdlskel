@@ -25,6 +25,15 @@ package skmap_map_acc_pkg is
   procedure skmap_map_acc_k (
     k_vec_int_io : inout integer_vector; 
     byte_idx_io : inout natural;
+    val_i : in integer_vector;
+    w_i : in natural;
+    signed_i : in boolean;
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+  );
+
+  procedure skmap_map_acc_k (
+    k_vec_int_io : inout integer_vector; 
+    byte_idx_io : inout natural;
     flags_i : in boolean_vector;
     constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
   );
@@ -202,6 +211,20 @@ package body skmap_map_acc_pkg is
 
     inc(byte_idx_io, ceil_div(w_i, 8));
     byte_idx_io := ceil_multiple(byte_idx_io, BYTE_ALIGN_INTL);
+  end procedure;
+
+  procedure skmap_map_acc_k (
+    k_vec_int_io : inout integer_vector; 
+    byte_idx_io : inout natural;
+    val_i : in integer_vector;
+    w_i : in natural;
+    signed_i : in boolean;
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+  ) is
+  begin
+    for idx in val_i'range loop
+      skmap_map_acc_k(k_vec_int_io, byte_idx_io, val_i(idx), w_i, signed_i, BYTE_ALIGN);
+    end loop;
   end procedure;
 
   procedure skmap_map_acc_k (

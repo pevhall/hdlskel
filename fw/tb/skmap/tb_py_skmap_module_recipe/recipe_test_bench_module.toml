@@ -4,7 +4,7 @@ fw_module = "recipe_test_bench_module"
 id = "TBRecip"
 version = 1
 # fw_opts = {ports_use_basic_types = true, hdlskel_vhdl_lib='work'}
-fw_opts = { hdlskel_vhdl_lib='work'}
+# fw_opts = { hdlskel_vhdl_lib='work'}
 
 k = [
   {name = "RO_LEN",   t = "u8", desc = "RO length"},
@@ -24,10 +24,12 @@ var = [
      { name = "ctrl_flag_8", bit = 8, desc = "ctrl_flag 8"},
      { name = "ctrl_flag_16_vec", bit = 16, desc = "ctrl_flag_vec 16", vec_len = 5},
   ]},
-  {name = "regs_ro",  t = "x{RO_VAL_W}[{RO_LEN}]", acc = "ro", desc = "RO registers"},
-  {name = "regs_rw",  t = "x{RW_VAL_W}[{RW_LEN}]", acc = "rw", desc = "RW registers"},
+  {name = "regs_ro",  t = "s{RO_VAL_W}[{RO_LEN}]", acc = "ro", desc = "RO registers"},
+  {name = "regs_rw",  t = "s{RW_VAL_W}[{RW_LEN}]", acc = "rw", desc = "RW registers"},
   {name = "regs_wt",  t = "x5", acc = "wt", desc = "WT registers"},
-  {name = "regs_rc",  t = "x{RW_VAL_W}[{RW_LEN}]", acc = "rc", desc = "RC registers"},
+  {name = "regs_rc",  t = "s{RW_VAL_W}[{RW_LEN}]", acc = "rc", desc = "RC registers"},
+  # {name = "reg_s_wt",  t = "s40", acc = "wt", desc = "RC registers"},
+  {name = "reg_s_rc",  t = "s33", acc = "rc", desc = "RC registers"},
   {name = "flags",    t = "b", acc = "rc", desc = "RC flags", flags = [
      { name = "debug_flag0", ass = "debug", desc = "Flag 0"},
      { name = "info_flag1", ass = "info",  desc = "Flag 1"},

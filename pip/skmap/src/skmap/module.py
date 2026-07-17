@@ -9,7 +9,7 @@ from rich.table import Table
 from .console import console
 from .regio import Regio
 from .head import Head, SIZE_HEAD, SIZE_WORD, SYNC
-from .basic_types import Acc, Ass, ValueKind, ValueType, value_type_u8, value_type_x32
+from .basic_types import Acc, Ass, ValueKind, ValueType, value_type_u8, value_type_x32, SKMAP_VER_STR, SKMAP_VER_MAJOR, SKMAP_VER_MINOR, SKMAP_VER_PATCH
 from .basic import ceil_log2, ceil_div, ceil_multiple, promote_to_sw_w, bytes_to_list_int, list_int_to_bytes, cast_uint_to_sint, to_rich_str
 from .reg import Reg, RegVec, RegK, RegVecK, RegFlags, RegFlagsK, RFlag
 from .reg_map_table import RegMapTable
@@ -34,8 +34,8 @@ class Module(ABC):
         self.arr_reg_var_ass_flags : list[RegFlags] = []
         # self.map_reg_k   : dict[str, RegKTypes] = {}
         # self.map_reg_var : dict[str, Reg]  = {}
-        self.use_cache = True
-        self.byte_align = 0
+        self.use_cache = False
+        self.byte_align = 1
 
         assert(self.head.sync == SYNC)
         assert(self.head.flags == 0)
@@ -64,7 +64,7 @@ class Module(ABC):
                     break
                 case SubID.BYTE_ALIGN:
                     sub_byte_align = module_data[self.byte_idx+1]
-                    print(f'sub_head BYTE_ALIGN = {sub_byte_align=}')
+                    # print(f'sub_head BYTE_ALIGN = {sub_byte_align=}')
                     logging.info(f'sub_head BYTE_ALIGN = {sub_byte_align=}')
                     assert sub_byte_align.bit_count() == 1
                     self.byte_idx += SIZE_WORD
@@ -129,41 +129,49 @@ class Module(ABC):
     def len_kids(self) -> int:
         return self.head.len_kids
 
-    def read_cache(self, addr:int, size : int) -> bytes:
+    def read_cached(self, addr:int, size : int) -> bytes:
         cache_addr = self._cache_addr(addr)
         ba = self.cache[cache_addr:cache_addr + size]
         # print(f'{ba=}, {addr=}, {cache_addr=}, {size=}')
         return bytes(ba)
 
-    async def read_bytes(self, addr:int, size : int) -> bytes:
-        if self.use_cache:
-            return self.read_cache(addr, size)
-        else:
-            cache_addr = self._cache_addr(addr)
-            # print(f'self.regio.read({addr}, {size})')
-            b = await self.regio.read(addr, size)
-            self.cache[cache_addr:cache_addr + size] = b
-            return b
-
-    def write_bytes_cache(self, addr:int, b:bytes):
+    def write_bytes_cached(self, addr:int, b:bytes):
         cache_addr = self._cache_addr(addr)
         self.cache[cache_addr:cache_addr + len(b)] = b
 
+    def _byte_align_size(self, size:int, addr:Optional[int] = None):
+        if addr is not None:
+            assert addr % self.byte_align == 0
+        return ceil_multiple(size, self.byte_align)
+
+    async def read_bytes(self, addr:int, size : int) -> bytes:
+        if self.use_cache:
+            return self.read_cached(addr, size)
+        else:
+            op_size = self._byte_align_size(size, addr=addr)
+            b = await self.regio.read(addr, op_size)
+            self.write_bytes_cached(addr, b)
+            # self.cache[cache_addr:cache_addr + size] = b[:size]
+            return b[:size]
+
     async def write_bytes(self, addr:int, b : bytes):
         # print(f'self.regio.write({addr}, {b})')
-        await self.regio.write(addr, b)
-        self.write_bytes_cache(addr, b)
+        self.write_bytes_cached(addr, b)
+        if not self.use_cache:
+            op_size = self._byte_align_size(len(b), addr=addr)
+            await self.regio.write(addr, self.read_cached(addr, op_size))
 
-    async def update_cache(self):
+
+    async def read_cache(self):
         assert not self.use_cache
-        await self.read_bytes(self.base_addr_var, self.size_var)
+        _ = await self.read_bytes(self.base_addr_var, self.size_var)
 
-    async def update_cache_tree(self):
-        await self.update_cache()
+    async def read_cache_tree(self):
+        await self.read_cache()
         for kid in await self.kids():
-            await kid.update_cache_tree()
+            await kid.read_cache_tree()
 
-    async def write_cache_all(self):
+    async def write_cache(self):
         cache_addr = self._cache_addr(self.base_addr_var)
         assert not self.use_cache
         await self.write_bytes(self.base_addr_var, bytes(self.cache[cache_addr:cache_addr+self.size_var]))
@@ -180,7 +188,6 @@ class Module(ABC):
         if width == 0:
             return 0
         align_bytes = self._byte_aligment_from_val_width(width)
-        # print(f'{ceil_multiple(self.byte_idx, align_bytes)} = ceil_multiple({self.byte_idx}, {align_bytes})')
         self.byte_idx = ceil_multiple(self.byte_idx, align_bytes)
 
     def _add_reg_k(self, reg : RegKTypes):
@@ -232,6 +239,26 @@ class Module(ABC):
     @classmethod
     @abstractmethod
     def checksum(cls) -> int:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def skmap_ver_major(cls) -> int:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def skmap_ver_minor(cls) -> int:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def skmap_ver_patch(cls) -> int:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def skmap_ver_str(cls) -> str:
         pass
 
     @abstractmethod
@@ -294,7 +321,7 @@ class Module(ABC):
         for reg_f in self.arr_reg_var_ass_flags:
             reg_f_ass = reg_f.ass_check_cached()
             if reg_f_ass >= Ass.debug:
-                print(f'{reg_f_ass=}')
+                # print(f'{reg_f_ass=}')
                 if reg_f.acc == Acc.rc:
                     await reg_f.write_zero()
 
@@ -324,6 +351,22 @@ class ModuleUnkowen(Module):
     @classmethod
     def checksum(cls) -> int:
         assert False
+
+    @classmethod
+    def skmap_ver_major(cls) -> int:
+        return SKMAP_VER_MAJOR
+
+    @classmethod
+    def skmap_ver_minor(cls) -> int:
+        return SKMAP_VER_MINOR
+
+    @classmethod
+    def skmap_ver_patch(cls) -> int:
+        return SKMAP_VER_PATCH
+
+    @classmethod
+    def skmap_ver_str(cls) -> str:
+        return SKMAP_VER_STR
 
     def _init_reg_map_k(self):
         for ii in range(self.head.len_k):
@@ -373,7 +416,6 @@ class ModuleFactory():
     async def make_module(self, regio : Regio, addr : int, allow_unknowen = False) -> Module:
         head_data = await regio.read(addr, SIZE_HEAD)
         module_head = Head(head_data)
-        logging.info('module_head =  %s', module_head)
         # print(f'{module_head=}')
         module_size = module_head.module_size()
         module_data = bytearray(head_data + await regio.read(addr+SIZE_HEAD, module_size-SIZE_HEAD))
@@ -383,12 +425,28 @@ class ModuleFactory():
             if module_head.version in module_lookup:
                 module_class = module_lookup[module_head.version]
                 if module_head.checksum == module_class.checksum():
+                    if module_class.skmap_ver_major() != SKMAP_VER_MAJOR:
+                        logging.error("SKMAP major version missmatch module has %s, expected %s",
+                                      module_class.skmap_ver_str(), SKMAP_VER_STR)
+                    if module_class.skmap_ver_minor() != SKMAP_VER_MINOR:
+                        logging.error("SKMAP minor version missmatch module has %s, expected %s",
+                                      module_class.skmap_ver_str(), SKMAP_VER_STR)
+                    if module_class.skmap_ver_patch() != SKMAP_VER_PATCH:
+                        logging.warning("SKMAP patch version missmatch module has %s, expected %s",
+                                      module_class.skmap_ver_str(), SKMAP_VER_STR)
+                    logging.info('Creating module (head =  %s)', module_head)
                     return module_class(regio, addr, module_head, module_data)
                 else:
                     logging.error('Bad check sum for %s v%d, module_head.checksum =  %s, module_class.checksum = %s', module_class.name(), module_class.version(), hex(module_head.checksum), hex(module_class.checksum()))
+        else:
+            logging.error('Cannot find module, Unkowen ID (head: %s) ', module_head)
 
-        assert allow_unknowen
-        return ModuleUnkowen(regio, addr, module_head, module_data)
+        if allow_unknowen:
+            logging.warning("Return Unkowen module - see previouse warnings")
+            return ModuleUnkowen(regio, addr, module_head, module_data)
+        else:
+            raise Exception("Unkowen modules not allowed, raising error, see previouse errors")
+
 
 async def make_module(regio : Regio, addr : int, allow_unknowen = False) -> Module:
     factory = ModuleFactory()

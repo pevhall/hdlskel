@@ -1,4 +1,5 @@
-
+import sys
+import ast
 import asyncio
 import cocotb
 import tbskel.ramface
@@ -14,19 +15,22 @@ from recipe_test_bench_module import RecipeTestBenchModule
 
 
 
-
 async def reg_loopback(dut):
     while True:
         await RisingEdge(dut.clk_i)
         if dut.regs_wt_trigger_o.value != 0:
             wt = int(dut.regs_wt_o.value)
-            print(f'{wt=}')
             dut.debug_flag0_i.value = (wt>>0)&1
             dut.info_flag1_i.value  = (wt>>1)&1
             dut.warn_flag2_i.value  = (wt>>2)&1
             dut.error_flag3_i.value = (wt>>3)&1
             dut.fatal_flag4_i.value = (wt>>4)&1
             await RisingEdge(dut.clk_i)
+            dut.debug_flag0_i.value = 0
+            dut.info_flag1_i.value  = 0
+            dut.warn_flag2_i.value  = 0
+            dut.error_flag3_i.value = 0
+            dut.fatal_flag4_i.value = 0
             # dut.flag0_i.value = 0
             # dut.flag1_i.value = 0
             # dut.flag2_i.value = 0
@@ -44,6 +48,13 @@ async def reg_loopback(dut):
 
 @cocotb.test()
 async def test_skmap_module_test_acc_types(dut):
+    logging.basicConfig(level=logging.DEBUG,stream=sys.stderr,force=True)
+    run_server = cocotb.plusargs.get("run_server")
+    assert isinstance(run_server, str)
+    run_server = ast.literal_eval(run_server)
+    print(f"{run_server=}")
+
+    dut.reg_s_rc_i.value = 0
 
     dut.ramface_ce_i.value = 1
 
@@ -68,8 +79,10 @@ async def test_skmap_module_test_acc_types(dut):
     module = await skmap.make_module(ramface_ctrl, 0)
     assert isinstance(module, RecipeTestBenchModule)
     if 1:
-        RW_LEN = module.regs_rw_value_type.vec_len 
-        RW_VAL_W = module.regs_rw_value_type.width 
+        RW_LEN   = module.regs_rw_inst.value_type.vec_len 
+        RW_VAL_W = module.regs_rw_inst.value_type.width 
+        # RW_LEN = module.regs_rw_value_type.vec_len 
+        # RW_VAL_W = module.regs_rw_value_type.width 
         assert RW_LEN is not None
         for ii in range(RW_LEN):
             await module.regs_rw_write_idx(ii,ii+0xA0)
@@ -80,17 +93,19 @@ async def test_skmap_module_test_acc_types(dut):
     await module.regs_wt_trigger(0x1F)
 
     print(f'{await module.regs_rw_read()=}')
-    await module.update_cache()
+    await module.read_cache()
     print(f'{await module.regs_rw_read()=}')
     await module.ctrl_flag_0_write(True)
     module.print_reg_map()
+    # print('write zero')
     await module.write_zero_all_rc()
-    await module.update_cache()
+    # print('update')
+    await module.read_cache()
     module.print_reg_map()
 
-    server = regio.tcp_server.RegioTcpServer(ramface_ctrl)
-    await server.start()
-    print('DONE')
+    if run_server:
+        server = regio.tcp_server.RegioTcpServer(ramface_ctrl)
+        await server.start()
 
     for _ in range(100):
         await RisingEdge(dut.clk_i)

@@ -1,3 +1,8 @@
+use work.vec_pkg.all;
+
+use work.ramface_pkg.all;
+use work.skmap_pkg.all;
+
 use work.ramface_regs_rw_ipkg;
 use work.ramface_rply_combine_ipkg;
 
@@ -5,6 +10,9 @@ package skmap_module_ipkg is
   constant PRIV_RPLY_COMBINE_LATENCY : natural;
   constant PRIV_RAMFACE_REGS_LATENCY : natural := ramface_regs_rw_ipkg.RAMFACE_LATENCY;
   constant RAMFACE_LATENCY : natural;
+
+  function head_and_k_len (SKMAP_BYTE_ALIGN : natural; RAMFACE_DATA_W : natural; SKMAP_KIDS : integer_vector; REGS_K_INT : integer_vector) return natural;
+
 end package;
 
 package body skmap_module_ipkg is
@@ -16,6 +24,17 @@ package body skmap_module_ipkg is
   end function;
   constant PRIV_RPLY_COMBINE_LATENCY : natural := get_priv_rply_combine_latency;
   constant RAMFACE_LATENCY : natural := skmap_module_ipkg.PRIV_RPLY_COMBINE_LATENCY + PRIV_RAMFACE_REGS_LATENCY;
+
+  function head_and_k_len (SKMAP_BYTE_ALIGN : natural; RAMFACE_DATA_W : natural; SKMAP_KIDS : integer_vector; REGS_K_INT : integer_vector) return natural is
+    constant REGS_DATA_W : natural := 32;
+    constant SKMAP_SUB_NO_PAD : integer_vector := make_skmap_sub_byte_align(SKMAP_BYTE_ALIGN);
+    constant SKMAP_SUBHEAD_PAD_LEN : natural := get_ramface_ram_pad(SKMAP_HEAD_LEN + SKMAP_KIDS'length + REGS_K_INT'length + SKMAP_SUB_NO_PAD'length, REGS_DATA_W, RAMFACE_DATA_W);
+    constant SKMAP_SUB : integer_vector :=  SKMAP_SUB_NO_PAD & zeros_vec_int(SKMAP_SUBHEAD_PAD_LEN) ;
+    constant RAMFACE_K_SKMAP_LEN : natural := SKMAP_HEAD_LEN + SKMAP_KIDS'length + SKMAP_SUB'length + REGS_K_INT'length;
+    constant RAMFACE_K_DEPTH : natural := get_ramface_local_depth(RAMFACE_K_SKMAP_LEN, REGS_DATA_W, RAMFACE_DATA_W);
+  begin
+    return RAMFACE_K_DEPTH;
+  end function;
 
 end package body;
 
@@ -94,17 +113,17 @@ architecture rtl of skmap_module is
     len_var     => SKMAP_LEN_VAR
   );
 
-  function ignore return boolean is
-  begin
-    report "SKMAP_KIDS'length = "&integer'image(SKMAP_KIDS'length);
-    if(SKMAP_KIDS'length > 0) then
-      report "SKMAP_KIDS(0) = "&integer'image(SKMAP_KIDS(0));
-    end if;
-    report "REGS_K_INT'length = "&integer'image(REGS_K_INT'length);
-    report "to_vec_int(SKMAP_HEAD)'length = "&integer'image(to_vec_int(SKMAP_HEAD)'length);
-    return TRUE;
-  end function;
-  constant IGN : boolean := ignore;
+  -- function ignore return boolean is
+  -- begin
+  --   report "SKMAP_KIDS'length = "&integer'image(SKMAP_KIDS'length);
+  --   if(SKMAP_KIDS'length > 0) then
+  --     report "SKMAP_KIDS(0) = "&integer'image(SKMAP_KIDS(0));
+  --   end if;
+  --   report "REGS_K_INT'length = "&integer'image(REGS_K_INT'length);
+  --   report "to_vec_int(SKMAP_HEAD)'length = "&integer'image(to_vec_int(SKMAP_HEAD)'length);
+  --   return TRUE;
+  -- end function;
+  -- constant IGN : boolean := ignore;
 
   constant RAMFACE_K_REGS_INT : integer_vector := (
       to_vec_int(SKMAP_HEAD)

@@ -12,7 +12,7 @@ from typing import Union, Optional
 from dataclasses import dataclass
 
 from .basic import ceil_div, ceil_log2 #promote_to_sw_w, ceil_multiple
-from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_ID_LEN
+from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_ID_LEN, SKMAP_VER_MAJOR, SKMAP_VER_MINOR
 from .head import SIZE_CHECKSUM
 
 dict_char_to_value_kind = {}
@@ -307,12 +307,20 @@ class Recipe:
 
     def _checksum(self):
         m = hashlib.md5()
+        m.update(SKMAP_VER_MAJOR.to_bytes(1))
+        m.update(SKMAP_VER_MINOR.to_bytes(1))
         m.update(self.id.encode())
         m.update(self.version.to_bytes(1))
-        for vk in self.k:
-            md5_update(m, vk.t.width)
-        for vv in self.var:
-            md5_update(m, vv.t.width)
+        for r in self.k:
+            md5_update(m, r.name)
+            md5_update(m, r.acc)
+            md5_update(m, r.t.kind)
+            md5_update(m, r.t.width)
+        for r in self.var:
+            md5_update(m, r.name)
+            md5_update(m, r.acc)
+            md5_update(m, r.t.kind)
+            md5_update(m, r.t.width)
         checksum = int.from_bytes(m.digest())
         return checksum & 0xFFFF
 

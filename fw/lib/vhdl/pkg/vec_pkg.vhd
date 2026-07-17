@@ -32,6 +32,7 @@ package vec_pkg is
   -- type conversions
   function to_vec_slv(v : std_ulogic_vector) return vec_slv_t;
   function to_vec_slv(vec : vec_unsigned_t) return vec_slv_t;
+  function to_vec_slv(vec : vec_signed_t) return vec_slv_t;
   function to_vec_unsigned(vec : vec_slv_t) return vec_unsigned_t;
   function to_vec_unsigned(v : integer_vector; elem_w : natural) return vec_unsigned_t;
   function to_vec_signed(vec : vec_slv_t) return vec_signed_t;
@@ -115,6 +116,15 @@ package body vec_pkg is
   end function;
 
   function to_vec_slv(vec : vec_unsigned_t) return vec_slv_t is
+    variable v : vec_slv_t(vec'range)(get_elem_w(vec)-1 downto 0);
+  begin
+    for ii in v'range loop
+      v(ii) := std_ulogic_vector(vec(ii));
+    end loop;
+    return v;
+  end function;
+
+  function to_vec_slv(vec : vec_signed_t) return vec_slv_t is
     variable v : vec_slv_t(vec'range)(get_elem_w(vec)-1 downto 0);
   begin
     for ii in v'range loop

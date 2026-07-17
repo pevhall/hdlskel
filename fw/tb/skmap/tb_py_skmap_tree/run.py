@@ -14,9 +14,8 @@ skmap.generate_py_module(module_recipe, script_dir/'test_skmap_tree_module.py')
 top_entity = 'test_skmap_tree_top'
 dep = analyse(config_files ='hdldepends.toml', top_entity=top_entity) #doesn't work
 compile_order = dep.to_dict()['files']
-print(f'{compile_order=}')
-print(f'{type(compile_order)=}')
-print(f'{script_dir=}')
+# print(f'{compile_order=}')
+# print(f'{script_dir=}')
 
 sim = HdlWorkflow(
     eda_tool = "nvc",

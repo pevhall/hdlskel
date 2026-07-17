@@ -1,7 +1,7 @@
 from typing import Optional, Type, Literal, Union, TYPE_CHECKING
 
 from .basic_types import Acc, Ass, ValueKind, ValueType, value_type_u8, value_type_x32
-from .basic import ceil_log2, ceil_div, ceil_multiple, promote_to_sw_w, bytes_to_list_int, list_int_to_bytes, cast_uint_to_sint, to_rich_str, set_bit
+from .basic import ceil_log2, ceil_div, ceil_multiple, promote_to_sw_w, bytes_to_list_int, list_int_to_bytes, cast_uint_to_sint, to_rich_str, set_bit, set_bits
 
 if TYPE_CHECKING:
     from module import Module
@@ -25,40 +25,45 @@ class Reg:
 
     def read_bytes_cached(self) -> bytes:
         assert isinstance(self.addr, int)
-        return self.module.read_cache(self.addr, self.size)
+        return self.module.read_cached(self.addr, self.size)
 
     async def read_bytes(self) -> bytes:
-        assert isinstance(self.addr, int)
-        if self.acc == Acc.k:
-            return self.read_bytes_cached()
-        return await self.module.read_bytes(self.addr, self.size)
+        if self.acc != Acc.k:
+            assert isinstance(self.addr, int)
+            return await self.module.read_bytes(self.addr, self.size)
+        return self.read_bytes_cached()
 
-    def _bytes_to_uint(self, b:bytes) -> int:
+    async def read_cache(self) -> None:
+        _ = await self.read_bytes()
+
+    def read_uint_cached(self) -> int:
+        b = self.read_bytes_cached()
         value_int = int.from_bytes(b, byteorder='little')
         if self.value_type.width != (self.size*8):
             mask = (1<<self.value_type.width)-1
             value_int &= mask
         return value_int
 
-    def _bytes_to_sint(self, b:bytes) -> int:
-        value_int = self._bytes_to_uint(b)
-        sgn_bit = (1<<(self.value_type.width-1))
-        if value_int >= sgn_bit:
-            value_int -= sgn_bit*2
-        return value_int
-
-    def read_uint_cached(self) -> int:
-        b = self.read_bytes_cached()
-        return self._bytes_to_uint(b)
+    async def read_uint(self) -> int:
+        _ = await self.read_bytes()
+        return self.read_uint_cached()
 
     def read_sint_cached(self) -> int:
-        b = self.read_bytes_cached()
-        return self._bytes_to_sint(b)
+        value_int = self.read_uint_cached()
+        return cast_uint_to_sint(value_int, self.value_type.width)
+
+    async def read_sint(self) -> int:
+        _ = await self.read_bytes()
+        return self.read_sint_cached()
 
     def read_char_cached(self) -> str:
         assert self.value_type.width == 8
         value_uint = self.read_uint_cached()
         return chr(value_uint)
+
+    async def read_char(self) -> str:
+        _ = await self.read_bytes()
+        return self.read_char_cached()
 
     def read_cached(self):
         match self.value_type.kind:
@@ -72,21 +77,6 @@ class Reg:
                 return self.read_uint_cached()
             case ValueKind.char:
                 return self.read_char_cached()
-
-    async def read_uint(self) -> int:
-        b = await self.read_bytes()
-        value_int = int.from_bytes(b, byteorder='little')
-        # print(f'{value_int=:x} = int.from_bytes({b=})')
-        return value_int
-
-    async def read_sint(self) -> int:
-        value_uint = await self.read_uint()
-        return cast_uint_to_sint(value_uint, self.value_type.width)
-
-    async def read_char(self) -> str:
-        assert self.value_type.width == 8
-        value_uint = await self.read_uint()
-        return chr(value_uint)
 
     def read_rich_str_cached(self) -> str:
         match self.value_type.kind:
@@ -105,51 +95,53 @@ class Reg:
         #TODO change to hex for bits / x
         return value_str
 
-    def write_bytes_cache(self, b : bytes):
-        assert self.acc in (Acc.rw, Acc.wt) or (self.acc == Acc.rc and not any(b))
+    async def write_cache(self):
         assert isinstance(self.addr, int)
-        assert len(b) <= self.size
-        assert len(b) >= ceil_div(self.value_type.width, 8)
-        return self.module.write_bytes_cache(self.addr, b)
+        b = self.read_bytes_cached();
+        assert self.acc in (Acc.rw, Acc.wt) or (self.acc == Acc.rc and not any(b))
+        await self.module.write_bytes(self.addr, b)
+
+    def write_bytes_cached(self, b : bytes):
+        assert isinstance(self.addr, int)
+        assert self.acc in (Acc.rw, Acc.wt) or (self.acc == Acc.rc and not any(b))
+        assert len(b) == self.size
+        # assert len(b) <= self.size
+        # assert len(b) >= ceil_div(self.value_type.width, 8)
+        return self.module.write_bytes_cached(self.addr, b)
 
     async def write_bytes(self, b : bytes):
-        # print(f'{self.acc=} {not any(b)=}')
-        assert self.acc in (Acc.rw, Acc.wt) or ((self.acc == Acc.rc) and not any(b))
-        assert isinstance(self.addr, int)
-        assert len(b) <= self.size
-        assert len(b) >= ceil_div(self.value_type.width, 8)
-        return await self.module.write_bytes(self.addr, b)
+        self.write_bytes_cached(b)
+        await self.write_cache()
 
-    async def write_cache(self):
-        await self.write_bytes(self.read_bytes_cached())
-
-    def write_uint_cache(self, v : int):
+    def write_uint_cached(self, v : int):
         b = v.to_bytes(self.size, byteorder='little', signed=False)
-        return self.write_bytes_cache(b)
+        return self.write_bytes_cached(b)
 
     async def write_uint(self, v : int):
-        b = v.to_bytes(self.size, byteorder='little', signed=False)
-        return await self.write_bytes(b)
-
-    async def write_sint(self, v : int):
-        b = v.to_bytes(self.size, byteorder='little', signed=True)
-        return await self.write_bytes(b)
+        self.write_uint_cached(v)
+        await self.write_cache()
 
     def write_sint_cache(self, v : int):
         b = v.to_bytes(self.size, byteorder='little', signed=True)
-        return self.write_bytes_cache(b)
+        return self.write_bytes_cached(b)
+
+    async def write_sint(self, v : int):
+        self.write_sint_cache(v)
+        await self.write_cache()
+
+    def write_bool_cached(self, v : bool):
+        return self.write_uint_cached(int(v))
 
     async def write_bool(self, v : bool):
-        return await self.write_uint(int(v))
+        self.write_bool_cached(v)
+        await self.write_cache()
 
-    def write_bool_cache(self, v : bool):
-        return self.write_uint_cache(int(v))
-
-    def write_zero(self):
-        return self.write_uint(0)
-
-    def write_zero_cache(self):
+    def write_zero_cached(self):
         return self.write_sint_cache(0)
+
+    async def write_zero(self):
+        self.write_zero_cached()
+        await self.write_cache()
 
 class RegVec(Reg):
 
@@ -173,92 +165,113 @@ class RegVec(Reg):
             value_vec_int[ii] = cast_uint_to_sint(value_vec_int[ii], self.elem_size)
         return value_vec_int
 
-    def read_vec_uint_cached(self) -> list[int]:
+    def read_list_uint_cached(self) -> list[int]:
         b = self.read_bytes_cached()
         return self._bytes_to_list_uint(b)
 
-    def read_vec_sint_cached(self) -> list[int]:
+    async def read_list_uint(self) -> list[int]:
+        _ = await self.read_bytes()
+        return self.read_list_uint_cached()
+
+    def read_list_sint_cached(self) -> list[int]:
         b = self.read_bytes_cached()
         return self._bytes_to_list_sint(b)
 
-    async def read_vec_uint(self) -> list[int]:
-        b = self.read_bytes_cached()
-        return self._bytes_to_list_uint(b)
+    async def read_list_sint(self) -> list[int]:
+        _ = await self.read_bytes()
+        return self.read_list_sint_cached()
 
-    async def read_vec_sint(self) -> list[int]:
-        b = await self.read_bytes()
-        return self._bytes_to_list_sint(b)
+    def _idx_elem_offset(self, idx) -> int:
+        assert isinstance(self.addr, int)
+        return self.addr + idx*self.elem_offset
 
     def read_idx_bytes_cached(self, idx : int) -> bytes:
-        assert isinstance(self.addr, int)
-        return self.module.read_cache(self.addr+idx*self.elem_offset, self.elem_size)
+        return self.module.read_cached(self._idx_elem_offset(idx), self.elem_size)
 
     async def read_idx_bytes(self, idx : int) -> bytes:
-        assert isinstance(self.addr, int)
-        if self.acc == Acc.k:
-            return self.read_idx_bytes_cached(idx)
-        return await self.module.read_bytes(self.addr+idx*self.elem_offset, self.elem_size)
+        if self.acc != Acc.k:
+            _ =  await self.module.read_bytes(self._idx_elem_offset(idx), self.elem_size)
+        return self.read_idx_bytes_cached(idx)
+
+    async def write_idx_cache(self, idx : int):
+        b = self.read_idx_bytes_cached(idx)
+        await self.module.write_bytes(self._idx_elem_offset(idx), b)
+
+    def write_idx_bytes_cached(self, idx : int, b : bytes):
+        # assert len(b) <= self.elem_size
+        # assert len(b) >= ceil_div(self.value_type.width, 8)
+        assert self.acc in (Acc.rw, Acc.wt) or (self.acc == Acc.rc and not any(b))
+        assert(len(b) == self.elem_size)
+        self.module.write_bytes_cached(self._idx_elem_offset(idx), b)
 
     async def write_idx_bytes(self, idx : int, b : bytes):
-        assert self.acc in (Acc.rw, Acc.wt)
-        assert isinstance(self.addr, int)
-        assert len(b) <= self.elem_size
-        assert len(b) >= ceil_div(self.value_type.width, 8)
-        return await self.module.write_bytes(self.addr+idx*self.elem_offset, b)
+        self.write_idx_bytes_cached(idx, b)
+        await self.write_idx_cache(idx)
 
     def read_idx_uint_cached(self, idx : int) -> int:
         b = self.read_idx_bytes_cached(idx)
-        return self._bytes_to_uint(b)
-
-    def read_idx_sint_cached(self, idx : int) -> int:
-        b = self.read_idx_bytes_cached(idx)
-        return self._bytes_to_sint(b)
+        value_int = int.from_bytes(b, byteorder='little')
+        return value_int
 
     async def read_idx_uint(self, idx : int) -> int:
-        b = await self.read_idx_bytes(idx)
-        return self._bytes_to_uint(b)
+        _ = await self.read_idx_bytes(idx)
+        return self.read_idx_uint_cached(idx)
+
+    def read_idx_sint_cached(self, idx : int) -> int:
+        value_int = self.read_idx_uint_cached(idx)
+        return cast_uint_to_sint(value_int, self.value_type.width)
 
     async def read_idx_sint(self, idx : int) -> int:
-        b = await self.read_idx_bytes(idx)
-        return self._bytes_to_sint(b)
+        _ = await self.read_idx_bytes(idx)
+        return self.read_idx_sint_cached(idx)
+
+    def write_idx_uint_cached(self, idx : int, val : int):
+        b = val.to_bytes(self.elem_size, byteorder='little', signed=False)
+        self.write_idx_bytes_cached(idx, b)
 
     async def write_idx_uint(self, idx : int, val : int):
-        b = val.to_bytes(self.elem_size, byteorder='little', signed=False)
-        await self.write_idx_bytes(idx, b)
+        self.write_idx_uint_cached(idx, val)
+        await self.write_idx_cache(idx)
+
+    def write_idx_sint_cached(self, idx : int, val : int):
+        b = val.to_bytes(self.elem_size, byteorder='little', signed=True)
+        self.write_idx_bytes_cached(idx, b)
 
     async def write_idx_sint(self, idx : int, val : int):
-        b = val.to_bytes(self.elem_size, byteorder='little', signed=True)
-        await self.write_idx_bytes(idx, b)
-
-    def _vec_uint_to_str(self, value_vec_uint) -> str:
-        assert self.elem_size==8
-        assert self.elem_offset==8
-        value_str = ''.join([chr(uint) for uint in value_vec_uint])
-        return value_str
+        self.write_idx_sint_cached(idx, val)
+        await self.write_idx_cache(idx)
 
     def read_str_cached(self)  -> str:
-        value_vec_uint = self.read_vec_uint_cached()
-        return self._vec_uint_to_str(value_vec_uint)
+        assert self.elem_size==8
+        assert self.elem_offset==8
+        value_list_uint = self.read_list_uint_cached()
+        value_str = ''.join([chr(uint) for uint in value_list_uint])
+        return value_str
 
     async def read_str(self)  -> str:
-        value_vec_uint = await self.read_vec_uint()
-        return self._vec_uint_to_str(value_vec_uint)
+        _ = await self.read_bytes()
+        return self.read_str_cached()
 
-    async def write_vec_uint(self, value_vec_uint : list[int]):
-        b = list_int_to_bytes(value_vec_uint, self.elem_size, endian='little', signed=False)
-        await self.write_bytes(b)
+    def write_list_uint_cache(self, value : list[int]):
+        b = list_int_to_bytes(value, self.elem_size, endian='little', signed=False)
+        self.write_bytes_cached(b)
 
-    async def write_vec_sint(self, value_vec_uint : list[int]):
-        b = list_int_to_bytes(value_vec_uint, self.elem_size, endian='little', signed=True)
-        await self.write_bytes(b)
+    async def write_list_uint(self, value : list[int]):
+        self.write_list_uint_cache(value)
+        await self.write_cache()
 
-    # def value_type_str(self) -> str:
-    #     return f'{super().value_type_str()}[{self.value_type.vec_len}]'
+    def write_list_sint_cached(self, value : list[int]):
+        b = list_int_to_bytes(value, self.elem_size, endian='little', signed=True)
+        self.write_bytes_cached(b)
+
+    async def write_list_sint(self, value : list[int]):
+        self.write_list_sint_cached(value)
+        await self.write_cache()
 
     def read_rich_str_cached(self) -> str:
         # assert self.fmt == Fmt.hex
-        value_vec_int = self.read_vec_uint_cached()
-        return str(value_vec_int)
+        value = self.read_list_uint_cached()
+        return str(value)
 
 class RegK(Reg):
     def __init__(self, *args, **kwargs):
@@ -313,44 +326,56 @@ class RFlag:
             s += to_rich_str(v, ass_checked.color) 
         return s
 
-    async def read_bool(self) -> bool:
-        assert self.vec_len is None or self.vec_len == 1
-        return (await self.reg_flags.read_uint() & (1<<self.bit)) != 0
-
     def read_bool_cached(self) -> bool:
         assert self.vec_len is None or self.vec_len == 1
         return (self.reg_flags.read_uint_cached() & (1<<self.bit)) != 0
 
-    async def write_bool(self, v : bool):
-        self.write_bool_cache(v)
-        await self.reg_flags.write_cache()
+    async def read_bool(self) -> bool:
+        _ = await self.reg_flags.read_bytes()
+        return self.read_bool_cached()
+        # assert self.vec_len is None or self.vec_len == 1
+        # return (await self.reg_flags.read_uint() & (1<<self.bit)) != 0
 
-    def write_bool_cache(self, v : bool):
+    def write_bool_cached(self, v : bool):
         b = bytearray(self.reg_flags.read_bytes_cached())
         ii_byte = self.bit // 8
         ii_bit  = self.bit  % 8
         b[ii_byte] = set_bit(int(b[ii_byte]), ii_bit, v)
-        print(f'b[{ii_byte}] = {b[ii_byte]}')
-        self.reg_flags.write_bytes_cache(bytes(b))
+        # print(f'b[{ii_byte}] = {b[ii_byte]}')
+        self.reg_flags.write_bytes_cached(bytes(b))
 
         d = self.reg_flags.read_bytes_cached()
-        print(f'{d=}')
 
-    async def read_list_bool(self) -> list[bool]:
-        assert self.vec_len is not None
-        value_list_bool = []
-        value_uint = await self.reg_flags.read_uint()
-        for ii in range(self.vec_len):
-            value_list_bool.append(value_uint & ((ii+1)<<self.bit) != 0)
-        return value_list_bool
+    async def write_bool(self, v : bool):
+        self.write_bool_cached(v)
+        await self.reg_flags.write_cache()
 
     def read_list_bool_cached(self) -> list[bool]:
         assert self.vec_len is not None
         value_list_bool = []
         value_uint =  self.reg_flags.read_uint_cached()
         for ii in range(self.vec_len):
-            value_list_bool.append(value_uint & ((ii+1)<<self.bit) != 0)
+            value_list_bool.append(value_uint & (1<<(self.bit+ii)) != 0)
         return value_list_bool
+
+    async def read_list_bool(self) -> list[bool]:
+        await self.reg_flags.read_cache()
+        return self.read_list_bool_cached()
+
+    def write_list_bool_cached(self, value : list[bool]):
+        assert self.vec_len is not None
+        assert len(value) == self.vec_len
+        wr_uint : int = 0
+        for ii, b in enumerate(value):
+            wr_uint |= int(b)<<(self.bit+ii)
+        wr_mask = ((1<<(self.vec_len))-1)<<self.bit
+        rd_uint =  self.reg_flags.read_uint_cached()
+        wr_uint = set_bits(rd_uint, wr_mask, wr_uint)
+        self.reg_flags.write_uint_cached(wr_uint)
+
+    async def write_list_bool(self, v : list[bool]):
+        self.write_list_bool_cached(v)
+        await self.reg_flags.write_cache()
 
     async def ass_check(self) -> Ass:
         return self._ass_check(await self.read_bool())
@@ -365,12 +390,6 @@ class RFlagK(RFlag):
 
     def __init__(self,  *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-    async def read_bool(self) -> bool:
-        return self.read_bool_cached()
-
-    async def ass_check(self) -> Ass:
-        return self.ass_check_cached()
 
 class RegFlags(Reg):
 
@@ -416,9 +435,8 @@ class RegFlags(Reg):
                 return True
         return False
 
-
     async def ass_check(self, log_ass : Ass = Ass.none, log : list[RFlag] = []) -> Ass:
-        await self.update_cache()
+        await self.read_cache()
         return self.ass_check_cached(log_ass, log)
 
 class RegFlagsK(RegFlags):
