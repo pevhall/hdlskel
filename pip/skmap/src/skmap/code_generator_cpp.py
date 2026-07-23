@@ -1,7 +1,3 @@
-#!/usr/bin/env python3
-
-
-import argparse
 from pathlib import Path
 from datetime import datetime
 from typing import Union
@@ -9,7 +5,7 @@ from typing import Union
 from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ResolvableFunction
 # from basic import promote_to_sw_w, ceil_div
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
-import .code_generator_sw_common as common
+from . import code_generator_sw_common as common
 
 namespace = "hdlskel::skmap::autogen"
 inc_dir   = "hdlskel/skmap/autogen"
@@ -360,31 +356,3 @@ _value_kind_function_str = common._value_kind_function_str
 read_value_function_str  = common.read_value_function_str
 write_value_function_str  = common.write_value_function_str
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Parse a skmap module recipe file and generate skmap module"
-    )
-    parser.add_argument(
-        "recipe_file",
-        type=Path,
-        help="Path to skmap recipe file"
-    )
-    parser.add_argument(
-        "hpp_file",
-        type=Path,
-        help="Path to .hpp file to generate"
-    )
-    parser.add_argument(
-        "cpp_file",
-        type=Path,
-        help="Path to .cpp file to generate"
-    )
-    return parser.parse_args()
-
-
-def main():
-    args = parse_args()
-    generate_cpp_module(args.recipe_file, args.hpp_file, args.cpp_file) 
-
-if __name__ == '__main__':
-    main()

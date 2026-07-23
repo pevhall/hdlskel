@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-
-import argparse
 from pathlib import Path
 from datetime import datetime
 from typing import Union
@@ -110,7 +107,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
             s += f'    def {reg.name}(self) -> {t_str}:\n'
             s += f'        return {reg_name}.{func_read_cached}()\n\n'
         case Acc.ro:
-            s += f'    def {reg.name}_cached(self) -> {t_str}:\n'
+            s += f'    def {reg.name}_read_cached(self) -> {t_str}:\n'
             s += f'        return {reg_name}.{func_read_cached}()\n\n'
             s += f'    async def {reg.name}_read(self) -> {t_str}:\n'
             s += f'        return await {reg_name}.{func_read}()\n\n'
@@ -120,7 +117,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
                 s += f'    async def {reg.name}_read_idx(self, idx : int) -> int:\n'
                 s += f'        return await {reg_name}.{func_read_idx}(idx)\n\n'
         case Acc.rc:
-            s += f'    def {reg.name}_cached(self) -> {t_str}:\n'
+            s += f'    def {reg.name}_read_cached(self) -> {t_str}:\n'
             s += f'        return {reg_name}.{func_read_cached}()\n\n'
             s += f'    async def {reg.name}_read(self, clear : bool) -> {t_str}:\n'
             s += f'        val = await {reg_name}.{func_read}()\n'
@@ -137,7 +134,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
                 s += f'    async def {reg.name}_clear_idx(self, idx : int):\n'
                 s += f'        await {reg_name}.{func_write_idx}(idx, 0)\n\n'
         case Acc.rw:
-            s += f'    def {reg.name}_cached(self) -> {t_str}:\n'
+            s += f'    def {reg.name}_read_cached(self) -> {t_str}:\n'
             s += f'        return {reg_name}.{func_read_cached}()\n\n'
             s += f'    async def {reg.name}_read(self) -> {t_str}:\n'
             s += f'        return await {reg_name}.{func_read}()\n\n'
@@ -155,19 +152,19 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
                 s += f'    async def {reg.name}_write_idx(self, idx : int, val : int):\n'
                 s += f'        await {reg_name}.{func_write_idx}(idx, val)\n\n'
         case Acc.wt:
-            s += f'    def {reg.name}_cached(self) -> {t_str}:\n'
+            s += f'    def {reg.name}_read_cached(self) -> {t_str}:\n'
             s += f'        return {reg_name}.{func_read_cached}()\n\n'
             s += f'    async def {reg.name}_read(self) -> {t_str}:\n'
             s += f'        return await {reg_name}.{func_read}()\n\n'
             if not is_vec_int:
-                s += f'    async def {reg.name}_trigger(self, value : {t_str}):\n'
+                s += f'    async def {reg.name}_write_trigger(self, value : {t_str}):\n'
                 s += f'        await {reg_name}.{func_write}(value)\n\n'
             if is_vec_int:
                 s += f'    def {reg.name}_read_idx_cached(self, idx : int) -> int:\n'
                 s += f'        return await {reg_name}.{func_read_idx_cached}(idx)\n\n'
                 s += f'    async def {reg.name}_read_idx(self, idx : int) -> int:\n'
                 s += f'        return await {reg_name}.{func_read_idx}(idx)\n\n'
-                s += f'    async def {reg.name}_trigger_idx(self, idx : int, val : int):\n'
+                s += f'    async def {reg.name}_write_trigger_idx(self, idx : int, val : int):\n'
                 s += f'        await {reg_name}.{func_write_idx}(idx, val)\n\n'
         case _:
             assert False
@@ -205,19 +202,19 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
                 s += f'    def {f.name}(self) -> {t_str}:\n'
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
             case Acc.ro | Acc.rc:
-                s += f'    def {f.name}_cached(self) -> {t_str}:\n'
+                s += f'    def {f.name}_read_cached(self) -> {t_str}:\n'
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
                 s += f'    async def {f.name}_read(self) -> {t_str}:\n'
                 s += f'        return await {f_name}.{func_read}()\n\n'
             case Acc.rw:
-                s += f'    def {f.name}_cached(self) -> {t_str}:\n'
+                s += f'    def {f.name}_read_cached(self) -> {t_str}:\n'
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
                 s += f'    async def {f.name}_read(self) -> {t_str}:\n'
                 s += f'        return await {f_name}.{func_read}()\n\n'
                 s += f'    async def {f.name}_write(self, value : {t_str}):\n'
                 s += f'        await {f_name}.{func_write}(value)\n\n'
             case Acc.wt:
-                s += f'    def {f.name}_cached(self) -> {t_str}:\n'
+                s += f'    def {f.name}_read_cached(self) -> {t_str}:\n'
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
                 s += f'    async def {f.name}_read(self) -> {t_str}:\n'
                 s += f'        return await {f_name}.{func_read}()\n\n'
@@ -353,26 +350,3 @@ class {recipe.sw_module}(skmap.Module):
 
         py_f.write(f"skmap.register_Module({recipe.sw_module})\n")
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Parse a skmap module recipe file and generate skmap module"
-    )
-    parser.add_argument(
-        "recipe_file",
-        type=Path,
-        help="Path to skmap recipe file"
-    )
-    parser.add_argument(
-        "py_file",
-        type=Path,
-        help="Path to Python file to generate"
-    )
-    return parser.parse_args()
-
-
-def main():
-    args = parse_args()
-    generate_py_module(args.recipe_file, args.py_file) 
-
-if __name__ == '__main__':
-    main()

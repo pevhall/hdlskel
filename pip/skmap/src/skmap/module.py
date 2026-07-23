@@ -272,7 +272,7 @@ class Module(ABC):
     def _init_post_reg_maps(self) -> None:
         pass
 
-    def print_reg_map(self) :
+    def print_reg_map_cached(self) :
         table = RegMapTable(title=self.info_line_str())
         table.add_module(self)
         table.print()

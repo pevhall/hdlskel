@@ -87,21 +87,21 @@ async def test_skmap_module_test_acc_types(dut):
         for ii in range(RW_LEN):
             await module.regs_rw_write_idx(ii,ii+0xA0)
             # await module.regs_rw_write_idx(ii,(1<<RW_VAL_W)-1)
-        print(f'{module.regs_rw_cached()=}')
+        print(f'{module.regs_rw_read_cached()=}')
         print(f'{await module.regs_rw_read()=}')
         print(f'{await module.regs_ro_read()=}')
-    await module.regs_wt_trigger(0x1F)
+    await module.regs_wt_write_trigger(0x1F)
 
     print(f'{await module.regs_rw_read()=}')
     await module.read_cache()
     print(f'{await module.regs_rw_read()=}')
     await module.ctrl_flag_0_write(True)
-    module.print_reg_map()
+    module.print_reg_map_cached()
     # print('write zero')
     await module.write_zero_all_rc()
     # print('update')
     await module.read_cache()
-    module.print_reg_map()
+    module.print_reg_map_cached()
 
     if run_server:
         server = regio.tcp_server.RegioTcpServer(ramface_ctrl)

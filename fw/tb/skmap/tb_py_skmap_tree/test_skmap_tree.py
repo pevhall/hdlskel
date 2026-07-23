@@ -33,7 +33,7 @@ async def test_skmap_module_test_acc_types(dut):
         module = await skmap.make_module(ramface_ctrl, 0, allow_unknowen=False)
         assert isinstance(module, TestSkmapTreeModule)
         await module.make_tree()
-        module.print_reg_map()
+        module.print_reg_map_cached()
         module.print_tree_cached()
         module_top = module
         module_depth = []
@@ -50,7 +50,7 @@ async def test_skmap_module_test_acc_types(dut):
         ass = module_top.check_assert_cached()
         assert ass == skmap.Ass.passed
         m = module_depth[-1]
-        await m.trigger_flags_trigger((1<<m.trigger_flags_value_type.width)-1)
+        await m.trigger_flags_write_trigger((1<<m.trigger_flags_inst.value_type.width)-1)
         await module_top.read_cache_tree()
 
         flags = []
