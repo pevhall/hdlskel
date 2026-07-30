@@ -137,7 +137,26 @@ begin
 
 
   regs_ramface_rd_data <= to_vec_slv(to_flat(regs_rd_data_i & regs_pad), RAMFACE_DATA_W);
-  regs_wr_data_o <= to_vec_slv(to_flat(regs_ramface_wr_data), REGS_DATA_W)(0 to REGS_LEN-1);
-  regs_wr_wren_o <= to_vec_slv(to_flat(regs_ramface_wr_wren), REGS_WREN_W)(0 to REGS_LEN-1);
+
+
+  ----------------------------------------------------------------
+  -- This codes does not work on Vivado Simulator v2025.1
+  -- regs_wr_data_o <= to_vec_slv(to_flat(regs_ramface_wr_data), REGS_DATA_W)(0 to REGS_LEN-1);
+  -- regs_wr_wren_o <= to_vec_slv(to_flat(regs_ramface_wr_wren), REGS_WREN_W)(0 to REGS_LEN-1);
+
+  -- Fix for Vivado Simulator (expand the fucntion so vivado doesn't have a problem)
+  process(all)
+    variable flat_wr_data_v : std_ulogic_vector(LOCAL_RAMFACE_DEPTH*RAMFACE_DATA_W-1 downto 0);
+    variable flat_wr_wren_v : std_ulogic_vector(LOCAL_RAMFACE_DEPTH*RAMFACE_WREN_W-1 downto 0);
+  begin
+
+    flat_wr_data_v := to_flat(regs_ramface_wr_data);
+    flat_wr_wren_v := to_flat(regs_ramface_wr_wren);
+    for ii in 0 to REGS_LEN-1 loop
+      regs_wr_data_o(ii) <= from_flat_vec(flat_wr_data_v, ii, REGS_DATA_W);
+      regs_wr_wren_o(ii) <= from_flat_vec(flat_wr_wren_v, ii, REGS_WREN_W);
+    end loop;
+  end process;
+  ----------------------------------------------------------------
 
 end architecture;

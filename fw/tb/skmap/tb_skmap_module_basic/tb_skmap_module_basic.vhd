@@ -2,15 +2,16 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
-use work.basic_pkg.all;
-use work.vec_pkg.all;
+library hdlskel;
+use hdlskel.basic_pkg.all;
+use hdlskel.vec_pkg.all;
 
-use work.ramface_pkg.all;
-use work.ramface_sim_pkg.all;
-use work.skmap_pkg.all;
+use hdlskel.ramface_pkg.all;
+use hdlskel.ramface_sim_pkg.all;
+use hdlskel.skmap_pkg.all;
 
-use work.ramface_regs_rw_ipkg;
-use work.skmap_module_ipkg;
+use hdlskel.ramface_regs_rw_ipkg;
+use hdlskel.skmap_module_ipkg;
 
 entity tb_skmap_module_basic is
   generic(
@@ -21,9 +22,9 @@ end entity;
 
 architecture sim of tb_skmap_module_basic is
 
- constant SKMAP_ID : string := "TestBsic";
- constant SKMAP_VER_MAJOR : skmap_ver_major_t := 1;
- constant SKMAP_VER_MINOR : skmap_ver_minor_t := 0;
+ constant SKMAP_ID : string := "T%Basic";
+ constant SKMAP_VERSION : natural := 1;
+ constant SKMAP_CHECKSUM : natural := 16#CCCC#;
  constant SKMAP_KIDS : integer_vector := NULL_INTEGER_VECTOR;
  constant SKMAP_LEN_VAR : skmap_len_var_t := 0;
 
@@ -64,8 +65,8 @@ architecture sim of tb_skmap_module_basic is
 begin
 
   p_ctrl : process
-    constant BASE_ADDR_REGS_K   : natural := BASE_ADDR + SKMAP_HEAD_LEN;
-    constant BASE_ADDR_REGS_VAR : natural := BASE_ADDR_REGS_K + REGS_K_INT'length;
+    constant BASE_ADDR_REGS_K   : natural := BASE_ADDR + SKMAP_HEAD_LEN*SKMAP_WORD_BYTES;
+    constant BASE_ADDR_REGS_VAR : natural := BASE_ADDR_REGS_K + REGS_K_INT'length*SKMAP_WORD_BYTES;
     constant RW_DATA_INT : integer_vector := get_vec_int_range(REGS_VAR_LEN) + 256;
     constant RW_DATA_SLV : std_logic_vector := to_flat(to_vec_unsigned(RW_DATA_INT, 32));
     constant K_DATA_SLV  : std_ulogic_vector := to_flat(to_vec_unsigned(REGS_K_INT, 32));
@@ -75,15 +76,15 @@ begin
     variable rd_checks_passed_v : integer := 0;
   begin
     cyc(ramface_ctrl);
-    ramface_sim_rqst_rd(ramface_ctrl, ramface_rply, BASE_ADDR, rd_data_head_v);
-    ramface_sim_rqst_rd(ramface_ctrl, ramface_rply, BASE_ADDR_REGS_K, rd_data_k_v);
+    ramface_sim_rqst_rd(ramface_ctrl, ramface_rply, BASE_ADDR/RAMFACE_WREN_W, rd_data_head_v);
+    ramface_sim_rqst_rd(ramface_ctrl, ramface_rply, BASE_ADDR_REGS_K/RAMFACE_WREN_W, rd_data_k_v);
     if rd_data_k_v = K_DATA_SLV then
       inc(rd_checks_passed_v);
     else
       report "K data error" severity ERROR;
     end if;
-    ramface_sim_rqst_wr(ramface_ctrl, BASE_ADDR_REGS_VAR, RW_DATA_SLV);
-    ramface_sim_rqst_rd(ramface_ctrl, ramface_rply, BASE_ADDR_REGS_VAR, rd_data_var_v);
+    ramface_sim_rqst_wr(ramface_ctrl, BASE_ADDR_REGS_VAR/RAMFACE_WREN_W, RW_DATA_SLV);
+    ramface_sim_rqst_rd(ramface_ctrl, ramface_rply, BASE_ADDR_REGS_VAR/RAMFACE_WREN_W, rd_data_var_v);
     if rd_data_var_v = rw_data_slv then
       inc(rd_checks_passed_v);
     else
@@ -101,14 +102,12 @@ begin
   end process;
 
 
-
-  i_skmap_module : entity work.skmap_module
+  i_skmap_module : entity hdlskel.skmap_module
   generic map (
     SKMAP_ID           => SKMAP_ID,
-    SKMAP_VER_MAJOR    => SKMAP_VER_MAJOR,
-    SKMAP_VER_MINOR    => SKMAP_VER_MINOR,
+    SKMAP_VERSION      => SKMAP_VERSION,
+    SKMAP_CHECKSUM     => SKMAP_CHECKSUM,
     SKMAP_KIDS         => SKMAP_KIDS,
-    SKMAP_LEN_VAR      => SKMAP_LEN_VAR,
     BASE_ADDR          => BASE_ADDR,
     RAMFACE_ADDR_W     => RAMFACE_ADDR_W,
     RAMFACE_DATA_W     => RAMFACE_DATA_W,
@@ -128,6 +127,5 @@ begin
   );
 
   regs_var_rd_data <= regs_var_wr_data;
-
 
 end architecture;

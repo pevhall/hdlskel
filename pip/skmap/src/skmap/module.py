@@ -2,12 +2,14 @@ import logging
 from enum import Enum, auto, IntEnum
 from typing import Optional, Type, Literal, Union
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 # import rich
 from rich.table import Table
 
 from .console import console
 from .regio import Regio
+from .regio import regio_cache
 from .head import Head, SIZE_HEAD, SIZE_WORD, SYNC
 from .basic_types import Acc, Ass, ValueKind, ValueType, value_type_u8, value_type_x32, SKMAP_VER_STR, SKMAP_VER_MAJOR, SKMAP_VER_MINOR, SKMAP_VER_PATCH
 from .basic import ceil_log2, ceil_div, ceil_multiple, promote_to_sw_w, bytes_to_list_int, list_int_to_bytes, cast_uint_to_sint, to_rich_str
@@ -330,6 +332,32 @@ class Module(ABC):
         for k in await self.kids():
             await k.clear_assert_tree()
 
+    async def clear_reg_rc(self):
+        for regv in self.arr_reg_var:
+            if regv.acc == Acc.rc:
+                await regv.write_zero()
+
+    async def clear_reg_rc_tree(self):
+        await self.clear_reg_rc()
+        for k in await self.kids():
+            await k.clear_reg_rc_tree()
+
+    def _write_cache_to_regio_cache(self, r_cache : regio_cache.RegioCache):
+        r_cache.cache_write(self.base_addr, bytes(self.cache))
+
+    def _write_cache_to_regio_cache_tree(self, r_cache : regio_cache.RegioCache):
+        self._write_cache_to_regio_cache(r_cache)
+        for k in self.kids_cached():
+            if k is None:
+                logging.warning("kid not yet inialised wil not write to cache")
+                continue
+            k._write_cache_to_regio_cache_tree(r_cache)
+
+
+    def write_cache_tree_to_file(self, path : Path):
+        r_cache = regio_cache.RegioCache()
+        self._write_cache_to_regio_cache_tree(r_cache)
+        r_cache.save_to_file(path)
 
 class ModuleUnkowen(Module):
 

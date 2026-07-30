@@ -58,7 +58,7 @@ entity skmap_module is
     SKMAP_VERSION   : skmap_version_t;
     SKMAP_CHECKSUM  : skmap_checksum_t;
     SKMAP_KIDS      : integer_vector := NULL_INTEGER_VECTOR;
-    SKMAP_BYTE_ALIGN : natural := 0;
+    SKMAP_BYTE_ALIGN : natural := 1;
 
     BASE_ADDR       : natural;
     RAMFACE_ADDR_W  : natural;

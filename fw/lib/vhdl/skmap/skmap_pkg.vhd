@@ -9,7 +9,9 @@ use work.misc_pkg.all;
 package skmap_pkg is
 
   constant SKMAP_HEAD_LEN : natural := 4;
-  constant SKMAP_HEAD_W   : natural := SKMAP_HEAD_LEN * 32;
+  constant SKMAP_WORD_BYTES : natural := 4;
+  constant SKMAP_WORD_W   : natural := SKMAP_WORD_BYTES * 8;
+  constant SKMAP_HEAD_W   : natural := SKMAP_HEAD_LEN * SKMAP_WORD_W;
 
 
 --            ╓──────────┬──────────┬──────────┬──────────┐
@@ -24,8 +26,8 @@ package skmap_pkg is
 -- │  Word 3  ║ Len_Kids │ Len_Sub  │  Len_K   │  Len_Var │
 -- └──────────╨──────────┴──────────┴──────────┴──────────┘
 
-  constant SKMAP_ID_SIZE     : natural := 7;
-  constant SKMAP_ID_W        : natural := SKMAP_ID_SIZE*8;
+  constant SKMAP_ID_BYTES     : natural := 7;
+  constant SKMAP_ID_W        : natural := SKMAP_ID_BYTES*8;
   constant SKMAP_SYNC_W      : natural := 8;
   constant SKMAP_VERSION_W   : natural := 8;
   constant SKMAP_FLAGS_W     : natural := 8;
@@ -37,7 +39,7 @@ package skmap_pkg is
 
   constant SKMAP_SYNC : std_ulogic_vector(SKMAP_SYNC_W-1 downto 0) := x"D8";
 
-  subtype skmap_id_t is string(1 to SKMAP_ID_SIZE);
+  subtype skmap_id_t is string(1 to SKMAP_ID_BYTES);
   subtype skmap_version_t  is integer range 0 to 2**SKMAP_VERSION_W-1;
   subtype skmap_flags_t    is std_ulogic_vector(SKMAP_FLAGS_W-1 downto 0);
   subtype skmap_checksum_t is integer range 0 to 2**SKMAP_CHECKSUM_W-1;
@@ -47,7 +49,7 @@ package skmap_pkg is
   subtype skmap_len_var_t  is integer range 0 to 2**SKMAP_LEN_VAR_W-1;
 
   type skmap_head_t is record
-    id : string(1 to SKMAP_ID_SIZE);
+    id : string(1 to SKMAP_ID_BYTES);
     version  : skmap_version_t;
     flags    : skmap_flags_t;
     checksum : skmap_checksum_t;

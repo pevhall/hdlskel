@@ -8,7 +8,7 @@ class Regio(ABC):
 
     def __init__(self):
         self.log_ops = False
-        self.prevent_dev_writes = False
+        self.error_on_write = False
         self.pre_write_callback_func : Optional[CallbackFunc] = None
         self.post_read_callback_func : Optional[CallbackFunc] = None
     
@@ -25,7 +25,7 @@ class Regio(ABC):
             logging.debug('0x%x <-- %s',addr ,data)
         if self.pre_write_callback_func is not None:
             self.pre_write_callback_func(addr, data)
-        if not self.prevent_dev_writes:
+        if not self.error_on_write:
             await self.dev_write(addr, data)
 
     async def read(self, addr : int, size : int) -> bytes:

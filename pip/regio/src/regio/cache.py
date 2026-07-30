@@ -1,7 +1,7 @@
 """
 file_cache.py
 
-Implements FileCache, a Regio-derived sparse memory cache.
+Implements Cache, a Regio-derived sparse memory cache.
 
 - Writes are stored as an ordered list of (address, bytearray) "regions".
 - Overlapping or byte-adjacent writes are automatically merged into a
@@ -24,6 +24,7 @@ Implements FileCache, a Regio-derived sparse memory cache.
 
 import struct
 from bisect import bisect_left
+from pathlib import Path
 
 from .regio import Regio
 
@@ -36,7 +37,7 @@ FILE_EXTENSION =  FILE_HEADER.decode("utf-8")
 _REGION_HDR_STRUCT = struct.Struct("<II")
 
 
-class FileCache(Regio):
+class RegioCache(Regio):
     """
     Sparse memory-space cache with merge-on-write semantics and a
     simple binary file persistence format.
@@ -56,16 +57,16 @@ class FileCache(Regio):
     # ------------------------------------------------------------------
 
     async def dev_write(self, addr: int, data: bytes) -> None:
-        self.dev_write_cached(addr, data)
+        self.cache_write(addr, data)
 
     async def dev_read(self, addr: int, size: int) -> bytes:
-        return self.dev_read_cached(addr, size)
+        return self.cache_read(addr, size)
 
     # ------------------------------------------------------------------
     # non async version of read and write
     # ------------------------------------------------------------------
 
-    def dev_write_cached(self, addr: int, data: bytes) -> None:
+    def cache_write(self, addr: int, data: bytes) -> None:
         """Write `data` at byte address `addr`, merging with any
         overlapping or adjacent existing regions."""
         self._validate_addr_size(addr, len(data))
@@ -73,7 +74,7 @@ class FileCache(Regio):
             return
         self._merge_write(addr, bytes(data))
 
-    def dev_read_cached(self, addr: int, size: int) -> bytes:
+    def cache_read(self, addr: int, size: int) -> bytes:
         """Read `size` bytes starting at byte address `addr`.
 
         Any byte not covered by a previously written will raise
@@ -159,13 +160,13 @@ class FileCache(Regio):
         spans = ", ".join(
             f"0x{a:X}+{len(d)}" for a, d in self._regions
         )
-        return f"FileCache({spans})"
+        return f"RegioCache({spans})"
 
     # ------------------------------------------------------------------
     # File persistence
     # ------------------------------------------------------------------
 
-    def save_to_file(self, path: str) -> None:
+    def save_to_file(self, path: Path) -> None:
         f"""Serialize the current cache contents to `path` using the
         {FILE_HEADER} binary format."""
         with open(path, "wb") as f:
@@ -176,7 +177,7 @@ class FileCache(Regio):
                 f.write(_REGION_HDR_STRUCT.pack(addr, len(data)))
                 f.write(data)
 
-    def load_from_file(self, path: str, replace: bool = True) -> None:
+    def load_from_file(self, path: Path, replace: bool = True) -> None:
         """Load cache contents from `path`.
 
         Args:

@@ -3,6 +3,7 @@ import asyncio
 import cocotb
 import tbskel.ramface
 import regio.tcp_server
+from regio import regio_cache
 import skmap
 import logging
 
@@ -63,13 +64,20 @@ async def test_skmap_module_test_acc_types(dut):
         print(f'{ass=}, {len(flags)=}')
 
 
+        cache_path = f'skmap_tree_cache.{regio_cache.FILE_EXTENSION}'
+        module_top.write_cache_tree_to_file(cache_path)
+
+        r_cache = regio_cache.RegioCache()
+        r_cache.load_from_file(cache_path)
+        print("reloaded:", r_cache.regions())
+
+
 
     # server = regio.tcp_server.RegioTcpServer(ramface_ctrl)
     # await server.start()
 
     for _ in range(100):
         await RisingEdge(dut.clk_i)
-    print('DONE')
 
 
     # await Timer(50, unit="ns")  # wait a bit

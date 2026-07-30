@@ -43,6 +43,6 @@ sim = HdlWorkflow(
     libraries = 'hdlskel',
     cocotb=f'test_skmap_module_recipe',
     pythonpaths=[script_dir]
-)   
+)
 sim.run()
 

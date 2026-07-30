@@ -1,5 +1,6 @@
-import regio.file_cache as file_cache
-from regio.file_cache import FileCache
+from pathlib import Path
+import regio.regio_cache as regio_cache
+from regio.regio_cache import RegioCache
 
 # ----------------------------------------------------------------------
 # Simple demo / smoke test when run directly
@@ -7,10 +8,9 @@ from regio.file_cache import FileCache
 if __name__ == "__main__":
     import asyncio
     import tempfile
-    import os
 
     async def demo():
-        cache = FileCache()
+        cache = RegioCache()
 
         await cache.dev_write(0x100, b"ABCD")
         await cache.dev_write(0x104, b"EFGH")       # adjacent -> merges
@@ -27,10 +27,10 @@ if __name__ == "__main__":
         print("read:", data)
 
         with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, f"test.{file_cache.FILE_EXTENSION}")
+            path = Path(d) / f"test.{regio_cache.FILE_EXTENSION}"
             cache.save_to_file(path)
 
-            cache2 = FileCache()
+            cache2 = RegioCache()
             cache2.load_from_file(path)
             print("reloaded:", cache2.regions())
             assert cache2.regions() == cache.regions()

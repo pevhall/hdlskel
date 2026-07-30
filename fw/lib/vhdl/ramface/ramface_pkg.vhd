@@ -132,12 +132,17 @@ package body ramface_pkg is
   function to_ramface_rply(flat : std_ulogic_vector) return ramface_rply_t is
     constant DATA_W : natural := flat'length - 2;
     constant WS : integer_vector(0 to 2) := (1, 1, DATA_W);
-    variable rply : ramface_rply_t(data(DATA_W-1 downto 0)) := (
-      en   => to_sl(from_flat_rec(flat, WS, 0)),
-      fail => to_sl(from_flat_rec(flat, WS, 1)),
-      data =>       from_flat_rec(flat, WS, 2)
-    );
+    variable rply : ramface_rply_t(data(DATA_W-1 downto 0));
+    -- Vivadl_2025.1 Will not allow the variable to be inialised as below
+    -- variable rply : ramface_rply_t(data(DATA_W-1 downto 0)) := (
+    --   en   => to_sl(from_flat_rec(flat, WS, 0)),
+    --   fail => to_sl(from_flat_rec(flat, WS, 1)),
+    --   data =>       from_flat_rec(flat, WS, 2)
+    -- );
   begin
+    rply.en   := to_sl(from_flat_rec(flat, WS, 0));
+    rply.fail := to_sl(from_flat_rec(flat, WS, 1));
+    rply.data :=       from_flat_rec(flat, WS, 2);
     return rply;
   end function;
 
