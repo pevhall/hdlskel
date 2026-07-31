@@ -7,17 +7,17 @@ from . import tcp_client
 
 @dataclass
 class RegioOptions:
-    ip_host : Optional[str] = None
-    ip_port : int = tcp_client.PORT_DEFAULT
+    tcp_host : Optional[str] = None
+    tcp_port : int = tcp_client.PORT_DEFAULT
     load_cache_file : Optional[Path] = None
 
     def check(self):
-        assert self.ip_host is None or self.load_cache_file is None, "One read option at a time"
-        assert self.ip_host is not None or self.load_cache_file is not None, "One option must be specified"
+        assert self.tcp_host is None or self.load_cache_file is None, "One read option at a time"
+        assert self.tcp_host is not None or self.load_cache_file is not None, "One option must be specified"
 
     async def make_regio(self):
-        if self.ip_host is not None:
-            rio = tcp_client.RegioTcpClient(host=self.ip_host, port=self.ip_port)
+        if self.tcp_host is not None:
+            rio = tcp_client.RegioTcpClient(host=self.tcp_host, port=self.tcp_port)
             await rio.connect()
         elif self.load_cache_file is not None:
             rio = cache.RegioCache()

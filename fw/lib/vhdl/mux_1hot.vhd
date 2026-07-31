@@ -53,6 +53,7 @@ use work.ramface_pkg.all;
 
 use work.mux_1hot_ipkg;
 use work.reduce_bitwise_tree_ipkg.reduce_bitwise_tree_op_t;
+use work.reduce_num_tree_ipkg.reduce_num_tree_op_t;
 
 entity mux_1hot is
   generic (
@@ -120,9 +121,10 @@ begin
     signal zeromask_sel_1hot : std_logic_vector(SRC_LEN-1 downto 0) := (others => '0');
     signal zeromask_sel_1hot_vec : vec_slv_t(0 to SRC_LEN-1)(0 downto 0);
 
-    constant SUM_EN_W : natural := ceil_log2(SRC_LEN);
-    signal zeromask_sel_1hot_ext : vec_unsigned_t(0 to SRC_LEN-1)(SUM_EN_W-1 downto 0);
-    signal dst_sel_sum : unsigned(SUM_EN_W-1 downto 0);
+    constant SUM_EN_W : natural := ceil_log2(SRC_LEN)+1;
+    constant SUM_EN_SGN_W : natural := SUM_EN_W+1;
+    signal zeromask_sel_1hot_ext : vec_signed_t(0 to SRC_LEN-1)(SUM_EN_SGN_W-1 downto 0);
+    signal dst_sel_sum : signed(SUM_EN_SGN_W-1 downto 0);
   begin
 
     process(clk_i)
@@ -170,10 +172,11 @@ begin
       dst_data_o(0)  => dst_sel_or_reduce_o
     );
 
-    zeromask_sel_1hot_ext <= resize(to_vec_unsigned(zeromask_sel_1hot_vec), SUM_EN_W);
-    i_adder_tree : entity work.adder_tree
+    zeromask_sel_1hot_ext <= pad_to_signed(resize(to_vec_unsigned(zeromask_sel_1hot_vec), SUM_EN_W));
+    i_adder_tree : entity work.reduce_num_tree
     generic map (
-      NUM_W         => SUM_EN_W,
+      OP            => op_add,
+      NUM_W         => SUM_EN_SGN_W,
       SRC_LEN       => SRC_LEN,
       LATENCY       => LATENCY-1
     )
@@ -183,7 +186,7 @@ begin
       src_vec_num_i => zeromask_sel_1hot_ext,
       dst_num_o     => dst_sel_sum
     );
-    dst_sel_error_o <= to_sl(dst_sel_sum > 1);
+    dst_sel_error_o <= to_sl(wrap_to_uns(dst_sel_sum) > 1);
 
   end generate;
 

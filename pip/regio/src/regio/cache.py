@@ -13,7 +13,7 @@ Implements Cache, a Regio-derived sparse memory cache.
   binary file format:
 
     Header:
-        ascii "skregmap"      (8 bytes, no null terminator)
+        ascii "skRegCch"      (8 bytes, no null terminator)
                            (short for hdlskel register file map)
     Then, repeated until EOF, one entry per stored region:
         uint32_t address           (little-endian)
@@ -30,7 +30,7 @@ from .regio import Regio
 
 UINT32_MAX = 0xFFFF_FFFF
 
-FILE_HEADER = b"skregmap"
+FILE_HEADER = b"skRegCch"
 FILE_EXTENSION =  FILE_HEADER.decode("utf-8")
 
 # Regions are packed as little-endian uint32 address + uint32 size

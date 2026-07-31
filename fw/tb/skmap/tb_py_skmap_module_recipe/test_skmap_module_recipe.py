@@ -48,7 +48,7 @@ async def reg_loopback(dut):
 
 @cocotb.test()
 async def test_skmap_module_test_acc_types(dut):
-    logging.basicConfig(level=logging.DEBUG,stream=sys.stderr,force=True)
+    # logging.basicConfig(level=logging.DEBUG,stream=sys.stderr,force=True)
     run_server = cocotb.plusargs.get("run_server")
     assert isinstance(run_server, str)
     run_server = ast.literal_eval(run_server)

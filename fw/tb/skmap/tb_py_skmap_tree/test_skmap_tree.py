@@ -1,9 +1,9 @@
-
+import ast
 import asyncio
 import cocotb
 import tbskel.ramface
 import regio.tcp_server
-from regio import regio_cache
+from regio import cache as regio_cache
 import skmap
 import logging
 
@@ -15,6 +15,10 @@ from test_skmap_tree_module import TestSkmapTreeModule
 
 @cocotb.test()
 async def test_skmap_module_test_acc_types(dut):
+    run_server = cocotb.plusargs.get("run_server")
+    assert isinstance(run_server, str)
+    run_server = ast.literal_eval(run_server)
+    print(f"{run_server=}")
 
     dut.ramface_ce_i.value = 1
 
@@ -57,12 +61,11 @@ async def test_skmap_module_test_acc_types(dut):
         flags = []
         ass = module_top.check_assert_tree_cached(skmap.Ass.debug, flags)
         print(f'{ass=}, {len(flags)=}')
-        skmap.print_reg_map_table_flags(flags, title='Triggered Asserts')
+        skmap.print_table_flags(flags, title='Triggered Asserts')
         await module_top.clear_assert_tree()
         flags = []
         ass = module_top.check_assert_tree_cached(skmap.Ass.debug, flags)
         print(f'{ass=}, {len(flags)=}')
-
 
         cache_path = f'skmap_tree_cache.{regio_cache.FILE_EXTENSION}'
         module_top.write_cache_tree_to_file(cache_path)
@@ -75,6 +78,10 @@ async def test_skmap_module_test_acc_types(dut):
 
     # server = regio.tcp_server.RegioTcpServer(ramface_ctrl)
     # await server.start()
+
+    if run_server:
+        server = regio.tcp_server.RegioTcpServer(ramface_ctrl)
+        await server.start()
 
     for _ in range(100):
         await RisingEdge(dut.clk_i)

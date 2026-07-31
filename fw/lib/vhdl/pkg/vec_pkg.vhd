@@ -11,6 +11,7 @@ package vec_pkg is
   type vec_unsigned_t is array (natural range <>) of u_unsigned;
 
   type vec2_slv_t      is array (natural range <>) of vec_slv_t;
+  type vec2_signed_t   is array (natural range <>) of vec_signed_t;
   type vec2_unsigned_t is array (natural range <>) of vec_unsigned_t;
 
   subtype vec_slv4_t  is vec_slv_t(open)( 4-1 downto 0);
@@ -38,6 +39,7 @@ package vec_pkg is
   function to_vec_signed(vec : vec_slv_t) return vec_signed_t;
   function to_vec_int(vec : vec_signed_t) return integer_vector;
   function to_vec_int(vec : vec_unsigned_t) return integer_vector;
+  function pad_to_signed(vec : vec_unsigned_t) return vec_signed_t;
 
   -- other conversions
   function pack_sw_ints(vec : integer_vector; constant ELEM_W : natural) return integer_vector;
@@ -49,7 +51,11 @@ package vec_pkg is
   function "*"(lhs : integer_vector; rhs : integer) return integer_vector;
   function "+"(vec : integer_vector) return integer;
   function "+"(vec : vec_unsigned_t) return u_unsigned;
+  function "+"(vec : vec_signed_t) return u_signed;
+  function maximum(vec : vec_signed_t) return u_signed;
+  function minimum(vec : vec_signed_t) return u_signed;
   function resize(vec : vec_unsigned_t; elem_w : natural) return vec_unsigned_t;
+  function resize(vec : vec_signed_t; elem_w : natural) return vec_signed_t;
 
   -- flat
   function get_flat_w(vec : vec_slv_t) return natural;
@@ -183,6 +189,16 @@ package body vec_pkg is
     return vec_int;
   end function;
 
+  function pad_to_signed(vec : vec_unsigned_t) return vec_signed_t is
+    constant ELEM_W : natural := get_elem_w(vec);
+    variable result : vec_signed_t(vec'range)(ELEM_W downto 0);
+  begin
+    for ii in vec'range loop
+      result(ii) := pad_to_signed(vec(ii));
+    end loop;
+    return result;
+  end function;
+
   function pack_sw_ints(vec : integer_vector; constant ELEM_W : natural) return integer_vector is
     constant SW_ELEM_W     : natural := promote_to_sw_w(ELEM_W);
     constant ELEM_PER_INT  : natural := 32 / SW_ELEM_W;
@@ -257,8 +273,50 @@ package body vec_pkg is
     return result;
   end function;
 
+  function "+"(vec : vec_signed_t) return u_signed is
+    variable result : u_signed(get_elem_w(vec)-1 downto 0) := (others => '0');
+  begin
+    for idx in vec'range loop
+      result := result + vec(idx);
+    end loop;
+    return result;
+  end function;
+
+  function maximum(vec : vec_signed_t) return u_signed is
+    variable result : u_signed(get_elem_w(vec)-1 downto 0);
+  begin
+    result := vec(vec'low);
+    for idx in vec'low to vec'high loop
+      if result < vec(idx) then
+        result := vec(vec'low);
+      end if;
+    end loop;
+    return result;
+  end function;
+
+  function minimum(vec : vec_signed_t) return u_signed is
+    variable result : u_signed(get_elem_w(vec)-1 downto 0);
+  begin
+    result := vec(vec'low);
+    for idx in vec'low to vec'high loop
+      if result > vec(idx) then
+        result := vec(vec'low);
+      end if;
+    end loop;
+    return result;
+  end function;
+
   function resize(vec : vec_unsigned_t; elem_w : natural) return vec_unsigned_t is
     variable result : vec_unsigned_t(vec'range)(elem_w-1 downto 0);
+  begin
+    for ii in vec'range loop
+      result(ii) := resize(vec(ii), elem_w);
+    end loop;
+    return result;
+  end function;
+
+  function resize(vec : vec_signed_t; elem_w : natural) return vec_signed_t is
+    variable result : vec_signed_t(vec'range)(elem_w-1 downto 0);
   begin
     for ii in vec'range loop
       result(ii) := resize(vec(ii), elem_w);

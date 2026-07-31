@@ -27,6 +27,8 @@ package basic_pkg is
   function to_sint8 (v : uint8_t)  return sint8_t;
   function to_sint16(v : uint16_t) return sint16_t;
 
+  function pad_to_signed( val : unsigned) return signed;
+  function wrap_to_uns( val : signed) return unsigned;
   --
   function promote_to_sw_w(w : natural) return natural;
 
@@ -39,6 +41,7 @@ package basic_pkg is
   function ceil_log2(num : natural) return natural;
   function ceil_power_of_2(num : natural) return natural;
   function is_power_of_2(num: integer) return boolean;
+  function ceil_root(num : natural; root : natural) return natural;
   procedure inc(num_io : inout integer; inc_i : in integer := 1);
   procedure inc(num_io : inout unsigned; inc_i : in integer := 1);
 
@@ -134,6 +137,20 @@ package body basic_pkg is
     return if_then_else( v >= 2**15, v - 2**16, v);
   end function;
 
+  function pad_to_signed( val : unsigned) return signed is
+    variable sval : signed( val'high+1 downto val'low);
+  begin
+    sval := signed('0' & val);
+    return sval;
+  end function;
+
+  function wrap_to_uns( val : signed) return unsigned is
+    variable uval : unsigned( val'high-1 downto val'low);
+  begin
+    uval := unsigned( val ( uval'range ));
+    return uval;
+  end function;
+
   function promote_to_sw_w(w : natural) return natural is
   begin
     return 2**ceil_log2(ceil_multiple(w, 8));
@@ -188,6 +205,43 @@ package body basic_pkg is
   begin
     report "ceil_log2(num) = "&integer'image(ceil_log2(num));
     return ceil_power_of_2(num) = num;
+  end function;
+
+  function ceil_root(num : natural; root : natural) return natural is
+    variable lo     : natural := 1;
+    variable hi     : natural := num;
+    variable mid    : natural;
+    variable power  : natural;
+    variable result : natural;
+  begin
+    if root = 0 then
+      return 0;
+    end if;
+
+    if num <= 1 then
+      return num;
+    end if;
+
+    while lo < hi loop
+      mid := lo + (hi - lo) / 2;
+
+      power := 1;
+
+      for i in 0 to root-1 loop
+        power := power * mid;
+        if power >= num then
+          exit;
+        end if;
+      end loop;
+
+      if power >= num then
+        hi := mid;
+      else
+        lo := mid + 1;
+      end if;
+    end loop;
+    result := lo;
+    return result;
   end function;
 
   procedure inc(num_io : inout integer; inc_i : in integer := 1) is

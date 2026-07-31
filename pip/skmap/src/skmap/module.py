@@ -9,7 +9,7 @@ from rich.table import Table
 
 from .console import console
 from .regio import Regio
-from .regio import regio_cache
+from .regio import cache as regio_cache
 from .head import Head, SIZE_HEAD, SIZE_WORD, SYNC
 from .basic_types import Acc, Ass, ValueKind, ValueType, value_type_u8, value_type_x32, SKMAP_VER_STR, SKMAP_VER_MAJOR, SKMAP_VER_MINOR, SKMAP_VER_PATCH
 from .basic import ceil_log2, ceil_div, ceil_multiple, promote_to_sw_w, bytes_to_list_int, list_int_to_bytes, cast_uint_to_sint, to_rich_str

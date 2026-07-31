@@ -109,7 +109,7 @@ class RegioTcpClient(Regio):
                 data = await asyncio.wait_for(self._reader.readexactly(rply_payload_size), timeout=self.timeout)
             else:
                 data = b""
-            print(f'RegioTcpClient.read [{addr}] = {data}')
+            # print(f'RegioTcpClient.read [{addr}] = {data}')
             return data
 
 # async def example():

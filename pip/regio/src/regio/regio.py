@@ -7,11 +7,14 @@ CallbackFunc = Callable[[int, bytes], int]
 class Regio(ABC):
 
     def __init__(self):
-        self.log_ops = False
+        self.log_regio = False
         self.error_on_write = False
         self.pre_write_callback_func : Optional[CallbackFunc] = None
         self.post_read_callback_func : Optional[CallbackFunc] = None
-    
+
+    def set_log_regio(self, log_regio):
+        self.log_regio = log_regio
+
     @abstractmethod
     async def dev_write(self, addr : int, data : bytes) -> None:
         pass
@@ -21,7 +24,7 @@ class Regio(ABC):
         pass
 
     async def write(self, addr : int, data : bytes) -> None:
-        if self.log_ops:
+        if self.log_regio:
             logging.debug('0x%x <-- %s',addr ,data)
         if self.pre_write_callback_func is not None:
             self.pre_write_callback_func(addr, data)
@@ -30,7 +33,7 @@ class Regio(ABC):
 
     async def read(self, addr : int, size : int) -> bytes:
         data = await self.dev_read(addr, size)
-        if self.log_ops:
+        if self.log_regio:
             print()
             logging.debug(f'0x%x --> %s', addr, data)
         if self.post_read_callback_func is not None:

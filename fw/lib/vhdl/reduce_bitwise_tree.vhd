@@ -63,23 +63,21 @@ begin
     dst_data_o <= src_vec_data_i(0);
 
   else generate
-    -- constant OPS_PER_STEP : natural := integer(ceil(real(SRC_LEN) ** (1.0/real(LATENCY)))); --TODO: CHECK THIS!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    constant LEN_LOG_LATE : natural := ceil_log_base(SRC_LEN, LATENCY);
-    constant OPS_PER_STEP : natural := maximum(2, LEN_LOG_LATE);
-    constant EX_LEN   : natural := OPS_PER_STEP ** LATENCY;
+    constant FANIN  : natural := ceil_root(SRC_LEN, LATENCY);
+    constant LEN   : natural := SRC_LEN;
     -- S ** (1/L)
 
     -- function ignore return std_ulogic is
     -- begin
     --   report "SRC_LEN = "&integer'image(SRC_LEN);
     --   report "LATENCY = "&integer'image(LATENCY);
-    --   report "OPS_PER_STEP = "&integer'image(OPS_PER_STEP);
+    --   report "FANIN = "&integer'image(FANIN);
     --   return '1';
     -- end function;
     -- constant IGN : std_ulogic := ignore;
 
-    signal z_vec_data : vec2_slv_t(0 to LATENCY)(0 to EX_LEN-1)(DATA_W-1 downto 0) := (others => (others => (others => '0')));
+    signal z_vec_data : vec2_slv_t(0 to LATENCY)(0 to LEN-1)(DATA_W-1 downto 0) := (others => (others => (others => '0')));
     alias z_vec_data_0   is z_vec_data(0);
     alias z_vec_data_reg is z_vec_data(1 to LATENCY);
 
@@ -93,14 +91,16 @@ begin
     end function;
 
     function reduce_step (data_vec : vec_slv_t) return vec_slv_t is
-      constant RESULT_LEN : natural := ceil_div(data_vec'length, OPS_PER_STEP);
+      constant RESULT_LEN : natural := ceil_div(data_vec'length, FANIN);
       variable result : vec_slv_t(0 to RESULT_LEN-1)(DATA_W-1 downto 0);
-      variable v : std_logic_vector(OPS_PER_STEP-1 downto 0);
+      variable v : std_logic_vector(FANIN-1 downto 0);
+      variable v_idx_len : natural;
     begin
       for r_idx in 0 to RESULT_LEN-1 loop
         for d_idx in 0 to DATA_W-1 loop
-          for v_idx in 0 to OPS_PER_STEP-1 loop
-            v(v_idx) := data_vec(r_idx*OPS_PER_STEP+v_idx)(d_idx);
+          v_idx_len := minimum(FANIN, data_vec'length-FANIN*r_idx);
+          for v_idx in 0 to v_idx_len-1 loop
+            v(v_idx) := data_vec(r_idx*FANIN+v_idx)(d_idx);
           end loop;
           result(r_idx)(d_idx) := reduce_op(v);
         end loop;
@@ -113,7 +113,7 @@ begin
     process(all)
     begin
       z_vec_data_0(0 to SRC_LEN-1) <= src_vec_data_i;
-      z_vec_data_0(SRC_LEN to EX_LEN-1) <= (others => src_vec_data_i(SRC_LEN-1));
+      z_vec_data_0(SRC_LEN to LEN-1) <= (others => src_vec_data_i(SRC_LEN-1));
     end process;
 
     process(clk_i)
@@ -122,10 +122,10 @@ begin
     begin
       if rising_edge(clk_i) then
         if ce_i = '1' then
-          pl := EX_LEN;
+          pl := LEN;
           for idx in 0 to LATENCY-1 loop
-            l := ceil_div(pl, OPS_PER_STEP);
-            z_vec_data_reg(idx+1)(0 to l-1) <= reduce_step(z_vec_data(idx)(0 to l*OPS_PER_STEP-1));
+            l := ceil_div(pl, FANIN);
+            z_vec_data_reg(idx+1)(0 to l-1) <= reduce_step(z_vec_data(idx)(0 to l*FANIN-1));
             pl := l;
           end loop;
         end if;
