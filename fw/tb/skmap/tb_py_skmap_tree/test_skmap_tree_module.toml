@@ -3,6 +3,7 @@ sw_module = "TestSkmapTreeModule"
 fw_module = "test_skmap_tree_module"
 id = "TBTrMod"
 version = 1
+with_vec_external_mem = true
 
 k = [
   {name = "TREE_DEPTH",   t = "u8", desc = "Tree depth"},

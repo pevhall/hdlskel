@@ -282,6 +282,16 @@ class Recipe:
         self.k = []
         self.name_to_k : dict[str, RecipeK]= {}
 
+        if 'with_external_mem' in d:
+            self.with_external_mem = d['with_external_mem']
+        else:
+            self.with_external_mem = False
+
+        if 'with_vec_external_mem' in d:
+            self.with_vec_external_mem = d['with_vec_external_mem']
+        else:
+            self.with_vec_external_mem = False
+
 
         self.fw_opts = FwOpts()
 

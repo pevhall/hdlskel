@@ -59,6 +59,22 @@ package skmap_pkg is
     len_var  : skmap_len_var_t;
   end record;
 
+  type skmap_acc_t is (
+    na, k, ro, rc, rw, wt
+  );
+
+  type skmap_external_mem_t is record
+    acc          : skmap_acc_t ;
+    byte_align   : natural;
+    base_addr    : natural;
+    data_w       : natural;
+    depth        : natural;
+    read_latency : natural;
+  end record;
+
+  type skmap_vec_external_mem_t is array (natural range <>) of skmap_external_mem_t;
+  constant NULL_SKMAP_VEC_EXTERNAL_MEM : skmap_vec_external_mem_t(0 to -1);
+
   function to_vec_slv32(head : skmap_head_t) return vec_slv32_t;
   function to_vec_int(head : skmap_head_t) return integer_vector;
 
@@ -67,8 +83,15 @@ package skmap_pkg is
   subtype skmap_sub_id_t is natural range 0 to 2**SKMAP_SUB_ID_W-1;
   constant SKMAP_SUB_ID_PAD        : skmap_sub_id_t := 16#00#;
   constant SKMAP_SUB_ID_BYTE_ALIGN : skmap_sub_id_t := 16#1A#;
+  constant SKMAP_SUB_ID_EXTERNAL_MEM  : skmap_sub_id_t := 16#3B#;
   function make_skmap_sub_byte_align(byte_align : natural) return integer_vector;
+  function make_skmap_sub_external_mem( mem : skmap_external_mem_t ) return integer_vector;
+  function make_vec_skmap_sub_external_mem( vec_mem : skmap_vec_external_mem_t ) return integer_vector;
 
+  -- external mem
+  function skmap_get_external_mem_max_addr_w      ( vec_mem : skmap_vec_external_mem_t ) return natural;
+  function skmap_get_external_mem_max_data_w      ( vec_mem : skmap_vec_external_mem_t ) return natural;
+  function skmap_get_external_mem_max_read_latency( vec_mem : skmap_vec_external_mem_t ) return natural;
 
 end package;
 
@@ -85,6 +108,8 @@ package body skmap_pkg is
     SKMAP_LEN_K_W,
     SKMAP_LEN_VAR_W
   );
+
+  constant NULL_SKMAP_VEC_EXTERNAL_MEM : skmap_vec_external_mem_t(0 to -1) := (others => (acc => na, byte_align => 0, base_addr => 0, data_w => 0, depth => 0, read_latency => 0));
 
   function to_vec_slv32(head : skmap_head_t) return vec_slv32_t is
     variable regs : vec_slv32_t(0 to SKMAP_HEAD_LEN-1);
@@ -118,5 +143,77 @@ package body skmap_pkg is
     end if;
     return sub;
   end function;
+
+  function priv_acc_to_int(acc : skmap_acc_t) return natural is
+  begin
+    case acc is
+      when  na => return 0;
+      when  k  => return 1;
+      when  ro => return 2;
+      when  rc => return 3;
+      when  rw => return 4;
+      when  wt => return 5;
+    end case;
+  end function;
+
+  constant SKMAP_SUB_EXTERNAL_MEM_LEN : natural := 3;
+
+  function make_skmap_sub_external_mem( mem : skmap_external_mem_t ) return integer_vector is
+    variable acc_int : integer := priv_acc_to_int(mem.acc);
+    variable size_bytes : integer := mem.data_w/8 * mem.depth;
+    variable sub : integer_vector(0 to SKMAP_SUB_EXTERNAL_MEM_LEN-1) := ( 
+      skmap_sub_id_external_mem + 2**8*acc_int + 2**16*mem.byte_align,
+       mem.base_addr, size_bytes
+     );
+  begin
+    assert mem.data_w/8 = 0 severity Failure;
+    return sub;
+  end function;
+
+  function make_vec_skmap_sub_external_mem( vec_mem : skmap_vec_external_mem_t ) return integer_vector is
+    constant L : natural := SKMAP_SUB_EXTERNAL_MEM_LEN;
+    variable vec_sub : integer_vector(0 to (vec_mem'length-1)*L);
+  begin
+    for ii in 0 to vec_mem'length-1 loop
+      vec_sub(ii*L to (ii-1)*L) := make_skmap_sub_external_mem(vec_mem(ii+vec_mem'low));
+    end loop;
+    return vec_sub;
+  end function;
+
+  function skmap_get_external_mem_max_addr_w( vec_mem : skmap_vec_external_mem_t ) return natural is
+    variable addr_w : natural;
+    variable max_addr_w : natural := 0;
+  begin
+    for ii in vec_mem'range loop
+      addr_w := ceil_log2(vec_mem(ii).depth);
+      if addr_w > max_addr_w then
+        max_addr_w := addr_w;
+      end if;
+    end loop;
+    return max_addr_w;
+  end function;
+
+  function skmap_get_external_mem_max_data_w( vec_mem : skmap_vec_external_mem_t ) return natural is
+    variable max_data_w : natural := 0;
+  begin
+    for ii in vec_mem'range loop
+      if vec_mem(ii).data_w > max_data_w then
+        max_data_w := vec_mem(ii).data_w;
+      end if;
+    end loop;
+    return max_data_w;
+  end function;
+
+  function skmap_get_external_mem_max_read_latency( vec_mem : skmap_vec_external_mem_t ) return natural is
+    variable read_latency : natural := 0;
+  begin
+    for ii in vec_mem'range loop
+      if vec_mem(ii).read_latency > read_latency then
+        read_latency := vec_mem(ii).data_w;
+      end if;
+    end loop;
+    return read_latency;
+  end function;
+
 
 end package body;

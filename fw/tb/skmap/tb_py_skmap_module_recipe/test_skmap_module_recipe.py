@@ -72,6 +72,7 @@ async def test_skmap_module_test_acc_types(dut):
     cocotb.start_soon(reg_loopback(dut))
 
     ramface_ctrl = tbskel.ramface.make_RamfaceCtrlBytes_default_ports(dut)
+    print(f'{dut.RAMFACE_LATENCY.value=}')
     await RisingEdge(dut.clk_i)
 
     logging.basicConfig(level=logging.DEBUG)

@@ -10,6 +10,7 @@ package basic_pkg is
   subtype sint16_t is integer range 2**15 to 2**15-1;
 
   function zeros(w : natural) return std_ulogic_vector;
+  function resize(v : std_ulogic_vector; W : natural) return std_ulogic_vector;
 
   --
   function if_then_else(b : boolean; num1 : integer; num2 : integer) return integer;
@@ -56,6 +57,13 @@ package body basic_pkg is
     constant SLV : std_ulogic_vector(w-1 downto 0) := (others => '0');
   begin
     return SLV;
+  end function;
+
+  function resize(v : std_ulogic_vector; W : natural) return std_ulogic_vector is
+    variable result : std_ulogic_vector(W-1 downto 0);
+  begin
+    result(v'length-1 downto 0) := v;
+    return result;
   end function;
 
   function if_then_else(b : boolean; num1 : integer; num2 : integer) return integer is

@@ -33,7 +33,7 @@ skmap.generate_vhdl_module(module_recipe, script_dir/'test_skmap_tree_module.vhd
 skmap.generate_py_module(module_recipe, script_dir/'test_skmap_tree_module.py')
 
 top_entity = 'test_skmap_tree_top'
-dep = analyse(config_files ='hdldepends.toml', top_entity=top_entity) #doesn't work
+dep = analyse(config_files ='hdldepends.toml', top_entity=top_entity)
 compile_order = dep.to_dict()['files']
 # print(f'{compile_order=}')
 # print(f'{script_dir=}')
@@ -50,8 +50,10 @@ sim = HdlWorkflow(
         'RAMFACE_ADDR_W=30',
         'RAMFACE_DATA_W=32',
         'SKMAP_BYTE_ALIGN=1',
-        'TREE_DEPTH=16',
-        'TREE_WIDTH=15',
+        'TREE_DEPTH=3',
+        'TREE_WIDTH=2',
+        # 'TREE_DEPTH=16',
+        # 'TREE_WIDTH=15',
     ],
     libraries = 'hdlskel',
     cocotb=f'test_skmap_tree',

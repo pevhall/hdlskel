@@ -176,7 +176,7 @@ def var_type_to_vhdl_str(t : ValueType, port_types:PortTypes = 'all') -> str:
     
 
 
-def regs_len_str(regs : list[RecipeReg], name : str, k : bool = False, offset_bytes : int = 0) -> str:
+def regs_len_str(regs : list[RecipeReg], name : str, k : bool = False, offset_bytes = 0) -> str:
     
     s = (f"""
   function get_{name} return natural is
@@ -242,12 +242,21 @@ entity {recipe.fw_module} is
   generic (
     BASE_ADDR       : natural;
     SKMAP_KIDS : integer_vector := NULL_INTEGER_VECTOR;
-    SKMAP_BYTE_ALIGN : integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG;
+    SKMAP_BYTE_ALIGN : integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG;""");
+        assert recipe.with_vec_external_mem == False or recipe.with_external_mem == False
+        if recipe.with_vec_external_mem:
+            vhdl_f.write("\n    SKMAP_VEC_EXTERNAL_MEM : skmap_vec_external_mem_t := NULL_SKMAP_VEC_EXTERNAL_MEM;")
+        if recipe.with_external_mem:
+            vhdl_f.write("\n    SKMAP_EXTERNAL_MEM : skmap_external_mem_t;")
+            vhdl_f.write("\n    SKMAP_VEC_EXTERNAL_MEM : skmap_vec_external_mem_t(0 to 0) := (0 => SKMAP_EXTERNAL_MEM);")
 
+        vhdl_f.write("""
     RAMFACE_ADDR_W  : natural;
     RAMFACE_DATA_W  : natural;
     RAMFACE_WREN_W  : natural := RAMFACE_DATA_W/8;
-    RAMFACE_LATENCY : natural := skmap_module_ipkg.RAMFACE_LATENCY""");
+    RAMFACE_LATENCY : natural := skmap_module_ipkg.get_RAMFACE_LATENCY""")
+        if recipe.with_vec_external_mem or recipe.with_external_mem:
+            vhdl_f.write("(SKMAP_VEC_EXTERNAL_MEM=>SKMAP_VEC_EXTERNAL_MEM)");
         if len(recipe.k) > 0:
             vhdl_f.write(";\n")
         for ii, kv in enumerate(recipe.k):
@@ -356,6 +365,11 @@ architecture rtl of {recipe.fw_module} is
 
   alias BYTE_ALIGN is SKMAP_BYTE_ALIGN;\n""")
 
+        if recipe.with_external_mem:
+            vhdl_f.write("  constant SKMAP_VEC_EXTERNAL_MEM : skmap_vec_external_mem_t(0 to 0) := (0 => SKMAP_EXTERNAL_MEM);")
+        if recipe.with_vec_external_mem == False and recipe.with_external_mem == False:
+            vhdl_f.write("  constant SKMAP_VEC_EXTERNAL_MEM : skmap_vec_external_mem_t := NULL_SKMAP_VEC_EXTERNAL_MEM;")
+
         for kv in recipe.k:
             if kv.t.kind == ValueKind.flag:
                 vhdl_f.write(f"""
@@ -463,6 +477,7 @@ begin
     SKMAP_VERSION      => {recipe.version},
     SKMAP_CHECKSUM     => 16#{recipe.checksum_str()}#,
     SKMAP_KIDS         => SKMAP_KIDS,
+    SKMAP_VEC_EXTERNAL_MEM => SKMAP_VEC_EXTERNAL_MEM,
     SKMAP_BYTE_ALIGN   => SKMAP_BYTE_ALIGN,
     BASE_ADDR          => BASE_ADDR,
     RAMFACE_ADDR_W     => RAMFACE_ADDR_W,

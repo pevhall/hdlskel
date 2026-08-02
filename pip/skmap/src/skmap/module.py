@@ -109,7 +109,7 @@ class Module(ABC):
         for idx in range(self.len_kids):
             await self.kid_at(idx)
         # self._kids : list['Module']
-        return self._kids
+        return self._kids # type: ignore
 
     def kids_cached(self) -> list[Optional['Module']]:
         # self._kids : list[Optional['Module']]

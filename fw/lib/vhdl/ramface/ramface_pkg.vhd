@@ -22,8 +22,9 @@ package ramface_pkg is
   end record;
 
   type vec_ramface_rqst_t is array (natural range <>) of ramface_rqst_t;
-
   type vec_ramface_rply_t is array (natural range <>) of ramface_rply_t;
+
+  constant NULL_VEC_RAMFACE_RPLY : vec_ramface_rply_t(0 to -1);
 
   function init_ramface_rqst(ADDR_W : natural; DATA_W : natural) return ramface_rqst_t;
   function init_ramface_rqst(ADDR_W : natural; DATA_W : natural; WREN_W : natural) return ramface_rqst_t;
@@ -37,10 +38,19 @@ package ramface_pkg is
   function to_flat (rply : ramface_rply_t) return std_ulogic_vector;
   function to_vec_flat (vec_rply : vec_ramface_rply_t) return vec_slv_t;
   function to_ramface_rply(flat : std_ulogic_vector) return ramface_rply_t;
+  
+  function resize(rqst : ramface_rqst_t; ADDR_W : natural; DATA_W : natural) return ramface_rqst_t;
+  function resize(rply : ramface_rply_t; DATA_W : natural) return ramface_rply_t;
 
 end package;
 
 package body ramface_pkg is
+
+  constant NULL_VEC_RAMFACE_RPLY : vec_ramface_rply_t(0 to -1)(data(-1 downto 0)) := ( others => (
+    en   => '0',
+    fail => '0',
+    data => (others => '0')
+  ) );
 
   -- function get_ramface_addr_start(BASE_ADDR : natural; RAMFACE_DATA_W : natural) return natural is
   --   constant ADDR_DIV : natural := RAMFACE_DATA_W / 8;
@@ -144,6 +154,30 @@ package body ramface_pkg is
     rply.fail := to_sl(from_flat_rec(flat, WS, 1));
     rply.data :=       from_flat_rec(flat, WS, 2);
     return rply;
+  end function;
+
+  function resize(rqst : ramface_rqst_t; ADDR_W : natural; DATA_W : natural) return ramface_rqst_t is
+    constant WREN_W : natural := DATA_W/8;
+    variable result : ramface_rqst_t (
+      addr(ADDR_W-1 downto 0),
+      wren(WREN_W-1 downto 0),
+      data(DATA_W-1 downto 0)
+    );
+  begin
+    result.en   := rqst.en;
+    result.addr := resize(rqst.addr, ADDR_W);
+    result.wren := resize(rqst.wren, WREN_W);
+    result.data := resize(rqst.data, DATA_W);
+    return result;
+  end function;
+
+  function resize(rply : ramface_rply_t; DATA_W : natural) return ramface_rply_t is
+    variable result : ramface_rply_t (data(DATA_W-1 downto 0));
+  begin
+      result.en   := rply.en;
+      result.fail := rply.fail;
+      result.data := resize(rply.data, DATA_W);
+      return result;
   end function;
 
 end package body;

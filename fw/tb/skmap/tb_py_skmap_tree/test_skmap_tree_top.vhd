@@ -21,7 +21,7 @@ package body test_skmap_tree_top_ipkg is
     TOTAL_MODULES : natural
   ) return natural is
   begin
-    return ramface_rply_combine_ipkg.get_latency(WRKR_LEN=>TOTAL_MODULES) + skmap_module_ipkg.RAMFACE_LATENCY;
+    return ramface_rply_combine_ipkg.get_latency(WRKR_LEN=>TOTAL_MODULES) + skmap_module_ipkg.get_RAMFACE_LATENCY;
   end function;
 
 end package body;
@@ -75,10 +75,12 @@ use hdlskel.skmap_module_ipkg;
 
 architecture rtl of test_skmap_tree_top is
 
-  constant RAMFACE_LATENCY_MODULE  : natural := skmap_module_ipkg.RAMFACE_LATENCY;
+  constant RAMFACE_LATENCY_MODULE  : natural := skmap_module_ipkg.get_RAMFACE_LATENCY;
   constant RAMFACE_LATENCY_COMBINE : natural := RAMFACE_LATENCY - RAMFACE_LATENCY_MODULE;
   constant SKMAP_ADDR_DEPTH_SEP : natural := 16#1000#;
   constant SKMAP_ADDR_WIDTH_SEP : natural := 16#100#;
+  -- constant SKMAP_EXT_ADDR_DEPTH_SEP : natural := 16#10_000#;
+  -- constant SKMAP_EXT_ADDR_WIDTH_SEP : natural := 16#1_0000#;
   signal vec_ramface_rply : vec_ramface_rply_t(0 to TOTAL_MODULES-1)(data(RAMFACE_DATA_W-1 downto 0));
   alias vec_ramface_rply_depth is vec_ramface_rply(0 to TREE_DEPTH-1);
   alias vec_ramface_rply_width:vec_ramface_rply_t(0 to TREE_WIDTH-1) is vec_ramface_rply(TREE_DEPTH-1 to TOTAL_MODULES-1);
