@@ -121,12 +121,12 @@ class Reg:
         self.write_uint_cached(v)
         await self.write_cache()
 
-    def write_sint_cache(self, v : int):
+    def write_sint_cached(self, v : int):
         b = v.to_bytes(self.size, byteorder='little', signed=True)
         return self.write_bytes_cached(b)
 
     async def write_sint(self, v : int):
-        self.write_sint_cache(v)
+        self.write_sint_cached(v)
         await self.write_cache()
 
     def write_bool_cached(self, v : bool):
@@ -137,7 +137,7 @@ class Reg:
         await self.write_cache()
 
     def write_zero_cached(self):
-        return self.write_sint_cache(0)
+        return self.write_uint_cached(0)
 
     async def write_zero(self):
         self.write_zero_cached()

@@ -310,7 +310,14 @@ begin
 
   end generate;
 
-  rply_to_combine <= rply_to_combine_regs_k & rply_to_combine_regs_rw & rply_to_combine_external_mem;
+  process(all) -- setting individuial values required to fix Vivado 2025.2 simulation bug
+  begin
+    rply_to_combine(0) <= rply_to_combine_regs_k;
+    rply_to_combine(1) <= rply_to_combine_regs_rw;
+    for ii in 0 to TOTAL_EXTERNAL_MEM-1 loop
+      rply_to_combine(2+ii) <= rply_to_combine_external_mem(ii);
+    end loop;
+  end process;
 
   i_ramface_rply_combine : entity work.ramface_rply_combine
   generic map (

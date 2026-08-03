@@ -18,7 +18,8 @@ class RegMapTable :
         self.table.add_row('-', 'b',  f'{f.bit}',  f.name, f._value_rich_str(), f.desc)
 
     def add_reg(self, reg : Reg, expand_flags : bool = False):
-        self.table.add_row(str(reg.addr), reg.value_type_str(),  str(reg.acc),  reg.name, reg.read_rich_str_cached(), reg.desc)
+        assert reg.addr is not None
+        self.table.add_row(hex(reg.addr), reg.value_type_str(),  str(reg.acc),  reg.name, reg.read_rich_str_cached(), reg.desc)
         if expand_flags and isinstance(reg, RegFlags):
             for f in reg.flags:
                 self.add_flag(f)

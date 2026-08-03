@@ -407,26 +407,17 @@ class ModuleUnkowen(Module):
             self._add_reg_var(reg)
 
 
-# async def read_init_module_data(regio : Regio, addr : int):
-#     head_data = await regio.read(addr, SIZE_HEAD)
-#     module_head = Head(head_data)
-#     print(f"{module_head=}")
-#     module_size = module_head.module_size()
-#     module_data = bytearray(head_data + await regio.read(addr+SIZE_HEAD, module_size-SIZE_HEAD))
-#     print(f"{module_data=}")
-#     return regio, addr, module_head, module_data
-
-def singleton(cls):
-    instances = {}
-
-    def get_instance(*args, **kwargs):
-        if cls not in instances:
-            instances[cls] = cls(*args, **kwargs)
-        return instances[cls]
-
-    return get_instance
-
-@singleton
+# def singleton(cls):
+#     instances = {}
+#
+#     def get_instance(*args, **kwargs):
+#         if cls not in instances:
+#             instances[cls] = cls(*args, **kwargs)
+#         return instances[cls]
+#
+#     return get_instance
+#
+# @singleton
 class ModuleFactory():
 
 
@@ -475,12 +466,16 @@ class ModuleFactory():
         else:
             raise Exception("Unkowen modules not allowed, raising error, see previouse errors")
 
+#nasty hack to get around singleton not working
+import builtins
+if not hasattr(builtins, 'hdlskel_skmap_module_factory_singleton'):
+    builtins.hdlskel_skmap_module_factory_singleton = ModuleFactory() #type: ignore
+factory = builtins.hdlskel_skmap_module_factory_singleton #type: ignore
+
 
 async def make_module(regio : Regio, addr : int, allow_unknowen = False) -> Module:
-    factory = ModuleFactory()
     return await factory.make_module(regio, addr, allow_unknowen)
 
 def register_Module(module_class : Type[Module]):
-    factory = ModuleFactory()
     factory.register_module(module_class)
 
