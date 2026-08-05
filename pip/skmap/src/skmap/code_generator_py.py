@@ -317,7 +317,7 @@ class {recipe.sw_module}(skmap.Module):
                 for f in kv.flags:
                     vec_len_param = '' if f.vec_len is None else f' vec_len={resolvable_str(f.vec_len)},'
                     bit = resolvable_member_function(f.bit)
-                    py_f.write(f"        {name_to_reg_k(f.name)} = skmap.RFlagK(name='{f.name}', bit={bit}, ass=skmap.Ass.{f.ass.str()},{vec_len_param} desc='{f.desc}')\n")
+                    py_f.write(f"        {name_to_reg_k(f.name)} = skmap.RFlagK(name='{f.name}', bit={bit}, ass=skmap.Ass.{f.ass.to_str()},{vec_len_param} desc='{f.desc}')\n")
                 py_f.write("        flags = [")
                 for f in kv.flags: py_f.write(f" {name_to_reg_k(f.name)}, ")
                 py_f.write("]\n")
@@ -336,7 +336,7 @@ class {recipe.sw_module}(skmap.Module):
                 assert varv.flags is not None
                 for f in varv.flags:
                     vec_len_param = '' if f.vec_len is None else f' vec_len={f.vec_len},'
-                    py_f.write(f"        {name_to_reg_var(f.name)} = skmap.RFlag(name='{f.name}', bit={f.bit}, ass=skmap.Ass.{f.ass.str()},{vec_len_param} desc='{f.desc}')\n")
+                    py_f.write(f"        {name_to_reg_var(f.name)} = skmap.RFlag(name='{f.name}', bit={f.bit}, ass=skmap.Ass.{f.ass.to_str()},{vec_len_param} desc='{f.desc}')\n")
                 py_f.write("        flags = [")
                 for f in varv.flags: py_f.write(f" {name_to_reg_var(f.name)}, ")
                 py_f.write("]\n")

@@ -3,7 +3,7 @@ from typing import Optional
 
 SKMAP_VER_MAJOR = 0
 SKMAP_VER_MINOR = 2
-SKMAP_VER_PATCH = 0
+SKMAP_VER_PATCH = 1
 
 SKMAP_VER_STR = f'v{SKMAP_VER_MAJOR}.{SKMAP_VER_MINOR}.{SKMAP_VER_PATCH}'
 SKMAP_WORD_BYTES = 4
@@ -47,11 +47,11 @@ class Ass(IntEnum):
             return '-'
         return self.name
 
-    def str(self) -> str:
+    def to_str(self) -> str:
         return self.name
 
     @property
-    def color(self)->str:
+    def color(self) -> str:
         return {
             Ass.none:   "white",
             Ass.passed: "green",

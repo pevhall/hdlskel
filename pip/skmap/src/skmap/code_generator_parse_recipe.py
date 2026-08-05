@@ -1,7 +1,10 @@
 import copy
 import hashlib
 import string
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import toml as tomllib #type: ignore
 import argparse
 from pathlib import Path
 from enum import Enum, auto

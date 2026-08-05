@@ -51,9 +51,6 @@ architecture rtl of ramface_regs_rw is
   constant LOCAL_RAMFACE_DEPTH : natural := get_ramface_local_depth(REGS_LEN, REGS_DATA_W, RAMFACE_DATA_W);
   constant REGS_PAD_LEN : natural := get_ramface_ram_pad(REGS_LEN, REGS_DATA_W, RAMFACE_DATA_W);
 
-  signal regs_wren :  vec_slv_t(0 to REGS_LEN-1)(REGS_WREN_W-1 downto 0);
-  signal regs_wr_data :  vec_slv_t(0 to REGS_LEN-1)(REGS_DATA_W-1 downto 0);
-
   constant LOCAL_RAMFACE_ADDR_W : natural := ceil_log2(LOCAL_RAMFACE_DEPTH);
   signal local_ramface_rqst : ramface_rqst_t(
     addr(LOCAL_RAMFACE_ADDR_W-1 downto 0),

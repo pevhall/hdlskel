@@ -569,16 +569,14 @@ package body skmap_map_acc_pkg is
     constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
   ) is
     constant BYTE_ALIGN_INTL : natural := skmap_map_acc_BYTE_ALIGN(val_i'length, BYTE_ALIGN);
-    variable byte_idx_clear : integer;
     variable reg_idx, byte_high : integer;
 
   begin
 
     byte_idx_io := ceil_multiple(byte_idx_io, BYTE_ALIGN_INTL);
 
-    byte_idx_clear := ceil_div(val_i'length, 8)-1;
-    reg_idx := (byte_idx_io-1) / 4;
-    byte_high := (byte_idx_io-1) - reg_idx*4;
+    reg_idx   := byte_idx_io / 4;
+    byte_high := byte_idx_io - reg_idx*4;
     val_clear_o := regs_wr_wren_i(reg_idx)(byte_high);
 
     skmap_map_acc_ro(

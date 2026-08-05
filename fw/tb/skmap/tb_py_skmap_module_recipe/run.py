@@ -27,6 +27,7 @@ sim = HdlWorkflow(
     path_to_working_directory = script_dir/'build',
     compile_order = compile_order,
     gui = gui,
+    wave = 'surfer',
     plusargs = [f"{run_server=}"],
     generics = [
            "BASE_ADDR=0" ,

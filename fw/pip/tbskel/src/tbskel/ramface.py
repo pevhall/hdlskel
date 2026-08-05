@@ -4,9 +4,6 @@ from .regio import Regio
 # import cocotb
 from cocotb.triggers import RisingEdge, Timer
 
-def port_length(port):
-    return port.left - port.right + 1
-
 class RamfaceCtrl:
     
     def __init__(self, clk_i, ce_i, rqst_i, rply_o, LATENCY):
@@ -19,8 +16,8 @@ class RamfaceCtrl:
 
         # print(rqst_i.wren.range)
         # print(dir(rqst_i.wren.value))
-        self.WREN_W  = port_length(self.rqst_i.wren)
-        self.WORD_W  = port_length(self.rqst_i.data) // self.WREN_W
+        self.WREN_W  = len(self.rqst_i.wren)
+        self.WORD_W  = len(self.rqst_i.data) // self.WREN_W
         self.rqst_queue = deque()
         for _ in range(self.LATENCY):
             self.rqst_queue.append(None)
