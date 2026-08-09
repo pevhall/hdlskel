@@ -102,6 +102,10 @@ begin
 
   matched_wrkr_rply_vec_flat <= to_vec_flat(matched_wrkr_rply_vec);
 
+  assert WRKR_LEN <= 1 or LATENCY >= 1
+  report "Miscconfigued"
+  severity FAILURE;
+
   i_mux : entity work.mux_1hot
   generic map (
     DATA_W          => FLAT_W,

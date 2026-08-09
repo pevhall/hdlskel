@@ -61,13 +61,14 @@ begin
   -- report "BASE_ADDR = "&integer'image(BASE_ADDR) & ", LEN = "&integer'image(LOCAL_RAMFACE_DEPTH)
   -- severity NOTE;
 
-  assert ceil_log2(LOCAL_RAMFACE_DEPTH) >= LOCAL_RAMFACE_ADDR_W
-  report "LOCAL_RAMFACE_ADDR_W too small to address total length"
+  assert ceil_log2(BASE_ADDR + LOCAL_RAMFACE_DEPTH) <= RAMFACE_ADDR_W
+  report "RAMFACE_ADDR_W too small need "&to_string(ceil_log2(BASE_ADDR + LOCAL_RAMFACE_DEPTH))
+    & " but only have "&to_string(RAMFACE_ADDR_W)
   severity FAILURE;
 
   process(clk_i)
     variable en_v : std_ulogic;
-    variable addr_v : unsigned(RAMFACE_ADDR_W-1 downto 0);
+    variable addr_v : u_unsigned(RAMFACE_ADDR_W-1 downto 0);
   begin
     if rising_edge(clk_i) then
       if ramface_ce_i = '1' then
@@ -76,7 +77,9 @@ begin
                and to_sl(addr_v >= BASE_ADDR)
                and to_sl(addr_v < ADDR_END);
         local_ramface_rqst.en   <= en_v;
-        local_ramface_rqst.addr <= resize(addr_v - BASE_ADDR, LOCAL_RAMFACE_ADDR_W);
+        -- local_ramface_rqst.addr <= resize(addr_v - BASE_ADDR, LOCAL_RAMFACE_ADDR_W);
+        addr_v := wrap_to_uns(u_signed('0'&addr_v) - BASE_ADDR);
+        local_ramface_rqst.addr <= unsigned(addr_v(LOCAL_RAMFACE_ADDR_W-1 downto 0));
         if en_v = '1' then
           local_ramface_rqst.wren <= ramface_rqst_i.wren;
         else

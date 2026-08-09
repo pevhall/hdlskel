@@ -11,6 +11,9 @@ def import_py_files( files : list[Path] ):
     for f in files:
         importlib.import_module(str(f))
 
+def auto_int(s : str) -> int:
+    return int(s, 0)
+
 def parse_args():
     parser = argparse.ArgumentParser(
         prog="Skmap Utility",
@@ -35,14 +38,14 @@ def parse_args():
     # --- Normal arguments ---
     parser.add_argument(
         "-p", "--port",
-        type=int,
+        type=auto_int,
         default=PORT_DEFAULT,
         help=f"TCP Regio port" # number (default: {PORT_DEFAULT})"
     )
 
     parser.add_argument(
         "-a", "--addr",
-        type=int,
+        type=auto_int,
         default=0,
         help="Regio Address" # (defaults to 0)"
     )
@@ -124,7 +127,6 @@ async def main(args):
     if args.map:
         module.print_reg_map_cached()
 
-
     if args.asserts:
         flags = []
         ass = module.check_assert_tree_cached(args.asserts_level, flags)
@@ -132,8 +134,10 @@ async def main(args):
         print_table_flags(flags, title='Asserts')
 
     if args.clear:
-        await module.clear_assert_tree()
-        await module.read_cache()
+        if args.tree:
+            await module.clear_reg_rc()
+        else:
+            await module.clear_reg_rc_tree()
 
     if args.write:
         module.write_cache_tree_to_file(args.write)

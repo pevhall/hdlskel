@@ -101,7 +101,7 @@ architecture rtl of ramface_map_local is
   );
 
   signal decode_ramface_rqst : ramface_rqst_t(
-    addr(RAMFACE_ADDR_W-1 downto 0),
+    addr(LOCAL_RAMFACE_ADDR_W-1 downto 0),
     wren(RAMFACE_WREN_W-1 downto 0),
     data(RAMFACE_DATA_W-1 downto 0)
   );
@@ -111,8 +111,13 @@ architecture rtl of ramface_map_local is
   constant RAMFACE_LOCAL_RAMFACE_DEPTH : natural := ceil_div(LOCAL_RAMFACE_DEPTH * RAMFACE_WREN_W, LOCAL_RAMFACE_WREN_W);
 begin
 
-  assert LATENCY_RQST_LOCAL_DECODE + LATENCY_RQST_W_ADAPT + LATENCY_RPLY_W_ADAPT + RAMFACE_LATENCY = RAMFACE_LATENCY
-  report "Not currently supported"
+  assert LATENCY_RQST_LOCAL_DECODE + LATENCY_RQST_W_ADAPT + LATENCY_RPLY_W_ADAPT + LOCAL_RAMFACE_LATENCY
+    = RAMFACE_LATENCY
+  report "Not currently supported."
+   &"  LATENCY_RQST_LOCAL_DECODE = "&integer'image(LATENCY_RQST_LOCAL_DECODE)
+   &", LATENCY_RQST_W_ADAPT = "&integer'image(LATENCY_RQST_W_ADAPT)
+   &", LATENCY_RPLY_W_ADAPT = "&integer'image(LATENCY_RPLY_W_ADAPT)
+   &", RAMFACE_LATENCY = "&integer'image(RAMFACE_LATENCY)
   severity FAILURE;
 
   i_ramface_rqst_decode : entity work.ramface_rqst_local_decode

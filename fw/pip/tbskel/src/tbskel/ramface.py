@@ -25,7 +25,7 @@ class RamfaceCtrl:
     async def write_list(self, addr : int, data :list[int]):
         word_start = addr % self.WREN_W
         a = addr // self.WREN_W
-        print(f'{a=} = {addr=} // {self.WREN_W=}')
+        # print(f'{a=} = {addr=} // {self.WREN_W=}')
         cycles = (len(data) + word_start + self.WREN_W-1)//self.WREN_W
         # MASK = 1<<(self.WREN_W-1)
 

@@ -8,6 +8,7 @@ use work.misc_pkg.all;
 
 package ramface_pkg is
 
+  -- ramface rqst access all
   type ramface_rqst_t is record
     en   : std_ulogic;
     addr : u_unsigned;
@@ -15,10 +16,24 @@ package ramface_pkg is
     data : std_ulogic_vector;
   end record;
 
+  -- ramface read reply
   type ramface_rply_t is record
     en   : std_ulogic;
     fail : std_ulogic;
     data : std_ulogic_vector;
+  end record;
+
+  -- ramface rqst access read only
+  type ramface_rqst_ro_t is record
+    en   : std_ulogic;
+    addr : u_unsigned;
+  end record;
+
+  -- ramface rqst access read clear
+  type ramface_rqst_rc_t is record
+    en   : std_ulogic;
+    addr : u_unsigned;
+    wren : std_ulogic_vector;
   end record;
 
   type vec_ramface_rqst_t is array (natural range <>) of ramface_rqst_t;
@@ -33,14 +48,16 @@ package ramface_pkg is
   function get_ramface_local_depth(RAM_LEN : natural; RAM_DATA_W : natural; RAMFACE_DATA_W : natural) return natural;
   function get_ramface_ram_pad(RAM_LEN : natural; RAM_DATA_W : natural; RAMFACE_DATA_W : natural) return natural;
 
+  function to_ramface_rqst_ro(rqst : ramface_rqst_t) return ramface_rqst_ro_t;
   function get_rply_flat_w(vec_rply : vec_ramface_rply_t) return natural;
   function get_flat_w(t : ramface_rply_t) return natural;
   function to_flat (rply : ramface_rply_t) return std_ulogic_vector;
   function to_vec_flat (vec_rply : vec_ramface_rply_t) return vec_slv_t;
   function to_ramface_rply(flat : std_ulogic_vector) return ramface_rply_t;
-  
+
   function resize(rqst : ramface_rqst_t; ADDR_W : natural; DATA_W : natural) return ramface_rqst_t;
   function resize(rply : ramface_rply_t; DATA_W : natural) return ramface_rply_t;
+
 
 end package;
 
@@ -120,6 +137,13 @@ package body ramface_pkg is
   --   end if;
   --   return vec_rply(vec_rply'low).data'length;
   -- end function;
+
+  function to_ramface_rqst_ro(rqst : ramface_rqst_t) return ramface_rqst_ro_t is
+    variable rqst_ro : ramface_rqst_ro_t(addr(rqst.addr'range));
+  begin
+    rqst_ro.en   := rqst.en and (not (or rqst.wren));
+    rqst_ro.addr := rqst.addr;
+  end function;
 
   function get_rply_flat_w(vec_rply : vec_ramface_rply_t) return natural is
   begin

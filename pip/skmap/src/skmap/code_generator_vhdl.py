@@ -1,6 +1,6 @@
 from pathlib import Path
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional, Union
 
 from .code_generator_parse_recipe import parse_recipe_file, RecipeK, RecipeVar, RecipeReg
 from .basic import promote_to_sw_w, ceil_div
@@ -13,6 +13,11 @@ def port_name_clear(port_name : str) -> str:
     return port_name[:-2]+"_clear_o"
 
 PortTypes = Literal['all','flat','slv_2d']
+
+def optional_resize( s : str, width : Union[None, int, str]) -> str:
+    if width == None:
+        return s
+    return f"resize( {s}, {width} )";
 
 def port_name(name : str, direction : Literal['in', 'out']):
     port_ext_in = "_i"
@@ -217,6 +222,23 @@ def generate_vhdl_module(recipe_file : Path, vhdl_file : Path):
 --    * For {recipe.name} {recipe.id} v{recipe.version}
 --    * Checksum {recipe.checksum_str()}
 --------------------------------------------------------------------------------
+\n""")
+        if hdlskel_lib != 'work':
+            vhdl_f.write(f"""
+library {hdlskel_lib};""")
+
+        vhdl_f.write(f"""
+
+use {hdlskel_lib}.skmap_module_ipkg.SKMAP_SIZE_RESERVED_DEFAULT;
+
+package {recipe.fw_module}_ipkg is
+
+    constant SKMAP_SIZE_RESERVED           : natural := {recipe.fw_opts.size_reserved};
+    constant SKMAP_SIZE_RESERVED_BASE_REGS : natural := {recipe.fw_opts.size_reserved_base_regs};
+
+end package;
+
+---------------------------------------------------------------
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -234,6 +256,9 @@ use {hdlskel_lib}.skmap_pkg.all;
 use {hdlskel_lib}.skmap_map_acc_pkg.all;
 
 use {hdlskel_lib}.skmap_module_ipkg;
+
+use work.{recipe.fw_module}_ipkg;
+
 """);
 
         #write module entity declaration begining
@@ -249,7 +274,6 @@ entity {recipe.fw_module} is
         # if recipe.with_external_mem:
         #     vhdl_f.write("\n    SKMAP_EXTERNAL_MEM : skmap_external_mem_t;")
         #     vhdl_f.write("\n    SKMAP_VEC_EXTERNAL_MEM : skmap_vec_external_mem_t(0 to 0) := (0 => SKMAP_EXTERNAL_MEM);")
-        #
         vhdl_f.write("""
     RAMFACE_ADDR_W  : natural;
     RAMFACE_DATA_W  : natural;
@@ -304,7 +328,6 @@ entity {recipe.fw_module} is
         if len(recipe.var) > 0:
             vhdl_f.write(";\n")
         for ii, varv in enumerate(recipe.var):
-            #TODO: access types
             assert varv.acc != Acc.na
             output = varv.acc.sw_writable
             # assert output is not None
@@ -357,6 +380,34 @@ entity {recipe.fw_module} is
                 vhdl_t = var_type_to_vhdl_str(varv.t, port_types=port_types)
                 vhdl_f.write(f'\n    {varv.p_name} : {varv.direction} {vhdl_t}')
             if ii != len(recipe.var)-1: vhdl_f.write(";")
+        if len(recipe.mem) > 0:
+            vhdl_f.write(";\n")
+        for ii, memv in enumerate(recipe.mem):
+            assert memv.acc in (Acc.rw, Acc.ro), "Not yet implemented for memory interfaces"
+            if memv.acc == Acc.rw or memv.acc == Acc.wt:
+                vhdl_f.write(f"""
+    {memv.name}_rqst_o : out ramface_rqst_t(
+      addr(ceil_log2({memv.fw_depth})-1 downto 0),
+      wren({memv.fw_width}/8-1 downto 0),
+      data({memv.fw_width}-1 downto 0)
+    );""")
+            elif memv.acc == Acc.rc:
+                vhdl_f.write(f"""
+    {memv.name}_rqst_o : out ramface_rqst_rc_t(
+      addr(ceil_log2({memv.fw_depth})-1 downto 0),
+      wren({memv.fw_width}/8-1 downto 0)
+    );""")
+            elif memv.acc == Acc.ro or memv.acc == Acc.k:
+                vhdl_f.write(f"""
+    {memv.name}_rqst_o : out ramface_rqst_ro_t(
+      addr(ceil_log2({memv.fw_depth})-1 downto 0)
+    );""")
+            vhdl_f.write(f"""
+    {memv.name}_rply_i : in  ramface_rply_t(
+      data({memv.fw_width} -1 downto 0)
+    )""")
+            if ii != len(recipe.mem)-1: vhdl_f.write(";")
+
         vhdl_f.write(f"""
   );
 end entity;
@@ -365,10 +416,37 @@ architecture rtl of {recipe.fw_module} is
 
   alias BYTE_ALIGN is SKMAP_BYTE_ALIGN;\n""")
 
-        # if recipe.with_external_mem:
-        #     vhdl_f.write("  constant SKMAP_VEC_EXTERNAL_MEM : skmap_vec_external_mem_t(0 to 0) := (0 => SKMAP_EXTERNAL_MEM);")
-        # if recipe.with_vec_external_mem == False and recipe.with_external_mem == False:
-        vhdl_f.write("  constant SKMAP_VEC_EXTERNAL_MEM : skmap_vec_external_mem_t := NULL_SKMAP_VEC_EXTERNAL_MEM;")
+        vhdl_f.write("  constant SKMAP_VEC_EXTERNAL_MEM : skmap_vec_external_mem_t :=");
+        if (len(recipe.mem) == 0 ):
+            vhdl_f.write("NULL_SKMAP_VEC_EXTERNAL_MEM;\n")
+        else:
+            vhdl_f.write("( ")
+            for ii, memv in enumerate(recipe.mem):
+                vhdl_f.write(f""" {ii} => (
+    data_w    => {memv.fw_width},
+    depth     => {memv.fw_depth},
+    latency   => {memv.fw_latency},
+    acc       => {memv.acc}
+  ) """)
+                if ( ii != len(recipe.mem)-1 ):
+                    vhdl_f.write(',')
+                else:
+                    vhdl_f.write(') ;\n')
+            vhdl_f.write("""
+    signal vec_ramface_external_mem_rqst : vec_ramface_rqst_t ( 0 to SKMAP_VEC_EXTERNAL_MEM'length-1)(
+      addr(skmap_get_external_mem_max_addr_w(SKMAP_VEC_EXTERNAL_MEM)-1 downto 0),
+      wren(skmap_get_external_mem_max_data_w(SKMAP_VEC_EXTERNAL_MEM)/8-1 downto 0),
+      data(skmap_get_external_mem_max_data_w(SKMAP_VEC_EXTERNAL_MEM)-1 downto 0)
+    );
+    signal vec_ramface_external_mem_rqst_en_rd : std_ulogic_vector(SKMAP_VEC_EXTERNAL_MEM'length-1 downto 0);
+    signal vec_ramface_external_mem_rqst_en_wr : std_ulogic_vector(SKMAP_VEC_EXTERNAL_MEM'length-1 downto 0);
+
+    signal vec_ramface_external_mem_rply :  vec_ramface_rply_t ( 0 to SKMAP_VEC_EXTERNAL_MEM'length-1)(
+      data(skmap_get_external_mem_max_data_w(SKMAP_VEC_EXTERNAL_MEM)-1 downto 0)
+    );
+    
+""")
+
 
         for kv in recipe.k:
             if kv.t.kind == ValueKind.flag:
@@ -464,10 +542,10 @@ begin
                 # TODO: add type checking for vectors
                 continue
             if kv.t.kind == ValueKind.uint:
-                vhdl_f.write(f'assert {kv.name} < 2**{kv.t.width} severity FAILURE;\n')
+                vhdl_f.write(f'  assert {kv.name} < 2**{kv.t.width} severity FAILURE;\n')
             elif kv.t.kind == ValueKind.sint and kv.t.width <= 32:
-                vhdl_f.write(f'assert {kv.name} <   2**{kv.t.width-1} severity FAILURE;\n')
-                vhdl_f.write(f'assert {kv.name} >= -2**{kv.t.width-1} severity FAILURE;\n')
+                vhdl_f.write(f'  assert {kv.name} <   2**{kv.t.width-1} severity FAILURE;\n')
+                vhdl_f.write(f'  assert {kv.name} >= -2**{kv.t.width-1} severity FAILURE;\n')
 
         vhdl_f.write(f"""
 
@@ -479,6 +557,8 @@ begin
     SKMAP_KIDS         => SKMAP_KIDS,
     SKMAP_VEC_EXTERNAL_MEM => SKMAP_VEC_EXTERNAL_MEM,
     SKMAP_BYTE_ALIGN   => SKMAP_BYTE_ALIGN,
+    SKMAP_SIZE_RESERVED           => {recipe.fw_module}_ipkg.SKMAP_SIZE_RESERVED,
+    SKMAP_SIZE_RESERVED_BASE_REGS => {recipe.fw_module}_ipkg.SKMAP_SIZE_RESERVED_BASE_REGS,
     BASE_ADDR          => BASE_ADDR,
     RAMFACE_ADDR_W     => RAMFACE_ADDR_W,
     RAMFACE_DATA_W     => RAMFACE_DATA_W,
@@ -505,19 +585,27 @@ begin
     ramface_rqst_i     => ramface_rqst_i,
     ramface_rply_o     => ramface_rply_o,
 """)
+        if len(recipe.mem) > 0:
+            vhdl_f.write(f"""
+    vec_ramface_external_mem_rqst_o       => vec_ramface_external_mem_rqst,
+    vec_ramface_external_mem_rqst_en_rd_o => vec_ramface_external_mem_rqst_en_rd,
+    vec_ramface_external_mem_rqst_en_wr_o => vec_ramface_external_mem_rqst_en_wr,
+    vec_ramface_external_mem_rply_i       => vec_ramface_external_mem_rply, 
+""")
         vhdl_f.write(f"""
     regs_var_wr_wren_o => regs_var_wr_wren_0,
     regs_var_wr_data_o => regs_var_wr_data_0,
     regs_var_rd_data_i => regs_var_rd_data_0
   );
-
+""")
+        vhdl_f.write(f"""
   process(all)
     variable byte_idx_v : natural;
 """)
         for varv in recipe.var:
             if varv.uses_var_name:
                 vhdl_t = var_type_to_vhdl_str(varv.t, port_types='slv_2d')
-                vhdl_f.write(f'    variable {varv.name_ext} : {vhdl_t};')
+                vhdl_f.write(f'    variable {varv.name_ext} : {vhdl_t};\n')
         vhdl_f.write("""
   begin
     byte_idx_v := HEAD_AND_K_LEN*4;\n\n""");
@@ -587,7 +675,9 @@ begin
             if varv.uses_var_name:
                 if varv.direction == "out":
                     if varv.t.kind != ValueKind.flag:
-                        if varv.t.is_vec:
+                        if port_types == 'flat':
+                            vhdl_f.write(f'    {varv.p_name} <= {varv.name_ext};\n')
+                        elif varv.t.is_vec:
                             match varv.t.kind:
                                 case ValueKind.uint: vhdl_f.write(f'    {varv.p_name} <= to_vec_unsigned({varv.name_ext});\n')
                                 case ValueKind.sint: vhdl_f.write(f'    {varv.p_name} <= to_vec_signed({varv.name_ext});\n')
@@ -606,7 +696,35 @@ begin
                             else:
                                 vhdl_f.write(f'    {f.name_ext} <= {varv.name_ext}({f.bit});\n')
                         vhdl_f.write('\n')
-        vhdl_f.write("""  end process;
+        vhdl_f.write("  end process;\n");
 
+        for ii, memv in enumerate(recipe.mem):
+            if len(recipe.mem) == 1:
+                rs_addr_w = None
+                rs_data_w = None
+                rs_wren_w = None
+            else:
+                rs_addr_w = f'ceil_log2({str(memv.fw_depth)})'
+                rs_data_w = str(memv.fw_width)
+                rs_wren_w = rs_data_w + "/8"
+            vhdl_f.write(f"""
+    {memv.name}_rqst_o.addr <= { optional_resize( f'vec_ramface_external_mem_rqst({ii}).addr', rs_addr_w) };""");
+            if memv.acc == Acc.ro or memv.acc == Acc.k:
+                vhdl_f.write(f"""
+    {memv.name}_rqst_o.en   <= vec_ramface_external_mem_rqst_en_rd({ii});""");
+            elif memv.acc in (Acc.rw, Acc.rc, Acc.wt):
+                vhdl_f.write(f"""
+    {memv.name}_rqst_o.en   <= vec_ramface_external_mem_rqst({ii}).en;
+    {memv.name}_rqst_o.wren <= { optional_resize(f'vec_ramface_external_mem_rqst({ii}).wren', rs_wren_w) };""");
+                if memv.acc in (Acc.rw, Acc.wt):
+                    vhdl_f.write(f"""
+    {memv.name}_rqst_o.data <= { optional_resize(f'vec_ramface_external_mem_rqst({ii}).data', rs_data_w) };""");
+
+            vhdl_f.write(f"""
+    vec_ramface_external_mem_rply({ii}).en   <= {memv.name}_rply_i.en;
+    vec_ramface_external_mem_rply({ii}).fail <= {memv.name}_rply_i.fail;
+    vec_ramface_external_mem_rply({ii}).data <= { optional_resize( f'{memv.name}_rply_i.data', rs_data_w) };\n""");
+
+        vhdl_f.write("""
 end architecture;
 """);

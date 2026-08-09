@@ -102,7 +102,7 @@ begin
           for v_idx in 0 to v_idx_len-1 loop
             v(v_idx) := data_vec(r_idx*FANIN+v_idx)(d_idx);
           end loop;
-          result(r_idx)(d_idx) := reduce_op(v);
+          result(r_idx)(d_idx) := reduce_op(v(v_idx_len-1 downto 0));
         end loop;
       end loop;
       return result;
@@ -125,7 +125,7 @@ begin
           pl := LEN;
           for idx in 0 to LATENCY-1 loop
             l := ceil_div(pl, FANIN);
-            z_vec_data_reg(idx+1)(0 to l-1) <= reduce_step(z_vec_data(idx)(0 to l*FANIN-1));
+            z_vec_data_reg(idx+1)(0 to l-1) <= reduce_step(z_vec_data(idx)(0 to pl-1));
             pl := l;
           end loop;
         end if;

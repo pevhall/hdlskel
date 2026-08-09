@@ -1,19 +1,45 @@
 from pathlib import Path
 
 import skmap
+import argparse
 from hdldepends import analyse
 from hdlworkflow import HdlWorkflow
 
-gui        : bool = False
-run_server : bool = False
+def parse_args():
+    parser = argparse.ArgumentParser(
+        prog="Skmap Utility",
+        description="Interact with skamp regio server or cached skmap files"
+    )
+
+    parser.add_argument(
+        "-g", "--gui",
+        action="store_true",
+        help="Run GUI"
+    )
+
+    parser.add_argument(
+        "-s", "--server",
+        action="store_true",
+        help="Run Regio Server"
+    )
+    return parser.parse_args()
+
+args = parse_args()
+run_server = args.server
+gui        = args.gui
+
 
 script_dir = Path(__file__).resolve().parent
 
 name = 'recipe_test_bench_module'
 module_recipe = script_dir / f'{name}.toml'
+
 if 1:
     skmap.generate_vhdl_module(module_recipe, script_dir/f'{name}.vhd')
     skmap.generate_py_module(module_recipe, script_dir/f'{name}.py')
+if 0:
+    import sys
+    sys.exit()
 
 top_entity = name
 dep = analyse(config_files ='hdldepends.toml', top_entity=top_entity) #doesn't work
@@ -31,12 +57,18 @@ sim = HdlWorkflow(
     plusargs = [f"{run_server=}"],
     generics = [
            "BASE_ADDR=0" ,
-           "RAMFACE_ADDR_W=8" ,
+           "RAMFACE_ADDR_W=12" ,
            "RAMFACE_DATA_W=32" ,
            "RO_LEN=3" ,
            "RO_VAL_W=12" ,
            "RW_LEN=3" ,
            "RW_VAL_W=12" ,
+           "MEM_RW_VAL_W=32",
+           "MEM_RW_LEN=32",
+           "MEM_RW_LATENCY=1",
+           "MEM_RO_VAL_W=32",
+           "MEM_RO_LEN=128",
+           "MEM_RO_LATENCY=1",
            "FLAGK1=false" ,
            "FLAGK2=true" ,
            "SKMAP_BYTE_ALIGN=4",

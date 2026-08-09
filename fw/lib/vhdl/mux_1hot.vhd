@@ -81,11 +81,12 @@ begin
     dst_data_o <= src_vec_data_i(0);
     dst_sel_or_reduce_o <= src_sel_1hot_i(0);
     dst_sel_error_o <= '0';
-  elsif LATENCY = 1 generate
+  elsif LATENCY <= 1 generate
     signal dst_sel_error : std_logic := '0';
     signal dst_sel_or_reduce : std_logic := '0';
     signal dst_data : std_logic_vector(DATA_W-1 downto 0) := (others => '0');
   begin
+    assert LATENCY = 1 report "Missconfigured, SRC_LEN = "&to_string(SRC_LEN) severity FAILURE;
     process(clk_i)
       variable got_sel : std_logic;
     begin

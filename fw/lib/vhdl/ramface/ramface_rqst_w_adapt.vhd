@@ -11,7 +11,10 @@ package body ramface_rqst_w_adapt_ipkg is
     if SRC_RAMFACE_DATA_W = DST_RAMFACE_DATA_W then
       return 0;
     end if;
-    report "Not yet implemented" severity FAILURE;
+    report "Not yet implemented."
+      &" SRC_RAMFACE_DATA_W = "&to_string(SRC_RAMFACE_DATA_W)
+      &", DST_RAMFACE_DATA_W = "&to_string(DST_RAMFACE_DATA_W)
+    severity FAILURE;
   end function;
 
 end package body;

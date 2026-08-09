@@ -211,7 +211,6 @@ package body basic_pkg is
 
   function is_power_of_2(num: integer) return boolean is
   begin
-    report "ceil_log2(num) = "&integer'image(ceil_log2(num));
     return ceil_power_of_2(num) = num;
   end function;
 

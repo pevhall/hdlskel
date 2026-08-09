@@ -25,6 +25,8 @@ def parse_args():
     return parser.parse_args()
 
 args = parse_args()
+run_server = args.server
+gui        = args.gui
 
 script_dir = Path(__file__).resolve().parent
 
@@ -38,20 +40,20 @@ compile_order = dep.to_dict()['files']
 # print(f'{compile_order=}')
 # print(f'{script_dir=}')
 
-run_server = args.server
 sim = HdlWorkflow(
     eda_tool = "nvc",
     top = top_entity,
     path_to_working_directory = script_dir/'build',
     compile_order = compile_order,
-    gui = args.gui,
+    gui = gui,
+    wave = 'surfer',
     plusargs = [f"{run_server=}"],
     generics = [
         'RAMFACE_ADDR_W=30',
         'RAMFACE_DATA_W=32',
         'SKMAP_BYTE_ALIGN=1',
         # 'TREE_DEPTH=3',
-        # 'TREE_WIDTH=2',
+        # 'TREE_WIDTH=1',
         'TREE_DEPTH=16',
         'TREE_WIDTH=15',
     ],

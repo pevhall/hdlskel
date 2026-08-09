@@ -40,6 +40,10 @@ class RecipeK:
             assert isinstance(self.t, ValueTypeUnresolved)
             self.t.width = flags_width
 
+    @property
+    def vec_len(self):
+        return self.t.vec_len
+
     # def set_addr_offset_size(self, addr_offset : Union['ResolvableFunction', 'RecipeK', int], size : Union['ResolvableFunction', 'RecipeK', int]):
     #     self.addr_offset = addr_offset
     #     self.size = size
@@ -181,10 +185,10 @@ def parse_value_type_resolvable(s : str, name_to_k : Optional[dict]=None) -> Uni
         if ii == len(s):
             vec_len = None
         else:
-            assert s[ii] == '['
+            assert s[ii] == '[', "expected vector start"
             ii+=1
             vec_len, ii = parse_unresolved(s, ii, name_to_k=name_to_k, strip_space=True)
-            assert s[ii] == ']'
+            assert s[ii] == ']', "expected vector end"
             ii += 1
             assert ii == len(s)
     return make_value_type_resolvable(kind=value_kind, width=width, vec_len=vec_len)
@@ -265,6 +269,19 @@ class RecipeVar:
             assert self.flags is not None
             assert isinstance(self.t, ValueTypeUnresolved)
             self.t.width = flags_width
+    @property
+    def vec_len(self):
+        return self.t.vec_len
+
+class RecipeMem:
+    def __init__(self, d : dict, name_to_k : dict[str, RecipeK]):
+        self.name : str = d['name']
+        self.t  = parse_value_type_resolvable(d['t'], name_to_k)
+        self.acc = Acc[d['acc']]
+        self.desc : str = d['desc']
+        self.fw_depth = parse_unresolved_word(d['fw_depth'], name_to_k=name_to_k)
+        self.fw_width = parse_unresolved_word(d['fw_width'], name_to_k=name_to_k)
+        self.fw_latency = parse_unresolved_word(d['fw_latency'], name_to_k=name_to_k)
 
 RecipeReg = Union[RecipeK, RecipeVar]
 
@@ -273,6 +290,8 @@ RecipeReg = Union[RecipeK, RecipeVar]
 class FwOpts:
     ports_use_basic_types : bool = False
     hdlskel_vhdl_lib : str = 'hdlskel'
+    size_reserved : str = 'SKMAP_SIZE_RESERVED_DEFAULT'
+    size_reserved_base_regs : str = 'SKMAP_SIZE_RESERVED_DEFAULT'
 
 class Recipe:
     def __init__(self, d : dict):
@@ -285,15 +304,15 @@ class Recipe:
         self.k = []
         self.name_to_k : dict[str, RecipeK]= {}
 
-        if 'with_external_mem' in d:
-            self.with_external_mem = d['with_external_mem']
-        else:
-            self.with_external_mem = False
-
-        if 'with_vec_external_mem' in d:
-            self.with_vec_external_mem = d['with_vec_external_mem']
-        else:
-            self.with_vec_external_mem = False
+        # if 'with_external_mem' in d:
+        #     self.with_external_mem = d['with_external_mem']
+        # else:
+        #     self.with_external_mem = False
+        #
+        # if 'with_vec_external_mem' in d:
+        #     self.with_vec_external_mem = d['with_vec_external_mem']
+        # else:
+        #     self.with_vec_external_mem = False
 
 
         self.fw_opts = FwOpts()
@@ -304,6 +323,12 @@ class Recipe:
                 self.fw_opts.ports_use_basic_types = d_fw_opts['ports_use_basic_types']
             if 'hdlskel_vhdl_lib' in d_fw_opts:
                 self.fw_opts.hdlskel_vhdl_lib = d_fw_opts['hdlskel_vhdl_lib']
+            if 'size_reserved_base_regs' in d_fw_opts:
+                self.fw_opts.size_reserved_base_regs = d_fw_opts['size_reserved_base_regs']
+            if 'size_reserved' in d_fw_opts:
+                self.fw_opts.size_reserved = d_fw_opts['size_reserved']
+            else:
+                self.fw_opts.size_reserved = self.fw_opts.size_reserved_base_regs
 
         for dkv in d['k']:
             kv = RecipeK(dkv, self.name_to_k)
@@ -314,6 +339,11 @@ class Recipe:
         for dvv in d['var']:
             self.var.append(RecipeVar(dvv, self.name_to_k))
         self.checksum = self._checksum()
+
+        self.mem = []
+        if 'mem' in d:
+            for memv in d['mem']:
+                self.mem.append(RecipeMem(memv, self.name_to_k))
 
     def _checksum(self):
         m = hashlib.md5()

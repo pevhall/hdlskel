@@ -26,7 +26,7 @@ begin
     dst_data_o <= src_data_i;
 
   else generate
-    signal z_data : vec_slv_t(0 to DELAY)(DATA_W-1 downto 0) := (others => (others => '0' ) );
+    signal z_data : vec_slv_t(0 to DELAY-1)(DATA_W-1 downto 0) := (others => (others => '0' ) );
   begin
 
     process(clk_i)

@@ -2,8 +2,8 @@ from enum import Enum, auto, IntEnum
 from typing import Optional
 
 SKMAP_VER_MAJOR = 0
-SKMAP_VER_MINOR = 2
-SKMAP_VER_PATCH = 1
+SKMAP_VER_MINOR = 3
+SKMAP_VER_PATCH = 0
 
 SKMAP_VER_STR = f'v{SKMAP_VER_MAJOR}.{SKMAP_VER_MINOR}.{SKMAP_VER_PATCH}'
 SKMAP_WORD_BYTES = 4
@@ -12,12 +12,12 @@ SKMAP_WORD_BITS =SKMAP_WORD_BYTES*8
 SKMAP_ID_LEN = 7
 
 class Acc(Enum):
-    na = auto()
-    k  = auto()
-    ro = auto()
-    rc = auto()
-    rw = auto()
-    wt = auto()
+    na = 0
+    k  = 1
+    ro = 2
+    rc = 3
+    rw = 4
+    wt = 5
 
     def __str__(self):
         return self.name

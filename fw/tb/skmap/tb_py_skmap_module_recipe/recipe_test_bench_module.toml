@@ -4,13 +4,19 @@ fw_module = "recipe_test_bench_module"
 id = "TBRecip"
 version = 1
 # fw_opts = {ports_use_basic_types = true, hdlskel_vhdl_lib='work'}
-# fw_opts = { hdlskel_vhdl_lib='work'}
+fw_opts = { size_reserved=0x1000 }
 
 k = [
   {name = "RO_LEN",   t = "u8", desc = "RO length"},
   {name = "RO_VAL_W", t = "u8", desc = "RO value width"},
   {name = "RW_LEN",   t = "u8", desc = "RW length"},
   {name = "RW_VAL_W", t = "u8", desc = "RW value width"},
+  {name = "MEM_RW_VAL_W", t = "u8", desc = "MEM RW value width"},
+  {name = "MEM_RW_LEN", t = "u8", desc = "MEM RW length"},
+  {name = "MEM_RW_LATENCY", t = "u8", desc = "MEM RW latency"},
+  {name = "MEM_RO_VAL_W", t = "u8", desc = "MEM RO width"},
+  {name = "MEM_RO_LEN", t = "u8", desc = "MEM RO length"},
+  {name = "MEM_RO_LATENCY", t = "u8", desc = "MEM RO latency"},
   {name = "FLAGSK",    t = "b", desc = "K Flags", flags = [
      # { name = "FLAGK0", desc = "FlagK 0", vec_len = "{RO_VAL_W}"},
      { name = "FLAGK1", ass = "debug",   desc = "FlagK 1"},
@@ -38,4 +44,8 @@ var = [
      { name = "fatal_flag4", ass = "fatal", desc = "Flag 4"},
      { name = "debug_flag_vec", ass = "debug", desc = "Flag vec", vec_len=3},
    ]}
+]
+mem = [
+  {name = "mem_rw", t="u{MEM_RW_VAL_W}[{MEM_RW_LEN}]", acc="rw", desc = "RW Memory", fw_depth = "{MEM_RW_LEN}", fw_width = "{MEM_RW_VAL_W}",fw_latency = "{MEM_RW_LATENCY}" },
+  {name = "mem_ro", t="u{MEM_RO_VAL_W}[{MEM_RO_LEN}]", acc="ro", desc = "RO Memory", fw_depth = "{MEM_RO_LEN}", fw_width = "{MEM_RO_VAL_W}",fw_latency = "{MEM_RO_LATENCY}" }
 ]

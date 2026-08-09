@@ -3,6 +3,7 @@ from . import head
 from . import reg
 from . import module
 from . import basic_types
+from . import external_mem
 from . import reg_map_table
 from . import code_generator_vhdl
 from . import code_generator_py
@@ -24,6 +25,8 @@ RegFlags  = reg.RegFlags
 RegFlagsK = reg.RegFlagsK
 RFlag     = reg.RFlag
 RFlagK    = reg.RFlagK
+
+ExternalMem = external_mem.ExternalMem
 
 make_module     = module.make_module
 register_Module = module.register_Module

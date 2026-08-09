@@ -2,7 +2,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Union
 
-from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ResolvableFunction
+from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeK, RecipeVar, RecipeReg, RecipeMem, ResolvableFunction
 # from basic import promote_to_sw_w, ceil_div
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR, SKMAP_VER_MAJOR, SKMAP_VER_MINOR, SKMAP_VER_PATCH
 from . import code_generator_sw_common as common
@@ -10,11 +10,15 @@ from . import code_generator_sw_common as common
 Sw = common.Sw
 
 def name_to_reg_k(name : str) -> str:
-    return "self.k_"+name
+    return "self._k_"+name
 common.name_to_reg_k = name_to_reg_k
 
 def name_to_reg_var(name : str) -> str:
-    return "self.var_"+name
+    return "self._var_"+name
+
+def name_to_ext_mem(name : str) -> str:
+    return "self._mem_"+name
+
 common.name_to_reg_var = name_to_reg_var
 
 
@@ -250,6 +254,32 @@ common.all_reg_value_functions_str_is_flag = all_reg_value_functions_str_is_flag
 common.all_reg_value_functions_str_not_flag = all_reg_value_functions_str_not_flag
 all_reg_value_functions_str = common.all_reg_value_functions_str
 
+def all_mem_value_functions_str(memv : RecipeMem) -> str:
+    inst = name_to_ext_mem(memv.name)
+    inst_type = "skmap.ExternalMem"
+    s = ''
+    s += f'    @property\n'
+    s += f'    def {memv.name}_inst(self) -> {inst_type}:\n'
+    s += f'        return {inst}\n\n'
+    s += f'    @property\n'
+    s += f'    def {memv.name}_size(self) -> int:\n'
+    s += f'        return {inst}._size\n\n'
+    if memv.acc == Acc.rc:
+        s += f'    async def {memv.name}_clear(self, addr : int, size : int) -> bytes:\n'
+        s += f'      await {inst}.write(addr, bytes(size))\n\n'
+        s += f'    async def {memv.name}_read(self, addr : int, size : int, clear : bool = False) -> bytes:\n'
+        s += f'      data = await {inst}.read(addr, size)\n'
+        s += f'      if clear:\n'
+        s += f'          await {memv.name}_clear(addr, size)\n'
+        s += f'      return data\n\n'
+    else:
+        if memv.acc in (Acc.rw, Acc.wt):
+            s += f'    async def {memv.name}_write(self, addr : int, data : bytes) -> None:\n'
+            s += f'      return await {inst}.write(addr, data)\n\n'
+        s += f'    async def {memv.name}_read(self, addr : int, size : int) -> bytes:\n'
+        s += f'      return await {inst}.read(addr, size)\n\n'
+    return s;
+
 def generate_py_module(recipe_file : Path, py_file : Path):
     recipe = parse_recipe_file(recipe_file)
 
@@ -307,6 +337,9 @@ class {recipe.sw_module}(skmap.Module):
         for varv in recipe.var:
             py_f.write(all_reg_value_functions_str(varv))
 
+        for  memv in recipe.mem:
+            py_f.write(all_mem_value_functions_str(memv))
+
         py_f.write("""
     def _init_reg_map_k(self):
 """)
@@ -348,5 +381,13 @@ class {recipe.sw_module}(skmap.Module):
                 py_f.write(f"        {name_var} = skmap.{reg_type}(self, name='{varv.name}', value_type={t_str}, acc=skmap.Acc.{varv.acc}, desc='{varv.desc}')\n")
             py_f.write(f"        self._add_reg_var({name_var})\n\n")
 
+        py_f.write("    def _init_external_mem(self):\n")
+        py_f.write(f"        assert self.len_external_mem == {len(recipe.mem)}, 'Unexpected number of external mem in fw'\n")
+        for ii, memv in enumerate(recipe.mem):
+            name_mem = name_to_ext_mem(memv.name)
+            t_str = value_type_str(memv.t)
+            py_f.write(f"        {name_mem} = self.external_mem_at({ii})\n")
+            py_f.write(f"        {name_mem}.details(name='{memv.name}', value_type={t_str}, acc=skmap.Acc.{memv.acc}, desc='{memv.desc}')\n")
+        if len(recipe.mem) > 0:
+            py_f.write('\n')
         py_f.write(f"skmap.register_Module({recipe.sw_module})\n")
-
