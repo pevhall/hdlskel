@@ -56,6 +56,13 @@ class Reg:
         _ = await self.read_bytes()
         return self.read_sint_cached()
 
+    def read_bool_cached(self) -> bool:
+        return self.read_uint_cached() != 0
+
+    async def read_bool(self) -> bool: 
+        _ = await self.read_bytes()
+        return self.read_bool_cached()
+
     def read_char_cached(self) -> str:
         assert self.value_type.width == 8
         value_uint = self.read_uint_cached()

@@ -135,9 +135,9 @@ async def main(args):
 
     if args.clear:
         if args.tree:
-            await module.clear_reg_rc()
-        else:
             await module.clear_reg_rc_tree()
+        else:
+            await module.clear_reg_rc()
 
     if args.write:
         module.write_cache_tree_to_file(args.write)

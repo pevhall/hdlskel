@@ -2,7 +2,7 @@ from enum import Enum, auto
 from typing import Union
 from abc import abstractmethod
 
-from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ResolvableFunction
+from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeIpkg, RecipeK, RecipeVar, RecipeReg, ResolvableFunction, ResolvableT
 # from basic import promote_to_sw_w, ceil_div
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
 
@@ -19,11 +19,11 @@ def name_to_reg_k(name : str) -> str:
     assert(False)
 
 @abstractmethod
-def resolve_k_value(v : RecipeK) -> str:
+def resolve_k_ipkg_value(v : Union[RecipeK, RecipeIpkg]) -> str:
     assert(False)
 
 def reg_to_inst_str(reg : RecipeReg) -> str:
-    if isinstance(reg, RecipeK):
+    if isinstance(reg, Union[RecipeK, RecipeIpkg]):
         return name_to_reg_k(reg.name)
     assert isinstance(reg, RecipeVar)
     return name_to_reg_var(reg.name)
@@ -32,17 +32,17 @@ def reg_to_inst_str(reg : RecipeReg) -> str:
 def resolvable_str(v : Union[int, RecipeK, ResolvableFunction]) -> str:
     if isinstance(v, int):
         return str(v)
-    if isinstance(v, RecipeK):
-        return resolve_k_value(v)
+    if isinstance(v, RecipeK) or isinstance(v, RecipeIpkg):
+        return resolve_k_ipkg_value(v)
     if isinstance(v, ResolvableFunction):
         return f'({v.lhs} {v.op} {v.rhs})' #type: ignore
     raise runtimeError(f"Unexpected {type(v)=}")
 
-def resolvable_member_function(value : Union[ResolvableFunction, RecipeK, int]) -> str:
+def resolvable_member_function(value : ResolvableT) -> str:
     if isinstance(value, int):
         return str(value)
-    if isinstance(value, RecipeK):
-        return resolve_k_value(value)
+    if isinstance(value, RecipeK) or isinstance(value, RecipeIpkg):
+        return resolve_k_ipkg_value(value)
     assert isinstance(value, ResolvableFunction), f"{type(value)=}"
     lhs = resolvable_member_function(value.lhs)
     rhs = resolvable_member_function(value.rhs)

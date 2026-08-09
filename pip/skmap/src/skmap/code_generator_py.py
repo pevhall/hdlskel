@@ -2,7 +2,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Union
 
-from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeK, RecipeVar, RecipeReg, RecipeMem, ResolvableFunction
+from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeIpkg, RecipeK, RecipeVar, RecipeReg, RecipeMem, ResolvableFunction
 # from basic import promote_to_sw_w, ceil_div
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR, SKMAP_VER_MAJOR, SKMAP_VER_MINOR, SKMAP_VER_PATCH
 from . import code_generator_sw_common as common
@@ -22,9 +22,9 @@ def name_to_ext_mem(name : str) -> str:
 common.name_to_reg_var = name_to_reg_var
 
 
-def resolve_k_value(v : RecipeK) -> str:
+def resolve_k_ipkg_value(v : RecipeK) -> str:
     return f'self.{v.name}'
-common.resolve_k_value = resolve_k_value
+common.resolve_k_ipkg_value = resolve_k_ipkg_value
 
 reg_to_inst_str = common.reg_to_inst_str
 resolvable_str = common.resolvable_str
@@ -62,6 +62,20 @@ def value_ret_type_str(t : Union[ValueType, ValueTypeUnresolved]):
 _value_kind_function_str = common._value_kind_function_str
 read_value_function_str  = common.read_value_function_str
 write_value_function_str  = common.write_value_function_str
+
+def all_ipkg_value_parameters_str(ipkgv : RecipeIpkg) -> str:
+    t_str = value_ret_type_str(ipkgv.t)
+    value = ipkgv.value
+    if ipkgv.t.kind == ValueKind.char:
+        if ipkgv.t.is_vec:
+            value = f'"{value}"'
+        else:
+            value = f"'{value}'"
+    s = ''
+    s += f'    @property\n'
+    s += f'    def {ipkgv.name}(self) -> {t_str}:\n'
+    s += f'        return {value}\n\n'
+    return s
 
 def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     assert reg.t.width is not None
@@ -176,9 +190,13 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
 
 def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
     assert reg.t.kind == ValueKind.flag
-    assert reg.flags is not None
+
+    if reg.flags is not None:
+        flags = reg.flags
+    else:
+        flags = [reg]
     s = ''
-    for f in reg.flags:
+    for f in flags:
         if isinstance(reg, RecipeK):
             f_name =  name_to_reg_k(f.name)
         else:
@@ -227,14 +245,15 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
             case _:
                 assert False
 
-    reg_name = reg_to_inst_str(reg)
-    if reg.acc in ( Acc.ro, Acc.rw, Acc.wt ):
-        s += f'    async def {reg.name}_update_cache(self):\n'
-        s += f'        _ = await {reg_name}.read_bytes() \n\n'
+    if reg.flags is not None:
+        reg_name = reg_to_inst_str(reg)
+        if reg.acc in ( Acc.ro, Acc.rw, Acc.wt ):
+            s += f'    async def {reg.name}_update_cache(self):\n'
+            s += f'        _ = await {reg_name}.read_bytes() \n\n'
 
-    if reg.acc == Acc.rc:
-        s += f'    async def {reg.name}_clear(self):\n'
-        s += f'        await {reg_name}.write_zero()\n\n'
+        if reg.acc == Acc.rc:
+            s += f'    async def {reg.name}_clear(self):\n'
+            s += f'        await {reg_name}.write_zero()\n\n'
 
     return s
     #     for f in reg.flags:
@@ -331,6 +350,9 @@ class {recipe.sw_module}(skmap.Module):
     def skmap_ver_str(cls) -> str:
         return \"{SKMAP_VER_STR}\"\n\n""")
 
+        for ipkgv in recipe.ipkg:
+            py_f.write(all_ipkg_value_parameters_str(ipkgv))
+
         for kv in recipe.k:
             py_f.write(all_reg_value_functions_str(kv))
 
@@ -365,8 +387,8 @@ class {recipe.sw_module}(skmap.Module):
         py_f.write("""    def _init_reg_map_var(self):\n""")
         for varv in recipe.var:
             name_var = name_to_reg_var(varv.name)
-            if varv.t.kind == ValueKind.flag:
-                assert varv.flags is not None
+            # if varv.t.kind == ValueKind.flag:
+            if varv.flags is not None:
                 for f in varv.flags:
                     vec_len_param = '' if f.vec_len is None else f' vec_len={f.vec_len},'
                     py_f.write(f"        {name_to_reg_var(f.name)} = skmap.RFlag(name='{f.name}', bit={f.bit}, ass=skmap.Ass.{f.ass.to_str()},{vec_len_param} desc='{f.desc}')\n")

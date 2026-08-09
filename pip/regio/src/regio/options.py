@@ -22,7 +22,7 @@ class RegioOptions:
         elif self.load_cache_file is not None:
             rio = cache.RegioCache()
             rio.load_from_file(self.load_cache_file)
-            rio.error_on_write = True
+            rio._error_on_write = True
         else:
             assert False, "Unreachable"
         return rio
