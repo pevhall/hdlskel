@@ -65,8 +65,8 @@ def k_type_to_vhdl_str(t : ValueType, port_types:PortTypes='all') -> str:
                 case ValueKind.bits: return f"std_ulogic_vector{elem_rng}"
                 case ValueKind.flag: return f"std_ulogic_vector{elem_rng}"
 
-def var_type_to_vhdl_str(t : ValueType, port_types:PortTypes = 'all') -> str:
-    if t.kind == ValueKind.flag and t.width == 1:
+def var_type_to_vhdl_str(t : ValueType, port_types:PortTypes = 'all', sl2slv : bool = False) -> str:
+    if sl2slv and t.kind == ValueKind.flag and t.width == 1:
         return "std_ulogic";
     elem_rng = f"({t.width}-1 downto 0)"
 
@@ -378,7 +378,7 @@ entity {recipe.fw_module} is
                     varv.name_ext = port_name(varv.name, varv.direction)
                     varv.p_name = port_name(varv.name, varv.direction)
 
-                if varv.acc in (Acc.wt, Acc.rc) and varv.t.kind != ValueKind.flag:
+                if varv.acc == Acc.wt or (varv.acc == Acc.rc and varv.t.kind != ValueKind.flag):
                     # print(f'{varv.t=}')
                     if varv.t.is_vec:
                         rng = f"({varv.t.vec_len}-1 downto 0)"
@@ -621,8 +621,13 @@ begin
     variable byte_idx_v : natural;
 """)
         for varv in recipe.var:
+            if varv.acc == Acc.rc and varv.flags is not None:
+                vhdl_f.write(f"    variable byte_idx_temp_v : natural;\n")
+                break
+
+        for varv in recipe.var:
             if varv.uses_var_name:
-                vhdl_t = var_type_to_vhdl_str(varv.t, port_types='slv_2d')
+                vhdl_t = var_type_to_vhdl_str(varv.t, port_types='slv_2d', sl2slv = True)
                 vhdl_f.write(f'    variable {varv.name_ext} : {vhdl_t};\n')
         vhdl_f.write("""
   begin
@@ -685,10 +690,10 @@ begin
                 case Acc.rc:
                     if varv.t.kind == ValueKind.flag:
                         vhdl_f.write(f"""    if rising_edge(clk_i) then
-      skmap_map_acc_rc_flags(regs_var_rd_data, regs_var_wr_wren, byte_idx_v, {rd_name}, {align_str});
-    else
-      skmap_map_acc_byte_inc(byte_idx_v, {rd_name}'length, {align_str});
-    end if;\n""");
+      byte_idx_temp_v := byte_idx_v;
+      skmap_map_acc_rc_flags(regs_var_rd_data, regs_var_wr_wren, byte_idx_temp_v, {rd_name}, {align_str});
+    end if;
+    skmap_map_acc_byte_inc(byte_idx_v, {rd_name}'length, {align_str});\n""");
                     else:
                         name_clear = port_name_clear(varv.name_ext)
                         vhdl_f.write(f'    skmap_map_acc_rc(regs_var_rd_data, regs_var_wr_wren, byte_idx_v, {rd_name}, {name_clear}, {align_str});\n');

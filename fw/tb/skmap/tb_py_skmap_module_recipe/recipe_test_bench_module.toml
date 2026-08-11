@@ -7,7 +7,9 @@ version = 1
 fw_opts = { size_reserved=0x1000 }
 
 ipkg = [
-  {name = "INT_33", value = 33 },
+  {name = "INT_11", value = 11 },
+  {name = "INT_3", value = 3 },
+  {name = "INT_33", value = "{INT11}*{INT3}" },
   {name = "STR_TESTING", value = "TESTING" }
 ]
 
@@ -30,7 +32,11 @@ k = [
 ]
 
 var = [
-  {name = "rst",  t = "b1", acc = "rc", desc = "Flag single"},
+  {name = "bit_bool_rc",  t = "b1", acc = "rc", desc = "Flag single"},
+  {name = "bit_bool_rw",  t = "b1", acc = "rw", desc = "Flag single"},
+  {name = "bit_bool_wt",  t = "b1", acc = "wt", desc = "Flag single"},
+  {name = "bit_ro",  t = "x1", acc = "rc", desc = "Flag single"},
+  {name = "bit_wt",  t = "x1", acc = "rw", desc = "Flag single"},
   {name = "ctrl_flags",    t = "b", acc = "rw", desc = "RC flags", flags = [
      { name = "ctrl_flag_0", bit = 0, desc = "ctrl_flag 0"},
      { name = "ctrl_flag_8", bit = 8, desc = "ctrl_flag 8"},

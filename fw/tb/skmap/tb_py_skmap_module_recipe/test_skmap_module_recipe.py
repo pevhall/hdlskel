@@ -101,6 +101,9 @@ async def test_skmap_module_test_acc_types(dut):
     dut.mem_ro_rply_i.fail.value = 0
     dut.mem_ro_rply_i.data.value = 0
 
+    dut.bit_bool_rc_i.value = 0
+    dut.bit_ro_i.value = 0
+
 
     @dataclass
     class RamCntrs:
