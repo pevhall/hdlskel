@@ -9,6 +9,9 @@ from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
 def port_name_trig(port_name : str) -> str:
     return port_name[:-2]+"_trigger_o"
 
+def var_name_trig(port_name : str) -> str:
+    return port_name[:-2]+"_trigger_v"
+
 def port_name_clear(port_name : str) -> str:
     return port_name[:-2]+"_clear_o"
 
@@ -66,7 +69,7 @@ def k_type_to_vhdl_str(t : ValueType, port_types:PortTypes='all') -> str:
                 case ValueKind.flag: return f"std_ulogic_vector{elem_rng}"
 
 def var_type_to_vhdl_str(t : ValueType, port_types:PortTypes = 'all', sl2slv : bool = False) -> str:
-    if sl2slv and t.kind == ValueKind.flag and t.width == 1:
+    if not sl2slv and t.is_bool:
         return "std_ulogic";
     elem_rng = f"({t.width}-1 downto 0)"
 
@@ -231,10 +234,7 @@ library {hdlskel_lib};""")
 
 use {hdlskel_lib}.skmap_module_ipkg.SKMAP_SIZE_RESERVED_DEFAULT;
 
-package {recipe.fw_module}_ipkg is
-
-    constant SKMAP_SIZE_RESERVED           : natural := {recipe.fw_opts.size_reserved};
-    constant SKMAP_SIZE_RESERVED_BASE_REGS : natural := {recipe.fw_opts.size_reserved_base_regs};\n""")
+package {recipe.fw_module}_ipkg is\n\n""")
         if len(recipe.ipkg) > 1:
             vhdl_f.write('\n')
         for ipkgv in recipe.ipkg:
@@ -247,11 +247,14 @@ package {recipe.fw_module}_ipkg is
                     value = f"'{value}'"
             vhdl_f.write(f"    constant {ipkgv.name} : {vhdl_t} := {value};")
             if ipkgv.desc is not None:
-                vhdl_f.write(f"--! {ipkgv.desc}")
+                vhdl_f.write(f" --! {ipkgv.desc}")
             vhdl_f.write("\n")
 
 
-        vhdl_f.write(f"""
+        vhdl_f.write(f"""\n
+    constant SKMAP_SIZE_RESERVED           : natural := {recipe.fw_opts.size_reserved};
+    constant SKMAP_SIZE_RESERVED_BASE_REGS : natural := {recipe.fw_opts.size_reserved_base_regs};
+
 end package;
 
 ---------------------------------------------------------------
@@ -310,11 +313,15 @@ entity {recipe.fw_module} is
                         vhdl_t = 'boolean'
                     vhdl_f.write(f'\n    {f.name} : {vhdl_t}')
                     if jj != len(kv.flags)-1: vhdl_f.write(";")
+                    if f.desc is not None:
+                        vhdl_f.write(f" --! {f.desc}")
 
             else:
                 vhdl_t = k_type_to_vhdl_str(kv.t, port_types=port_types)
                 vhdl_f.write(f'\n    {kv.name} : {vhdl_t}')
             if ii != len(recipe.k)-1: vhdl_f.write(";")
+            if kv.desc is not None:
+                vhdl_f.write(f" --! {kv.desc}")
         vhdl_f.write(f"""
   );
   port (
@@ -344,6 +351,7 @@ entity {recipe.fw_module} is
 
         if len(recipe.var) > 0:
             vhdl_f.write(";\n")
+        prev_desc = None;
         for ii, varv in enumerate(recipe.var):
             assert varv.acc != Acc.na
             output = varv.acc.sw_writable
@@ -366,10 +374,13 @@ entity {recipe.fw_module} is
                         vhdl_t = f'std_ulogic_vector{rng}'
                     else:
                         vhdl_t = f'std_logic'
+                    if prev_desc is not None:
+                        vhdl_f.write(f" --! {prev_desc}")
+                    prev_desc = f.desc
                     vhdl_f.write(f'\n    {f.name_ext} : {varv.direction} {vhdl_t}')
                     if jj != len(varv.flags)-1: vhdl_f.write(";")
             else:
-                if varv.direction == 'out' and varv.t.kind in (ValueKind.uint, ValueKind.sint):
+                if varv.direction == 'out' and (varv.t.kind in (ValueKind.uint, ValueKind.sint) or varv.t.is_bool):
                     varv.uses_var_name = True
                     varv.name_ext = var_name(varv.name)
                     varv.p_name = port_name(varv.name, varv.direction)
@@ -392,16 +403,27 @@ entity {recipe.fw_module} is
                         assert varv.acc == Acc.rc
                         assert isinstance(varv.name_ext, str)
                         p_name = port_name_clear(varv.name_ext)
+                    if prev_desc is not None:
+                        vhdl_f.write(f" --! {prev_desc}")
+                    prev_desc = None
                     vhdl_f.write(f'\n    {p_name} : out {vhdl_t};')
 
-
                 vhdl_t = var_type_to_vhdl_str(varv.t, port_types=port_types)
+                if prev_desc is not None:
+                    vhdl_f.write(f" --! {prev_desc}")
+                prev_desc = varv.desc
                 vhdl_f.write(f'\n    {varv.p_name} : {varv.direction} {vhdl_t}')
             if ii != len(recipe.var)-1: vhdl_f.write(";")
         if len(recipe.mem) > 0:
+            vhdl_f.write(";")
+        if prev_desc is not None:
+            vhdl_f.write(f" --! {prev_desc}")
+        if len(recipe.mem) > 0:
             vhdl_f.write(";\n")
+        prev_desc = None
         for ii, memv in enumerate(recipe.mem):
             assert memv.acc in (Acc.rw, Acc.ro), "Not yet implemented for memory interfaces"
+            vhdl_f.write(f"    --! {memv.desc}")
             if memv.acc == Acc.rw or memv.acc == Acc.wt:
                 vhdl_f.write(f"""
     {memv.name}_rqst_o : out ramface_rqst_t(
@@ -560,10 +582,16 @@ begin
                 # TODO: add type checking for vectors
                 continue
             if kv.t.kind == ValueKind.uint:
-                vhdl_f.write(f'  assert {kv.name} < 2**{kv.t.width} severity FAILURE;\n')
-            elif kv.t.kind == ValueKind.sint and kv.t.width <= 32:
-                vhdl_f.write(f'  assert {kv.name} <   2**{kv.t.width-1} severity FAILURE;\n')
-                vhdl_f.write(f'  assert {kv.name} >= -2**{kv.t.width-1} severity FAILURE;\n')
+                if not isinstance(kv.t.width, int) or kv.t.width < 31:
+                    vhdl_f.write(f'  assert {kv.name} < 2**{kv.t.width} severity FAILURE;\n')
+                else:
+                    assert kv.t.width <= 31, "Not yet supported"
+            elif kv.t.kind == ValueKind.sint:
+                if not isinstance(kv.t.width, int) or kv.t.width < 32:
+                    vhdl_f.write(f'  assert {kv.name} <   2**({kv.t.width}-1) severity FAILURE;\n')
+                    vhdl_f.write(f'  assert {kv.name} >= -2**({kv.t.width}-1) severity FAILURE;\n')
+                else:
+                    assert kv.t.width <= 32, "Not yet supported"
 
         vhdl_f.write(f"""
 
@@ -629,6 +657,9 @@ begin
             if varv.uses_var_name:
                 vhdl_t = var_type_to_vhdl_str(varv.t, port_types='slv_2d', sl2slv = True)
                 vhdl_f.write(f'    variable {varv.name_ext} : {vhdl_t};\n')
+                if varv.acc == Acc.wt:
+                    assert not varv.t.is_vec
+                    vhdl_f.write(f'    variable {var_name_trig(varv.name_ext)} : std_logic;\n')
         vhdl_f.write("""
   begin
     byte_idx_v := HEAD_AND_K_LEN*4;\n\n""");
@@ -682,11 +713,12 @@ begin
                     vhdl_f.write(f'    skmap_map_acc_ro(regs_var_rd_data, byte_idx_v, {rd_name}, {align_str});\n')
                 case Acc.rw:
                     skmap_func = 'skmap_map_acc_rw_var' if varv.uses_var_name else 'skmap_map_acc_rw'
+                    print(f'{varv.name=} {varv.name_ext=}')
                     vhdl_f.write(f'    {skmap_func}(regs_var_rd_data, regs_var_wr_data, byte_idx_v, {varv.name_ext}, {align_str});\n')
                 case Acc.wt:
-                    name_trig = port_name_trig(varv.name_ext)
+                    name_trig = var_name_trig(varv.name_ext) if varv.uses_var_name else port_name_trig(varv.name_ext)
                     skmap_func = 'skmap_map_acc_wt_var' if varv.uses_var_name else 'skmap_map_acc_wt'
-                    vhdl_f.write(f'    skmap_map_acc_wt(regs_var_rd_data, regs_var_wr_data, regs_var_wr_wren, byte_idx_v, {varv.name_ext}, {name_trig}, {align_str});\n');
+                    vhdl_f.write(f'    {skmap_func}(regs_var_rd_data, regs_var_wr_data, regs_var_wr_wren, byte_idx_v, {varv.name_ext}, {name_trig}, {align_str});\n');
                 case Acc.rc:
                     if varv.t.kind == ValueKind.flag:
                         vhdl_f.write(f"""    if rising_edge(clk_i) then
@@ -706,7 +738,11 @@ begin
         for varv in recipe.var:
             if varv.uses_var_name:
                 if varv.direction == "out":
-                    if varv.t.kind != ValueKind.flag:
+                    if varv.acc == Acc.wt:
+                        vhdl_f.write(f'    {port_name_trig(varv.p_name)} <= {var_name_trig(varv.name_ext)};\n')
+
+
+                    if varv.flags is None:
                         if port_types == 'flat':
                             vhdl_f.write(f'    {varv.p_name} <= {varv.name_ext};\n')
                         elif varv.t.is_vec:
@@ -714,6 +750,8 @@ begin
                                 case ValueKind.uint: vhdl_f.write(f'    {varv.p_name} <= to_vec_unsigned({varv.name_ext});\n')
                                 case ValueKind.sint: vhdl_f.write(f'    {varv.p_name} <= to_vec_signed({varv.name_ext});\n')
                                 case _: assert False;
+                        elif varv.t.is_bool:
+                            vhdl_f.write(f'    {varv.p_name} <= to_sl({varv.name_ext});\n')
                         else:
                             match varv.t.kind:
                                 case ValueKind.uint: vhdl_f.write(f'    {varv.p_name} <= unsigned({varv.name_ext});\n')

@@ -3,7 +3,7 @@ from typing import Optional
 
 SKMAP_VER_MAJOR = 0
 SKMAP_VER_MINOR = 3
-SKMAP_VER_PATCH = 0
+SKMAP_VER_PATCH = 1
 
 SKMAP_VER_STR = f'v{SKMAP_VER_MAJOR}.{SKMAP_VER_MINOR}.{SKMAP_VER_PATCH}'
 SKMAP_WORD_BYTES = 4
@@ -104,6 +104,10 @@ class ValueType:
     @property
     def is_vec(self) -> bool:
         return self.vec_len is not None
+
+    @property
+    def is_bool(self) -> bool:
+        return self.kind == ValueKind.flag and self.width == 1
 
     def __repr__(self) -> str:
         s = f'{self.kind.char_str}{self.width}'

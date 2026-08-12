@@ -352,7 +352,9 @@ package body vec_pkg is
   function to_vec_slv(flat : std_ulogic_vector; slv_w : natural) return vec_slv_t is
     variable vec : vec_slv_t(0 to flat'length/slv_w-1)(slv_w-1 downto 0);
   begin
-    assert flat'length = get_flat_w(vec) severity FAILURE;
+    assert flat'length = get_flat_w(vec)
+    report "length: got "&to_string(flat'length)&", slv_w = "&to_string(slv_w)
+    severity FAILURE;
     for ii in vec'range loop
       vec(ii) := from_flat_vec(flat, ii, slv_w);
     end loop;

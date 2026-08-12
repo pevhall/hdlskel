@@ -93,6 +93,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
 
     s = ''
     is_vec_int = reg.t.vec_len != None and reg.t.kind in (ValueKind.uint, ValueKind.sint, ValueKind.bits)
+    s += f'    #{reg.name}: {reg.desc}\n'
     if reg.t.kind == ValueKind.flag:
         inst_type = 'RegFlags'
     if reg.t.is_vec:
@@ -211,7 +212,8 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
 
             s += f'    @property\n'
             s += f'    def {f.name}_len(self) -> int:\n'
-            s += f'      return {resolvable_str(f.vec_len)}\n\n'
+            s += f'        "{f.desc}"\n'
+            s += f'        return {resolvable_str(f.vec_len)}\n\n'
 
         else:
             t_str = 'bool'
@@ -222,13 +224,16 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
             case Acc.k:
                 s += f'    @property\n'
                 s += f'    def {f.name}(self) -> {t_str}:\n'
+                s += f'        "{f.desc}"\n'
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
             case Acc.ro | Acc.rc:
+                s += f'    #{f.name}: {f.desc}"\n'
                 s += f'    def {f.name}_read_cached(self) -> {t_str}:\n'
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
                 s += f'    async def {f.name}_read(self) -> {t_str}:\n'
                 s += f'        return await {f_name}.{func_read}()\n\n'
             case Acc.rw:
+                s += f'    #{f.name}: {f.desc}"\n'
                 s += f'    def {f.name}_read_cached(self) -> {t_str}:\n'
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
                 s += f'    async def {f.name}_read(self) -> {t_str}:\n'
@@ -236,6 +241,7 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
                 s += f'    async def {f.name}_write(self, value : {t_str}):\n'
                 s += f'        await {f_name}.{func_write}(value)\n\n'
             case Acc.wt:
+                s += f'    #{f.name}: {f.desc}"\n'
                 s += f'    def {f.name}_read_cached(self) -> {t_str}:\n'
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
                 s += f'    async def {f.name}_read(self) -> {t_str}:\n'
@@ -248,10 +254,12 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
     if reg.flags is not None:
         reg_name = reg_to_inst_str(reg)
         if reg.acc in ( Acc.ro, Acc.rw, Acc.wt ):
+            s += f'    #{reg.name}: {reg.desc}"\n'
             s += f'    async def {reg.name}_update_cache(self):\n'
             s += f'        _ = await {reg_name}.read_bytes() \n\n'
 
         if reg.acc == Acc.rc:
+            s += f'    #{reg.name}: {reg.desc}"\n'
             s += f'    async def {reg.name}_clear(self):\n'
             s += f'        await {reg_name}.write_zero()\n\n'
 
@@ -277,12 +285,13 @@ def all_mem_value_functions_str(memv : RecipeMem) -> str:
     inst = name_to_ext_mem(memv.name)
     inst_type = "skmap.ExternalMem"
     s = ''
+    s += f'    # {memv.name}: {memv.desc}\n'
     s += f'    @property\n'
     s += f'    def {memv.name}_inst(self) -> {inst_type}:\n'
     s += f'        return {inst}\n\n'
     s += f'    @property\n'
     s += f'    def {memv.name}_size(self) -> int:\n'
-    s += f'        return {inst}._size\n\n'
+    s += f'        return {inst}.size\n\n'
     if memv.acc == Acc.rc:
         s += f'    async def {memv.name}_clear(self, addr : int, size : int) -> bytes:\n'
         s += f'      await {inst}.write(addr, bytes(size))\n\n'

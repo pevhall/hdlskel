@@ -136,7 +136,7 @@ class Module(ABC):
     def len_external_mem(self) -> int:
         return len(self._arr_external_mem)
 
-    def external_mem_at(self, idx : int) -> Regio:
+    def external_mem_at(self, idx : int) -> ExternalMem:
         return self._arr_external_mem[idx] #type:ignore
 
     async def kid_at(self, idx : int) -> 'Module':
@@ -518,8 +518,8 @@ if not hasattr(builtins, 'hdlskel_skmap_module_factory_singleton'):
 factory = builtins.hdlskel_skmap_module_factory_singleton #type: ignore
 
 
-async def make_module(regio : Regio, addr : int, allow_unknowen = False) -> Module:
-    return await factory.make_module(regio, addr, allow_unknowen)
+async def make_module(regio_inst : Regio, addr : int, allow_unknowen = False) -> Module:
+    return await factory.make_module(regio_inst, addr, allow_unknowen)
 
 def register_Module(module_class : Type[Module]):
     factory.register_module(module_class)

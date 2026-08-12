@@ -130,6 +130,10 @@ class ValueTypeUnresolved:
         return self.vec_len is not None
 
     @property
+    def is_bool(self) -> bool:
+        return False
+
+    @property
     def supports_int32(self) -> bool:
         if not isinstance(self.width, int):
             return False
