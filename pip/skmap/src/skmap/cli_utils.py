@@ -18,13 +18,14 @@ from pathlib import Path
 def auto_int(s : str) -> int:
     return int(s, 0)
 
-def parse_args(praser : Optional[argparse.ArgumentParser] = None):
-    parser = argparse.ArgumentParser(
-        prog="Skmap Utility",
-        description="Interact with skamp regio server or cached skmap files"
-    )
+def parse_args(parser : Optional[argparse.ArgumentParser] = None, return_parser : bool = False):
+    if parser is None:
+        parser = argparse.ArgumentParser(
+            prog="Skmap Utility",
+            description="Interact with skamp regio server or cached skmap files"
+        )
 
-    regio.cli_utils.add_praser_args(parser)
+    regio.cli_utils.add_parser_args(parser)
 
     parser.add_argument(
         "-a", "--addr",
@@ -76,6 +77,8 @@ def parse_args(praser : Optional[argparse.ArgumentParser] = None):
         default=0,
         help="Increase logging verbosity (repeat up to -vvv)"
     )
+    if return_parser:
+        return parser
 
     args =  parser.parse_args()
     args.asserts_level = Ass.debug

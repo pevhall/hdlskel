@@ -25,7 +25,9 @@ from .reg_map_table import RegMapTable
 RegKTypes = Union[RegK, RegFlagsK]
 class Module(ABC):
 
-    def __init__(self, regio : Regio, addr : int, module_head : Head, module_data : bytearray):
+    
+
+    def __init__(self, regio : Regio, addr : int, module_head : Head, module_data : bytearray, maximum_external_mem_cache_size : int = 1024*1024):
         self._regio     = regio
         self._base_addr = addr
         self._head      = module_head
@@ -80,7 +82,12 @@ class Module(ABC):
                     base_addr  = int.from_bytes(b, byteorder='little')
                     b          = module_data[self._byte_idx+8:self._byte_idx+12]
                     size_bytes = int.from_bytes(b, byteorder='little')
-                    mem = ExternalMem(self._regio, base_addr, size_bytes)
+                    if size_bytes <= maximum_external_mem_cache_size:
+                        mem = ExternalMemCached(self._regio, base_addr, size_bytes)
+                    else:
+                        logging.warn("Module %s at addr %d, will not cache external mem %d, as size to large got %d B",
+                                     self.name(), addr, len(self._arr_external_mem), size_bytes)
+                        mem = ExternalMem(self._regio, base_addr, size_bytes)
                     self._arr_external_mem.append(mem)
                     logging.info(f'sub_head EXTERNAL_MEM: {base_addr=}, {size_bytes=}, {acc=}')
                     self._byte_idx += 3 * SIZE_WORD
@@ -206,14 +213,18 @@ class Module(ABC):
             await self._regio.write(addr, self.read_cached(addr, op_size))
 
 
-    async def read_cache(self):
+    async def read_cache(self, read_external_mem_cache : bool = False):
         assert not self._use_cache
         _ = await self.read_bytes(self._base_addr_var, self._size_var)
+        if read_external_mem_cache:
+            for mem in self._arr_external_mem:
+                if isinstance(mem, ExternalMemCached):
+                    await mem.read(0, mem.size)
 
-    async def read_cache_tree(self):
-        await self.read_cache()
+    async def read_cache_tree(self, read_external_mem_cache : bool = True):
+        await self.read_cache(read_external_mem_cache)
         for kid in await self.kids():
-            await kid.read_cache_tree()
+            await kid.read_cache_tree(read_external_mem_cache)
 
     async def write_cache(self):
         cache_addr = self._cache_addr(self._base_addr_var)
@@ -387,14 +398,28 @@ class Module(ABC):
         for k in await self.kids():
             await k.clear_reg_rc_tree()
 
-    def _write_cache_to_regio_cache(self, r_cache : regio_cache.RegioCache):
+    def _write_cache_to_regio_cache(self, r_cache : regio_cache.RegioCache, include_external_mem : bool = True):
         r_cache.cache_write(self._base_addr, bytes(self._cache))
 
-    def _write_cache_to_regio_cache_tree(self, r_cache : regio_cache.RegioCache):
-        self._write_cache_to_regio_cache(r_cache)
+        for mem in self.arr_external_mem:
+            if not isinstance(mem, ExternalMemCached):
+                logging.warning("%s at %d, mem interface has not cached cached (probably too large)",
+                                self.name, self._base_addr)
+                continue
+            if not mem.cache_loaded:
+                logging.warning("%s at %d, mem interface has not yet been read.\n"
+                    +"   needs to be read frist before extracting the cache.",
+                                self.name, self._base_addr)
+                continue
+            r_cache.cache_write(mem.base_addr, mem.read_cached(0, mem.size))
+
+    def _write_cache_to_regio_cache_tree(self, r_cache : regio_cache.RegioCache, include_external_mem : bool = True):
+        self._write_cache_to_regio_cache(r_cache, include_external_mem)
+
         for k in self.kids_cached():
             if k is None:
-                logging.warning("kid not yet inialised wil not write to cache")
+                logging.warning("%s at %d, kid not yet inialised wil not write to cache",
+                                self.name, self._base_addr)
                 continue
             k._write_cache_to_regio_cache_tree(r_cache)
 

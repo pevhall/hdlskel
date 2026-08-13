@@ -232,7 +232,7 @@ class RecipeFlag:
         else:
             self.ass = Ass.none
         self.desc : str = d['desc']
-        self.bit : Union[int, RecipeK, ResolvableFunction]
+        self.bit : ResolvableT
 
         if 'bit' in d:
             self.bit = parse_unresolved_word(d['bit'], name_to_k=name_to_k)
@@ -305,7 +305,7 @@ class RecipeVar:
         return self.t.vec_len
 
 class RecipeMem:
-    def __init__(self, d : dict, name_to_k : dict[str, RecipeK]):
+    def __init__(self, d : dict, name_to_k : NameToKT):
         self.name : str = d['name']
         self.t  = parse_value_type_resolvable(d['t'], name_to_k)
         self.acc = Acc[d['acc']]
@@ -388,7 +388,7 @@ class Recipe:
     def _checksum(self):
         m = hashlib.md5()
         m.update(SKMAP_VER_MAJOR.to_bytes(1))
-        m.update(SKMAP_VER_MINOR.to_bytes(1))
+        # m.update(SKMAP_VER_MINOR.to_bytes(1))
         m.update(self.id.encode())
         m.update(self.version.to_bytes(1))
         for r in self.ipkg:

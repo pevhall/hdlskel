@@ -3,7 +3,7 @@ from typing import Optional
 
 SKMAP_VER_MAJOR = 0
 SKMAP_VER_MINOR = 3
-SKMAP_VER_PATCH = 1
+SKMAP_VER_PATCH = 2
 
 SKMAP_VER_STR = f'v{SKMAP_VER_MAJOR}.{SKMAP_VER_MINOR}.{SKMAP_VER_PATCH}'
 SKMAP_WORD_BYTES = 4
@@ -53,13 +53,13 @@ class Ass(IntEnum):
     @property
     def color(self) -> str:
         return {
-            Ass.none:   "white",
+            Ass.none:   "default",
             Ass.passed: "green",
             Ass.debug:  "turquoise4",
             Ass.info:   "cornflower_blue",
             Ass.warn:   "orange1",
-            Ass.error:  "orange_red1",
-            Ass.fatal:  "red3",
+            Ass.error:  "orange_red1", #"red3",
+            Ass.fatal:  "red3", # "magenta3"
         }[self]
         # rich colors
 

@@ -7,7 +7,7 @@ from .options import RegioOptions
 def auto_int(s : str) -> int:
     return int(s, 0)
 
-def add_praser_args(parser : argparse.ArgumentParser):
+def add_parser_args(parser : argparse.ArgumentParser):
     parser.add_argument(
         "-i", "--host",
         type=str,

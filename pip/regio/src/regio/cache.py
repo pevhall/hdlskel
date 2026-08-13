@@ -30,8 +30,8 @@ from .regio import Regio
 
 UINT32_MAX = 0xFFFF_FFFF
 
-FILE_HEADER = b"skRegCch"
-FILE_EXTENSION =  FILE_HEADER.decode("utf-8")
+FILE_HEADER    = b"skelregi"
+FILE_EXTENSION =  "skelregio" #FILE_HEADER.decode("utf-8")
 
 # Regions are packed as little-endian uint32 address + uint32 size
 _REGION_HDR_STRUCT = struct.Struct("<II")
@@ -50,6 +50,7 @@ class RegioCache(Regio):
     """
 
     def __init__(self):
+        Regio.__init__(self)
         self._regions: list[tuple[int, bytearray]] = []
 
     # ------------------------------------------------------------------

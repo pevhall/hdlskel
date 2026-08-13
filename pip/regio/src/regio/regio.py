@@ -29,7 +29,7 @@ class Regio(ABC):
         pass
 
     async def write(self, addr : int, data : bytes) -> None:
-        if self._log_regio:
+        if self.log_regio:
             logging.debug('0x%x <-- %s',addr ,data)
         if self._pre_write_callback_func is not None:
             self._pre_write_callback_func(addr, data)
@@ -38,7 +38,7 @@ class Regio(ABC):
 
     async def read(self, addr : int, size : int) -> bytes:
         data = await self.dev_read(addr, size)
-        if self._log_regio:
+        if self.log_regio:
             logging.debug(f'0x%x --> %s', addr, data)
         if self._post_read_callback_func is not None:
             self._post_read_callback_func(addr, data)

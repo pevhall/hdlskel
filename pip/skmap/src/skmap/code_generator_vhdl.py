@@ -713,7 +713,7 @@ begin
                     vhdl_f.write(f'    skmap_map_acc_ro(regs_var_rd_data, byte_idx_v, {rd_name}, {align_str});\n')
                 case Acc.rw:
                     skmap_func = 'skmap_map_acc_rw_var' if varv.uses_var_name else 'skmap_map_acc_rw'
-                    print(f'{varv.name=} {varv.name_ext=}')
+                    # print(f'{varv.name=} {varv.name_ext=}')
                     vhdl_f.write(f'    {skmap_func}(regs_var_rd_data, regs_var_wr_data, byte_idx_v, {varv.name_ext}, {align_str});\n')
                 case Acc.wt:
                     name_trig = var_name_trig(varv.name_ext) if varv.uses_var_name else port_name_trig(varv.name_ext)

@@ -191,12 +191,25 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
 
 def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
     assert reg.t.kind == ValueKind.flag
+    reg_name = reg_to_inst_str(reg)
+
+    s = ''
+    s += f'    #{reg.name}: {reg.desc}"\n'
+    if reg.acc != Acc.k:
+        s += f'    def {reg.name}_inst(self):\n'
+        s += f'        return {reg_name} \n\n'
+        s += f'    async def {reg.name}_update_cache(self):\n'
+        s += f'        _ = await {reg_name}.read_bytes() \n\n'
+
+        if reg.acc == Acc.rc:
+            s += f'    async def {reg.name}_clear(self):\n'
+            s += f'        await {reg_name}.write_zero()\n\n'
+
 
     if reg.flags is not None:
         flags = reg.flags
     else:
         flags = [reg]
-    s = ''
     for f in flags:
         if isinstance(reg, RecipeK):
             f_name =  name_to_reg_k(f.name)
@@ -206,9 +219,10 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
 
         if f.vec_len != None:
             t_str = 'list[bool]'
-            func_read_cached = 'read_list_bool_cached'
-            func_read        = 'read_list_bool'
-            func_write       = 'write_list_bool'
+            func_read_cached  = 'read_list_bool_cached'
+            func_read         = 'read_list_bool'
+            func_write_cached = 'write_list_bool_cached'
+            func_write        = 'write_list_bool'
 
             s += f'    @property\n'
             s += f'    def {f.name}_len(self) -> int:\n'
@@ -217,9 +231,10 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
 
         else:
             t_str = 'bool'
-            func_read_cached = 'read_bool_cached'
-            func_read        = 'read_bool'
-            func_write       = 'write_bool'
+            func_read_cached  = 'read_bool_cached'
+            func_read         = 'read_bool'
+            func_write_cached = 'write_bool_cached'
+            func_write        = 'write_bool'
         match reg.acc:
             case Acc.k:
                 s += f'    @property\n'
@@ -238,6 +253,8 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
                 s += f'    async def {f.name}_read(self) -> {t_str}:\n'
                 s += f'        return await {f_name}.{func_read}()\n\n'
+                s += f'    def {f.name}_write_cached(self, value : {t_str}):\n'
+                s += f'        {f_name}.{func_write_cached}(value)\n\n'
                 s += f'    async def {f.name}_write(self, value : {t_str}):\n'
                 s += f'        await {f_name}.{func_write}(value)\n\n'
             case Acc.wt:
@@ -248,20 +265,10 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
                 s += f'        return await {f_name}.{func_read}()\n\n'
                 s += f'    async def {f.name}_trigger(self, value : {t_str}):\n'
                 s += f'        await {f_name}.{func_write}(value)\n\n'
+                s += f'    async def {f.name}_write_cached(self, value : {t_str}):\n'
+                s += f'        {f_name}.{func_write_cached}(value)\n\n'
             case _:
                 assert False
-
-    if reg.flags is not None:
-        reg_name = reg_to_inst_str(reg)
-        if reg.acc in ( Acc.ro, Acc.rw, Acc.wt ):
-            s += f'    #{reg.name}: {reg.desc}"\n'
-            s += f'    async def {reg.name}_update_cache(self):\n'
-            s += f'        _ = await {reg_name}.read_bytes() \n\n'
-
-        if reg.acc == Acc.rc:
-            s += f'    #{reg.name}: {reg.desc}"\n'
-            s += f'    async def {reg.name}_clear(self):\n'
-            s += f'        await {reg_name}.write_zero()\n\n'
 
     return s
     #     for f in reg.flags:

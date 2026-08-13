@@ -68,12 +68,28 @@ class ExternalMem(Regio):
 class ExternalMemCached(ExternalMem):
     def __init__( self, regio : Regio, base_addr : int, size_bytes : int):
         ExternalMem.__init__(self, regio, base_addr, size_bytes)
-        self.cache = bytearray(size_bytes)
+        self._cache = bytearray(size_bytes)
+        self._cache_loaded = True
+
+    @property
+    def cache_loaded(self):
+        return self._cache_loaded
 
     def write_cached(self, addr : int, data : bytes) -> None:
         self.check_size(addr, len(data))
-        self.cache[addr:addr+len(data)] = data
+        self._cache[addr:addr+len(data)] = data
+        if addr == 0 and len(data) == self.size:
+            self._cache_loaded=True
 
     def read_cached(self, addr : int, size : int) -> bytes:
         self.check_size(addr, size)
-        return bytes(self.cache[addr:addr+size])
+        return bytes(self._cache[addr:addr+size])
+
+    async def dev_write(self, addr : int, data : bytes) -> None:
+        await ExternalMem.dev_write(self, addr, data)
+        self.write_cached(addr, data)
+
+    async def dev_read(self, addr : int, size : int) -> bytes:
+        data = await ExternalMem.dev_read(self, addr, size)
+        self.write_cached(addr, data)
+        return data
