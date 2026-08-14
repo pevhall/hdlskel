@@ -2,20 +2,23 @@ from .regio import Regio
 from .basic_types import Acc,  ValueType
 
 class ExternalMem(Regio):
-    def __init__(self, regio : Regio, base_addr : int, size : int):
+    def __init__(self, regio : Regio, base_addr : int, size : int, acc : Acc = Acc.na):
         Regio.__init__(self)
         self._regio      = regio
         self._base_addr  = base_addr
         self._size       = size
+        self._acc        = acc
         self._name       = None
         self._value_type = None
-        self._acc        = None
         self._desc       = None
 
     def details(self, name : str, value_type : ValueType, acc : Acc, desc : str):
         self._name       = name
         self._value_type = value_type
-        self._acc        = acc
+        if self._acc == Acc.na:
+            self._acc        = acc
+        else:
+            assert self._acc == acc
         self._desc       = desc
 
     @property
@@ -33,7 +36,6 @@ class ExternalMem(Regio):
 
     @property
     def acc(self) -> Acc:
-        assert self._acc is not None
         return self._acc
 
     @property
@@ -66,8 +68,8 @@ class ExternalMem(Regio):
         return await self._regio.dev_read(a, size)
 
 class ExternalMemCached(ExternalMem):
-    def __init__( self, regio : Regio, base_addr : int, size_bytes : int):
-        ExternalMem.__init__(self, regio, base_addr, size_bytes)
+    def __init__( self, regio : Regio, base_addr : int, size_bytes : int, acc = Acc.na):
+        ExternalMem.__init__(self, regio, base_addr, size_bytes, acc)
         self._cache = bytearray(size_bytes)
         self._cache_loaded = True
 

@@ -4,8 +4,8 @@ from typing import Optional, Type, Literal, Union
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-# import rich
-from rich.table import Table
+import rich
+from rich.tree import Tree
 
 from .console import console
 from .regio import Regio
@@ -83,11 +83,11 @@ class Module(ABC):
                     b          = module_data[self._byte_idx+8:self._byte_idx+12]
                     size_bytes = int.from_bytes(b, byteorder='little')
                     if size_bytes <= maximum_external_mem_cache_size:
-                        mem = ExternalMemCached(self._regio, base_addr, size_bytes)
+                        mem = ExternalMemCached(self._regio, base_addr, size_bytes, acc)
                     else:
                         logging.warn("Module %s at addr %d, will not cache external mem %d, as size to large got %d B",
                                      self.name(), addr, len(self._arr_external_mem), size_bytes)
-                        mem = ExternalMem(self._regio, base_addr, size_bytes)
+                        mem = ExternalMem(self._regio, base_addr, size_bytes, acc)
                     self._arr_external_mem.append(mem)
                     logging.info(f'sub_head EXTERNAL_MEM: {base_addr=}, {size_bytes=}, {acc=}')
                     self._byte_idx += 3 * SIZE_WORD
@@ -345,18 +345,39 @@ class Module(ABC):
         for k in await self.kids():
             await k.make_tree()
 
-    def print_tree_cached(self, indent : str =''):
-        print(indent+self.info_line_str())
-        indent = '  ─ '+indent
-        # if idx == self.len_kids-1:
-        #     indent = '└─'+indent
-        # else:
-        #     indent = '├─'+indent 
+    def _print_tree_cached_walk(self, tree):
+        for mem in self.arr_external_mem:
+            tree.add("📔 "+to_rich_str(hex(mem.base_addr), 'green')+" "
+                + to_rich_str(mem.name, 'cyan') + to_rich_str(f" {mem.acc} {mem.size} B", 'blue') )
         for ii, kid in enumerate(self._kids):
             if kid is None:
-                print (f'{indent} {self._kid_addrs[ii]} Uninitalised')
+                tree.add(f'📕 {to_rich_str(hex(self._kid_addrs[ii]),'green')}'
+                    + to_rich_str('Uninitalised module', 'red'))
             else:
-                kid.print_tree_cached(indent)
+                kid._print_tree_cached_branch(tree)
+
+    def to_one_line_rich_str(self):
+        return f"📘 {to_rich_str(hex(self._base_addr), 'green')} "\
+            + f"{to_rich_str(self.name(), 'cyan')} "\
+            + f"{to_rich_str(str(self._head),'blue')}"
+
+    def _print_tree_cached_branch(self, tree):
+        branch = tree.add(self.to_one_line_rich_str(), guide_style="bold bright_blue")
+        self._print_tree_cached_walk(branch)
+
+    def print_tree_cached(self):
+        tree = Tree(self.to_one_line_rich_str(), guide_style="bold bright_blue")
+        self._print_tree_cached_walk(tree)
+        rich.print(tree)
+
+
+        # print(indent+self.info_line_str())
+        # indent = '  ─ '+indent
+        # for ii, kid in enumerate(self._kids):
+        #     if kid is None:
+        #         print (f'{indent} {self._kid_addrs[ii]} Uninitalised')
+        #     else:
+        #         kid.print_tree_cached(indent)
 
     def check_assert_cached(self, log_ass : Ass = Ass.none, log_f : list[RFlag] = []) -> Ass:
         ass = Ass.none

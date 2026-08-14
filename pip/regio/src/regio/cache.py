@@ -90,7 +90,7 @@ class RegioCache(Regio):
         starts = [r[0] for r in self._regions]
         idx = bisect_left(starts, read_start)
         # i = bisect.bisect_left(a, x)
-        if idx > 0 and starts[idx] != read_start:
+        if idx == len(starts) or idx > 0 and starts[idx] != read_start:
             idx -= 1
 
         rstart, rdata = self._regions[idx]

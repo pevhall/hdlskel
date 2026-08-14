@@ -51,5 +51,5 @@ def cast_uint_to_sint(value : int, bit_width : int) -> int:
 
 def to_rich_str(s : str, color : Optional[str]=None):
     if color is not None:
-        s = f'[{color}]{s}[/]'
+        s = f'[{color}]{s}[/{color}]'
     return s
