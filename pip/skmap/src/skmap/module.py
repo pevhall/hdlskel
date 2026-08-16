@@ -43,7 +43,6 @@ class Module(ABC):
         self._byte_align = 1
 
         assert(self._head.sync == SYNC)
-        assert(self._head.flags == 0)
 
         self._byte_idx = SIZE_HEAD
 

@@ -2,7 +2,8 @@ from enum import Enum, auto
 from typing import Union
 from abc import abstractmethod
 
-from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeIpkg, RecipeK, RecipeVar, RecipeReg, ResolvableFunction, ResolvableT
+from .code_generator_parse_resolvable import ResolvableFunctionOperation, ResolvableT
+from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeIpkg, RecipeK, RecipeVar, RecipeReg
 # from basic import promote_to_sw_w, ceil_div
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
 
@@ -10,52 +11,53 @@ class Sw(Enum):
     py = auto()
     cpp = auto()
 
-@abstractmethod
-def name_to_reg_var(name : str) -> str:
-    assert(False)
-
-@abstractmethod
-def name_to_reg_k(name : str) -> str:
-    assert(False)
-
-@abstractmethod
-def resolve_k_ipkg_value(v : Union[RecipeK, RecipeIpkg]) -> str:
-    assert(False)
-
-def reg_to_inst_str(reg : RecipeReg) -> str:
-    if isinstance(reg, Union[RecipeK, RecipeIpkg]):
-        return name_to_reg_k(reg.name)
-    assert isinstance(reg, RecipeVar)
-    return name_to_reg_var(reg.name)
-
-
-def resolvable_str(v : Union[int, RecipeK, ResolvableFunction]) -> str:
-    if isinstance(v, int):
-        return str(v)
-    if isinstance(v, RecipeK) or isinstance(v, RecipeIpkg):
-        return resolve_k_ipkg_value(v)
-    if isinstance(v, ResolvableFunction):
-        return f'({v.lhs} {v.op} {v.rhs})' #type: ignore
-    raise runtimeError(f"Unexpected {type(v)=}")
-
-def resolvable_member_function(value : ResolvableT) -> str:
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, RecipeK) or isinstance(value, RecipeIpkg):
-        return resolve_k_ipkg_value(value)
-    assert isinstance(value, ResolvableFunction), f"{type(value)=}"
-    lhs = resolvable_member_function(value.lhs)
-    rhs = resolvable_member_function(value.rhs)
-    return f'({lhs} {value.op} {rhs})'
-
-
-@abstractmethod
-def value_type_str(value_type : Union[ValueType, ValueTypeUnresolved]):
-    assert(False)
-
-@abstractmethod
-def value_ret_type_str(t : Union[ValueType, ValueTypeUnresolved]):
-    assert(False)
+# @abstractmethod
+# def name_to_reg_var(name : str) -> str:
+#     assert(False)
+#
+# @abstractmethod
+# def name_to_reg_k(name : str) -> str:
+#     assert(False)
+#
+# @abstractmethod
+# def resolve_k_ipkg_value(v : Union[RecipeK, RecipeIpkg]) -> str:
+#     assert(False)
+#
+# def reg_to_inst_str(reg : RecipeReg) -> str:
+#     if isinstance(reg, Union[RecipeK, RecipeIpkg]):
+#         return name_to_reg_k(reg.name)
+#     assert isinstance(reg, RecipeVar)
+#     return name_to_reg_var(reg.name)
+#
+#
+# def resolvable_str(v : Union[int, RecipeK, ResolvableFunctionOperation]) -> str:
+#     if isinstance(v, int):
+#         return str(v)
+#     if isinstance(v, RecipeK) or isinstance(v, RecipeIpkg):
+#         return resolve_k_ipkg_value(v)
+#     if isinstance(v, ResolvableFunctionOperation):
+#         return f'({v.lhs} {v.op} {v.rhs})' #type: ignore
+#     raise runtimeError(f"Unexpected {type(v)=}")
+#
+# def resolvable_member_function(value : ResolvableT) -> str:
+#     if isinstance(value, int):
+#         return str(value)
+#     if isinstance(value, RecipeK) or isinstance(value, RecipeIpkg):
+#         return resolve_k_ipkg_value(value)
+#     assert isinstance(value, ResolvableFunctionOperation), f"{type(value)=}"
+#     lhs = resolvable_member_function(value.lhs)
+#     rhs = resolvable_member_function(value.rhs)
+#     return f'({lhs} {value.op} {rhs})'
+# #
+#
+#
+# @abstractmethod
+# def value_type_str(value_type : Union[ValueType, ValueTypeUnresolved]):
+#     assert(False)
+#
+# @abstractmethod
+# def value_ret_type_str(t : Union[ValueType, ValueTypeUnresolved]):
+#     assert(False)
 
 def _value_kind_function_str(k : ValueKind) -> str:
     match k:
@@ -99,17 +101,17 @@ def write_value_function_str(t : Union[ValueType, ValueTypeUnresolved], cached :
         f += '_cached'
     return f
 
-@abstractmethod
-def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
-    assert False
-
-@abstractmethod
-def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
-    assert False
-
-def all_reg_value_functions_str(reg : RecipeReg) -> str:
-    if reg.t.kind == ValueKind.flag:
-        return all_reg_value_functions_str_is_flag(reg)
-    else:
-        return all_reg_value_functions_str_not_flag(reg)
-
+# @abstractmethod
+# def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
+#     assert False
+#
+# @abstractmethod
+# def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
+#     assert False
+#
+# def all_reg_value_functions_str(reg : RecipeReg) -> str:
+#     if reg.t.kind == ValueKind.flag:
+#         return all_reg_value_functions_str_is_flag(reg)
+#     else:
+#         return all_reg_value_functions_str_not_flag(reg)
+#

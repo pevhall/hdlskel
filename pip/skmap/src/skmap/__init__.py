@@ -7,6 +7,7 @@ from . import external_mem
 from . import reg_map_table
 from . import code_generator_vhdl
 from . import code_generator_py
+from . import recipe_functions
 
 Head   = head.Head
 Regio  = regio.Regio

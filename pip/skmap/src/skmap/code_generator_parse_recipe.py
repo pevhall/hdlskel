@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from .basic import ceil_div, ceil_log2 #promote_to_sw_w, ceil_multiple
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_ID_LEN, SKMAP_VER_MAJOR, SKMAP_VER_MINOR
 from .head import SIZE_CHECKSUM
+from .code_generator_parse_resolvable import ResolvableT, make_resolvable_function, BultiInOperation, parse_resolvable, NameToKT
 
 dict_char_to_value_kind = {}
 for vk in ValueKind:
@@ -22,7 +23,6 @@ for vk in ValueKind:
 def char_to_ValueKind(char : str) -> ValueKind:
     return dict_char_to_value_kind[char]
 
-NameToKT = dict[str, Union["RecipeK", "RecipeIpkg"]]
 
 class RecipeIpkg:
     def __init__(self, d : dict, name_to_k : NameToKT):
@@ -36,8 +36,6 @@ class RecipeIpkg:
         if 't' in d:
             self.t = parse_value_type_resolvable(d['t'], name_to_k)
         else:
-            # if isinstance(self.value, bool): # bool returns false (int reutnrs true)
-            #     self.t = ValueType(kind=ValueKind.flag, width=1)
             if isinstance(self.value, int):
                 self.t = ValueType(kind=ValueKind.sint, width=32)
             elif isinstance(self.value, str):
@@ -70,54 +68,12 @@ class RecipeK:
     def vec_len(self):
         return self.t.vec_len
 
-    # def set_addr_offset_size(self, addr_offset : Union['ResolvableFunction', 'RecipeK', int], size : Union['ResolvableFunction', 'RecipeK', int]):
-    #     self.addr_offset = addr_offset
-    #     self.size = size
-
     def __repr__(self) -> str:
         return f'{self.name}'
 
     @property
     def is_int(self):
         return self.t.kind.is_int
-
-class ResolvableOp(Enum):
-    add  = auto()
-    mult = auto()
-
-    def __str__(self) -> str:
-        return {
-            ResolvableOp.add : "+",
-            ResolvableOp.mult: "*",
-        }[self]
-
-ResolvableT = Union['ResolvableFunction', RecipeIpkg, RecipeK, int]
-class ResolvableFunction():
-    def __init__(self, lhs : ResolvableT, op : ResolvableOp, rhs : ResolvableT):
-        if isinstance(lhs, RecipeK):
-            assert lhs.is_int
-        if isinstance(rhs, RecipeK):
-            assert rhs.is_int
-        self.lhs = lhs
-        self.op  = op
-        self.rhs = rhs
-
-    def __repr__(self) -> str:
-        return f'({self.lhs} {self.op} {self.rhs})' #type: ignore
-
-def make_resolvable_function(lhs : ResolvableT, op : ResolvableOp, rhs : ResolvableT) -> Union[ResolvableFunction, int]:
-    if isinstance(rhs, int):
-        if isinstance(lhs, int):
-            match op:
-                case ResolvableOp.add : return lhs + rhs
-                case ResolvableOp.mult: return lhs * rhs
-        elif isinstance(lhs, ResolvableFunction):
-            if isinstance(lhs.rhs, int) and op == ResolvableOp.add and lhs.op == ResolvableOp.add:
-                lhs = copy.copy(lhs)
-                assert isinstance(lhs.rhs, int)
-                lhs.rhs += rhs
-                return lhs
-    return ResolvableFunction(lhs, op, rhs)
 
 class ValueTypeUnresolved:
     def __init__(self, kind : ValueKind, width : Optional[ResolvableT], vec_len : Union[None, int, RecipeK]):
@@ -159,7 +115,8 @@ class ValueTypeUnresolved:
         assert self.vec_len is None or isinstance(self.vec_len, int)
         return ValueType(kind=self.kind, width=self.width, vec_len=self.vec_len)
 
-def make_value_type_resolvable(*args, **kwargs) -> Union[ValueType, ValueTypeUnresolved]:
+ValueTypeT = Union[ValueType, ValueTypeUnresolved]
+def make_value_type_resolvable(*args, **kwargs) -> ValueTypeT:
     value_type = ValueTypeUnresolved(*args, **kwargs)
     if value_type.castable_to_ValueType():
         return value_type.to_ValueType()
@@ -172,7 +129,7 @@ def md5_update(m, val):
     else:
         m.update(str(val).encode())
 
-def parse_unresolved(s : Union[str, int], ii : int, name_to_k : NameToKT, strip_space=True) -> tuple[Union[int, RecipeK, RecipeIpkg], int]:
+def parse_unresolved(s : Union[str, int], ii : int, name_to_k : NameToKT, strip_space=True) -> tuple[ResolvableT, int]:
     if isinstance(s, int):
         return s, ii
     if strip_space:
@@ -186,7 +143,7 @@ def parse_unresolved(s : Union[str, int], ii : int, name_to_k : NameToKT, strip_
             assert s[ii] != '{'
             ii += 1
         token = s[ii_start:ii].strip()
-        token = name_to_k[token]
+        token = parse_resolvable(token , name_to_k);
         ii += 1
     else:
         ii_start = ii
@@ -200,32 +157,34 @@ def parse_unresolved(s : Union[str, int], ii : int, name_to_k : NameToKT, strip_
             ii += 1
     return token, ii
 
-def parse_unresolved_word(s : Union[str,int], name_to_k : NameToKT) -> Union[RecipeIpkg, RecipeK, int]:
+def parse_unresolved_word(s : Union[str,int], name_to_k : NameToKT) -> ResolvableT:
     word, _ = parse_unresolved(s, ii=0, name_to_k=name_to_k)
     return word
 
 def parse_value_type_resolvable(s : str, name_to_k : NameToKT) -> Union[ValueType, ValueTypeUnresolved]:
-    value_kind_char = s[:1]
+    ii = 0
+    vec_len = None
+
+    if s[ii] == '[':
+        ii += 1
+        vec_len, ii = parse_unresolved(s, ii, name_to_k=name_to_k, strip_space=True)
+        assert s[ii] == ']', "expected vector end"
+        ii += 1
+    else:
+        vec_len = None
+
+    value_kind_char = s[ii:ii+1]
     value_kind = char_to_ValueKind(value_kind_char)
-    ii = 1
+    ii += 1
     if ii == len(s):
         width = None
-        vec_len = None
     else:
         width, ii = parse_unresolved(s, ii, name_to_k=name_to_k)
-        if ii == len(s):
-            vec_len = None
-        else:
-            assert s[ii] == '[', "expected vector start"
-            ii+=1
-            vec_len, ii = parse_unresolved(s, ii, name_to_k=name_to_k, strip_space=True)
-            assert s[ii] == ']', "expected vector end"
-            ii += 1
-            assert ii == len(s)
+    assert ii == len(s)
     return make_value_type_resolvable(kind=value_kind, width=width, vec_len=vec_len)
 
 class RecipeFlag:
-    def __init__(self, d, bit_default : Union[int, RecipeK, ResolvableFunction], name_to_k : NameToKT):
+    def __init__(self, d, bit_default : ResolvableT, name_to_k : NameToKT):
         self.name    : str = d['name']
         if 'ass' in d:
             self.ass = Ass[d['ass']]
@@ -235,7 +194,7 @@ class RecipeFlag:
         self.bit : ResolvableT
 
         if 'bit' in d:
-            self.bit = parse_unresolved_word(d['bit'], name_to_k=name_to_k)
+            self.bit = parse_resolvable(d['bit'], name_to_k=name_to_k)
         else:
             self.bit = bit_default
         self.vec_len = None
@@ -253,7 +212,7 @@ class RecipeFlag:
             if self.vec_len is None:
                 self.width_resolvable = flags_width
             else:
-                self.width_resolvable = make_resolvable_function(self.vec_len, ResolvableOp.mult, flags_width)
+                self.width_resolvable = make_resolvable_function(self.vec_len, BultiInOperation.mult, flags_width)
 
     @property
     def is_vec(self) -> bool:
@@ -280,7 +239,7 @@ def parse_recipe_flags(d : dict, name_to_k : NameToKT) -> tuple[Optional[list[Re
             if bit_default == 0:
                 bit_default = f.width_resolvable
             else:
-                bit_default = make_resolvable_function(bit_default, ResolvableOp.add, f.width_resolvable)
+                bit_default = make_resolvable_function(bit_default, BultiInOperation.add, f.width_resolvable)
         width = bit_default
     return flags, width
 
@@ -378,14 +337,15 @@ class Recipe:
 
         for dvv in d['var']:
             self.var.append(RecipeVar(dvv, self.name_to_k))
-        self.checksum = self._checksum()
 
         self.mem = []
         if 'mem' in d:
             for memv in d['mem']:
                 self.mem.append(RecipeMem(memv, self.name_to_k))
 
-    def _checksum(self):
+        self._checksum = self._caculate_checksum()
+
+    def _caculate_checksum(self):
         m = hashlib.md5()
         m.update(SKMAP_VER_MAJOR.to_bytes(1))
         # m.update(SKMAP_VER_MINOR.to_bytes(1))
@@ -404,15 +364,19 @@ class Recipe:
             md5_update(m, r.acc)
             md5_update(m, r.t.kind)
             md5_update(m, r.t.width)
+
         checksum = int.from_bytes(m.digest())
         return checksum & 0xFFFF
 
     def checksum_str(self) -> str:
-        return f'{self.checksum:0{SIZE_CHECKSUM}X}'
+        return f'{self._checksum:0{SIZE_CHECKSUM}X}'
+
+    def checksum(self) -> int:
+        return self._checksum
 
 def parse_recipe_file(file : Path) -> Recipe:
     with open(file, "rb") as toml_f:
-        recipe_dict = tomllib.load(toml_f)
+        recipe_dict = tomllib.load(toml_f) #type:ignore
         # from pprint import pprint
         # pprint(recipe)
     return Recipe(recipe_dict)

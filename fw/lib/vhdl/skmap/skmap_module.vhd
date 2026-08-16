@@ -109,7 +109,7 @@ use work.skmap_module_ipkg;
 
 entity skmap_module is
   generic (
-    SKMAP_ID        : skmap_id_t;
+    SKMAP_ID        : string;
     SKMAP_VERSION   : skmap_version_t;
     SKMAP_CHECKSUM  : skmap_checksum_t;
     SKMAP_KIDS      : integer_vector := NULL_INTEGER_VECTOR;
@@ -214,9 +214,8 @@ architecture rtl of skmap_module is
   ------------------------------
 
   constant SKMAP_HEAD : skmap_head_t := (
-    id          => SKMAP_ID,
+    id          => to_skmap_id(SKMAP_ID),
     version     => SKMAP_VERSION,
-    flags       => zeros(SKMAP_FLAGS_W),
     checksum    => SKMAP_CHECKSUM,
     len_kids    => SKMAP_KIDS'length,
     len_sub     => SKMAP_SUB'length,

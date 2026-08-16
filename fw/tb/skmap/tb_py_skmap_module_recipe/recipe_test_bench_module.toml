@@ -15,15 +15,15 @@ ipkg = [
 ]
 
 k = [
-  {name = "RO_LEN",   t = "u8", desc = "RO length"},
+  {name = "RO_LEN",   t = "u{4 + 4}", desc = "RO length"},
   {name = "RO_VAL_W", t = "u8", desc = "RO value width"},
   {name = "RW_LEN",   t = "u8", desc = "RW length"},
   {name = "RW_VAL_W", t = "u8", desc = "RW value width"},
   {name = "MEM_RW_VAL_W", t = "u8", desc = "MEM RW value width"},
   {name = "MEM_RW_LEN", t = "u8", desc = "MEM RW length"},
   {name = "MEM_RW_LATENCY", t = "u8", desc = "MEM RW latency"},
-  {name = "MEM_RO_VAL_W", t = "u8", desc = "MEM RO width"},
-  {name = "MEM_RO_LEN", t = "u8", desc = "MEM RO length"},
+  {name = "MEM_RO_WIDTH", t = "u8", desc = "MEM RO width"},
+  {name = "MEM_RO_ADDR_W", t = "u8", desc = "MEM RO length"},
   {name = "MEM_RO_LATENCY", t = "u8", desc = "MEM RO latency"},
   {name = "FLAGSK",    t = "b", desc = "K Flags", flags = [
      # { name = "FLAGK0", desc = "FlagK 0", vec_len = "{RO_VAL_W}"},
@@ -43,10 +43,10 @@ var = [
      { name = "ctrl_flag_8", bit = 8, desc = "ctrl_flag 8"},
      { name = "ctrl_flag_16_vec", bit = 16, desc = "ctrl_flag_vec 16", vec_len = 5},
   ]},
-  {name = "regs_ro",  t = "s{RO_VAL_W}[{RO_LEN}]", acc = "ro", desc = "RO registers"},
-  {name = "regs_rw",  t = "s{RW_VAL_W}[{RW_LEN}]", acc = "rw", desc = "RW registers"},
+  {name = "regs_ro",  t = "[{RO_LEN}]s{RO_VAL_W}", acc = "ro", desc = "RO registers"},
+  {name = "regs_rw",  t = "[{RW_LEN}]s{RW_VAL_W}", acc = "rw", desc = "RW registers"},
   {name = "regs_wt",  t = "x5", acc = "wt", desc = "WT registers"},
-  {name = "regs_rc",  t = "s{RW_VAL_W}[{RW_LEN}]", acc = "rc", desc = "RC registers"},
+  {name = "regs_rc",  t = "[{RW_LEN}]s{RW_VAL_W}", acc = "rc", desc = "RC registers"},
   # {name = "reg_s_wt",  t = "s40", acc = "wt", desc = "RC registers"},
   {name = "reg_s_rc",  t = "s{INT_33}", acc = "rc", desc = "RC registers"},
   {name = "flags",    t = "b", acc = "rc", desc = "RC flags", flags = [
@@ -56,9 +56,10 @@ var = [
      { name = "error_flag3", ass = "error", desc = "Flag 3"},
      { name = "fatal_flag4", ass = "fatal", desc = "Flag 4"},
      { name = "debug_flag_vec", ass = "debug", desc = "Flag vec", vec_len=3},
-   ]}
+   ]},
+  {name = "mem_rw_ptr", t="u{$clog2(MEM_RW_LEN)}", acc = "ro", desc = "RO Memory pointer"},
 ]
 mem = [
-  {name = "mem_rw", t="u{MEM_RW_VAL_W}[{MEM_RW_LEN}]", acc="rw", desc = "RW Memory", fw_depth = "{MEM_RW_LEN}", fw_width = "{MEM_RW_VAL_W}",fw_latency = "{MEM_RW_LATENCY}" },
-  {name = "mem_ro", t="u{MEM_RO_VAL_W}[{MEM_RO_LEN}]", acc="ro", desc = "RO Memory", fw_depth = "{MEM_RO_LEN}", fw_width = "{MEM_RO_VAL_W}",fw_latency = "{MEM_RO_LATENCY}" }
+  {name = "mem_rw", t="[{MEM_RW_LEN}]u{MEM_RW_VAL_W}", acc="rw", desc = "RW Memory", fw_depth = "{MEM_RW_LEN}", fw_width = "{MEM_RW_VAL_W}",fw_latency = "{MEM_RW_LATENCY}" },
+  {name = "mem_ro", t="[{$cdiv(MEM_RO_WIDTH,8)*2**MEM_RO_ADDR_W}]u8", acc="ro", desc = "RO Memory", fw_depth = "{2**MEM_RO_ADDR_W}", fw_width = "{MEM_RO_WIDTH}",fw_latency = "{MEM_RO_LATENCY}" }
 ]

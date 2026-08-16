@@ -2,9 +2,33 @@ from pathlib import Path
 from datetime import datetime
 from typing import Literal, Optional, Union
 
-from .code_generator_parse_recipe import parse_recipe_file, RecipeK, RecipeVar, RecipeReg
+from .code_generator_parse_resolvable import ResolvableFunctionOperation, ResolvableT, ResolvableFunctionBuiltIn
+from .code_generator_parse_recipe import parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ValueTypeT, RecipeIpkg
 from .basic import promote_to_sw_w, ceil_div
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
+
+
+def to_vhdl_source(node: ResolvableT) -> str:
+    """Render a ResolvableT tree back out as a Python source-code expression string."""
+    # if isinstance(node, bool):
+    #     return str(int(node))
+    if isinstance(node, int):
+        return str(node)
+    # if isinstance(node, str):   # plain-string leaf (e.g. name_to_k[name] = name)
+    #     return node
+    if isinstance(node, RecipeIpkg):
+        return f'{node.name}'
+    if isinstance(node, RecipeK):
+        return f'{node.name}'
+    if isinstance(node, ResolvableFunctionOperation):
+        return f'({to_vhdl_source(node.lhs)} {node.op} {to_vhdl_source(node.rhs)})'
+    if isinstance(node, ResolvableFunctionBuiltIn):
+        args = ', '.join(to_vhdl_source(p) for p in node.params)
+        return f'skmap_recipe_{node.func.name}({args})'
+    if hasattr(node, 'name'):  # RecipeK / RecipeIpkg leaf
+        return node.name #type:ignore
+    raise TypeError(f'Cannot render {node!r} {type(node)=} to python source')
+
 
 def port_name_trig(port_name : str) -> str:
     return port_name[:-2]+"_trigger_o"
@@ -37,8 +61,8 @@ def port_name(name : str, direction : Literal['in', 'out']):
 def var_name(name : str):
     return name + "_v"
 
-def k_type_to_vhdl_str(t : ValueType, port_types:PortTypes='all') -> str:
-    elem_rng = f"({t.width}-1 downto 0)"
+def k_type_to_vhdl_str(t : ValueTypeT, port_types:PortTypes='all') -> str:
+    elem_rng = f"({to_vhdl_source(t.width)}-1 downto 0)"
     if port_types == 'flat':
         if t.is_vec:
             assert False, "yet to be implemented" 
@@ -52,8 +76,8 @@ def k_type_to_vhdl_str(t : ValueType, port_types:PortTypes='all') -> str:
     else:
         assert port_types == 'all'
         if t.is_vec:
-            vec_rng = f"(0 to {t.vec_len}-1)"
-            str_rng = f"(1 to {t.vec_len})"
+            vec_rng = f"(0 to {to_vhdl_source(t.vec_len)}-1)"
+            str_rng = f"(1 to {to_vhdl_source(t.vec_len)})"
             match t.kind:
                 case ValueKind.uint: return f"integer_vector{vec_rng}"
                 case ValueKind.sint: return f"integer_vector{vec_rng}"
@@ -68,10 +92,10 @@ def k_type_to_vhdl_str(t : ValueType, port_types:PortTypes='all') -> str:
                 case ValueKind.bits: return f"std_ulogic_vector{elem_rng}"
                 case ValueKind.flag: return f"std_ulogic_vector{elem_rng}"
 
-def var_type_to_vhdl_str(t : ValueType, port_types:PortTypes = 'all', sl2slv : bool = False) -> str:
+def var_type_to_vhdl_str(t : ValueTypeT, port_types:PortTypes = 'all', sl2slv : bool = False) -> str:
     if not sl2slv and t.is_bool:
         return "std_ulogic";
-    elem_rng = f"({t.width}-1 downto 0)"
+    elem_rng = f"({to_vhdl_source(t.width)}-1 downto 0)"
 
     if port_types == 'flat':
         if t.is_vec:
@@ -81,15 +105,15 @@ def var_type_to_vhdl_str(t : ValueType, port_types:PortTypes = 'all', sl2slv : b
 
     elif port_types == 'slv_2d':
         if t.is_vec:
-            vec_rng = f"(0 to {t.vec_len}-1)"
+            vec_rng = f"(0 to {to_vhdl_source(t.vec_len)}-1)"
             return f"vec_slv_t{vec_rng}{elem_rng}"
         else:
             return f"std_ulogic_vector{elem_rng}"
 
     elif port_types == 'all':
         if t.is_vec:
-            vec_rng = f"(0 to {t.vec_len}-1)"
-            str_rng = f"(1 to {t.vec_len})"
+            vec_rng = f"(0 to {to_vhdl_source(t.vec_len)}-1)"
+            str_rng = f"(1 to {to_vhdl_source(t.vec_len)})"
             match t.kind:
                 case ValueKind.uint: return f"vec_unsigned_t{vec_rng}{elem_rng}"
                 case ValueKind.sint: return f"vec_signed_t{vec_rng}{elem_rng}"
@@ -191,11 +215,11 @@ def regs_len_str(regs : list[RecipeReg], name : str, k : bool = False, offset_by
     variable byte_idx : natural := {offset_bytes};
   begin\n""")
     for r in regs:
-        s += (f"    skmap_map_acc_byte_inc(byte_idx, VAL_W=>{r.t.width}")
+        s += (f"    skmap_map_acc_byte_inc(byte_idx, VAL_W=>{to_vhdl_source(r.t.width)}")
         if not k:
             s += (", BYTE_ALIGN=>BYTE_ALIGN")
         if r.t.is_vec:
-            s += (f", VEC_LEN=>{r.t.vec_len}");
+            s += (f", VEC_LEN=>{to_vhdl_source(r.t.vec_len)}");
         s += (f"); -- {r.name}\n")
     if offset_bytes != 0:
         s += (f"    inc(byte_idx, -1*({offset_bytes}));\n")
@@ -273,6 +297,7 @@ use {hdlskel_lib}.vec_pkg.all;
 use {hdlskel_lib}.ramface_pkg.all;
 use {hdlskel_lib}.skmap_pkg.all;
 use {hdlskel_lib}.skmap_map_acc_pkg.all;
+use {hdlskel_lib}.skmap_recipe_functions_pkg.all;
 
 use {hdlskel_lib}.skmap_module_ipkg;
 
@@ -308,7 +333,7 @@ entity {recipe.fw_module} is
             if kv.t.kind == ValueKind.flag and kv.flags is not None:
                 for jj, f in enumerate(kv.flags):
                     if f.vec_len != None:
-                        vhdl_t = f'boolean_vector(0 to {f.vec_len}-1)'
+                        vhdl_t = f'boolean_vector(0 to {to_vhdl_source(f.vec_len)}-1)'
                     else:
                         vhdl_t = 'boolean'
                     vhdl_f.write(f'\n    {f.name} : {vhdl_t}')

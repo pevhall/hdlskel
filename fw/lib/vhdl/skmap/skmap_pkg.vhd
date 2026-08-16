@@ -18,19 +18,18 @@ package skmap_pkg is
 --            ║  Byte 0  │  Byte 1  │  Byte 2  │  Byte 3  │
 -- ╒══════════╬══════════╧══════════╧══════════╧══════════╡
 -- │  Word 0  ║                                           │
--- ├──────────╢                    ID          ┌──────────┤
--- │  Word 1  ║                                │   Sync   │
--- ├──────────╫──────────┬──────────┬──────────┴──────────┤
--- │  Word 2  ║ Version  │  Flags   │       Checksum      │
+-- ├──────────╢                    ID                     │
+-- │  Word 1  ║                                           │
+-- ├──────────╫──────────┬──────────┬─────────────────────┤
+-- │  Word 2  ║ Version  │  Sync    │       Checksum      │
 -- ├──────────╫──────────┼──────────┼──────────┬──────────┤
 -- │  Word 3  ║ Len_Kids │ Len_Sub  │  Len_K   │  Len_Var │
 -- └──────────╨──────────┴──────────┴──────────┴──────────┘
 
-  constant SKMAP_ID_BYTES     : natural := 7;
+  constant SKMAP_ID_BYTES     : natural := 8;
   constant SKMAP_ID_W        : natural := SKMAP_ID_BYTES*8;
   constant SKMAP_SYNC_W      : natural := 8;
   constant SKMAP_VERSION_W   : natural := 8;
-  constant SKMAP_FLAGS_W     : natural := 8;
   constant SKMAP_CHECKSUM_W  : natural := 16;
   constant SKMAP_LEN_KIDS_W  : natural := 8;
   constant SKMAP_LEN_SUB_W   : natural := 8;
@@ -41,17 +40,17 @@ package skmap_pkg is
 
   subtype skmap_id_t is string(1 to SKMAP_ID_BYTES);
   subtype skmap_version_t  is integer range 0 to 2**SKMAP_VERSION_W-1;
-  subtype skmap_flags_t    is std_ulogic_vector(SKMAP_FLAGS_W-1 downto 0);
   subtype skmap_checksum_t is integer range 0 to 2**SKMAP_CHECKSUM_W-1;
   subtype skmap_len_kids_t is integer range 0 to 2**SKMAP_LEN_KIDS_W-1;
   subtype skmap_len_sub_t  is integer range 0 to 2**SKMAP_LEN_SUB_W -1;
   subtype skmap_len_k_t    is integer range 0 to 2**SKMAP_LEN_K_W-1;
   subtype skmap_len_var_t  is integer range 0 to 2**SKMAP_LEN_VAR_W-1;
 
+  function to_skmap_id(id : string) return skmap_id_t;
+
   type skmap_head_t is record
-    id : string(1 to SKMAP_ID_BYTES);
+    id       : skmap_id_t;
     version  : skmap_version_t;
-    flags    : skmap_flags_t;
     checksum : skmap_checksum_t;
     len_kids : skmap_len_kids_t;
     len_sub  : skmap_len_sub_t;
@@ -99,11 +98,17 @@ end package;
 
 package body skmap_pkg is
 
+  function to_skmap_id(id : string) return skmap_id_t is
+    variable SKMAP_ID : skmap_id_t := (others => NUL);
+  begin
+    SKMAP_ID(id'range) := id;
+    return SKMAP_ID;
+  end function;
+
   constant SKMAP_HEAD_WS : integer_vector := (
     SKMAP_ID_W,
     SKMAP_SYNC_W,
     SKMAP_VERSION_W,
-    SKMAP_FLAGS_W,
     SKMAP_CHECKSUM_W,
     SKMAP_LEN_KIDS_W,
     SKMAP_LEN_SUB_W ,
@@ -120,12 +125,11 @@ package body skmap_pkg is
     to_flat_rec(regs_flat, SKMAP_HEAD_WS, 0, to_slv(head.id));
     to_flat_rec(regs_flat, SKMAP_HEAD_WS, 1, SKMAP_SYNC);
     to_flat_rec(regs_flat, SKMAP_HEAD_WS, 2, to_slv(head.version, SKMAP_VERSION_W));
-    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 3, zeros(SKMAP_FLAGS_W));
-    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 4, to_slv(head.checksum, SKMAP_CHECKSUM_W));
-    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 5, to_slv(head.len_kids, SKMAP_LEN_KIDS_W));
-    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 6, to_slv(head.len_sub, SKMAP_LEN_SUB_W));
-    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 7, to_slv(head.len_k, SKMAP_LEN_K_W));
-    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 8, to_slv(head.len_var, SKMAP_LEN_VAR_W));
+    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 3, to_slv(head.checksum, SKMAP_CHECKSUM_W));
+    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 4, to_slv(head.len_kids, SKMAP_LEN_KIDS_W));
+    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 5, to_slv(head.len_sub, SKMAP_LEN_SUB_W));
+    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 6, to_slv(head.len_k, SKMAP_LEN_K_W));
+    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 7, to_slv(head.len_var, SKMAP_LEN_VAR_W));
     regs := to_vec_slv32(regs_flat);
     return regs;
   end function;

@@ -78,20 +78,24 @@ async def test_skmap_module_test_acc_types(dut):
     run_server = ast.literal_eval(run_server)
     print(f"{run_server=}")
 
-    dut.reg_s_rc_i.value = 0
-
     dut.ramface_ce_i.value = 1
+
+    dut.bit_bool_rc_i.value = 0
+    dut.bit_ro_i.value = 0
+
 
     for ii in range(dut.RO_LEN.value):
         dut.regs_ro_i[ii].value = ii
+    for ii in range(dut.RW_LEN.value):
+        dut.regs_rc_i[ii].value = 0
+    dut.reg_s_rc_i.value = 0
     dut.debug_flag0_i.value = 0
     dut.info_flag1_i.value = 0
     dut.warn_flag2_i.value = 0
     dut.error_flag3_i.value = 0
     dut.fatal_flag4_i.value = 0
     dut.debug_flag_vec_i.value = 0
-    for ii in range(dut.RW_LEN.value):
-        dut.regs_rc_i[ii].value = 0
+    dut.mem_rw_ptr_i.value = 0
 
     dut.mem_rw_rply_i.en.value   = 0
     dut.mem_rw_rply_i.fail.value = 0
@@ -101,8 +105,6 @@ async def test_skmap_module_test_acc_types(dut):
     dut.mem_ro_rply_i.fail.value = 0
     dut.mem_ro_rply_i.data.value = 0
 
-    dut.bit_bool_rc_i.value = 0
-    dut.bit_ro_i.value = 0
 
 
     @dataclass

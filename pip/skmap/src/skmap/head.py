@@ -2,10 +2,10 @@
 #            ║  Byte 0  │  Byte 1  │  Byte 2  │  Byte 3  │
 # ╒══════════╬══════════╧══════════╧══════════╧══════════╡
 # │  Word 0  ║                                           │
-# ├──────────╢                    ID          ┌──────────┤
-# │  Word 1  ║                                │   Sync   │
-# ├──────────╫──────────┬──────────┬──────────┴──────────┤
-# │  Word 2  ║ Version  │  Flags   │       Checksum      │
+# ├──────────╢                    ID                     │
+# │  Word 1  ║                                           │
+# ├──────────╫──────────┬──────────┬─────────────────────┤
+# │  Word 2  ║ Version  │  Sync    │       Checksum      │
 # ├──────────╫──────────┼──────────┼──────────┬──────────┤
 # │  Word 3  ║ Len_Kids │ Len_Sub  │  Len_K   │  Len_Var │
 # └──────────╨──────────┴──────────┴──────────┴──────────┘
@@ -15,18 +15,23 @@ from dataclasses import dataclass
 SIZE_WORD       : int = 4
 SIZE_HEAD_WORDS : int = 4
 SIZE_HEAD       : int = SIZE_HEAD_WORDS * SIZE_WORD
-SIZE_ID         : int = 7
+SIZE_ID         : int = 8
 SIZE_CHECKSUM   : int = 2
 SYNC            : int = 0xD8
 
+
+def get_id_str( id : bytes ):
+    l = len(id)
+    while id[l-1] == 0:
+        l -= 1
+        assert l != 0
+    return id[:l].decode()
 
 @dataclass
 class Head:
 
     id        : str
-    sync      : int
     version   : int
-    flags     : int
     checksum  : int
     len_kids  : int
     len_sub   : int
@@ -35,11 +40,11 @@ class Head:
 
 
     def __init__(self, data : bytes):
-        self.id        = data[0:SIZE_ID].decode()
+        self.id        = get_id_str(data[0:SIZE_ID])
+        print(f'{self.id=} {len(self.id)=}')
         ii = SIZE_ID;
         self.sync      = data[ii]; ii += 1
         self.version   = data[ii]; ii += 1
-        self.flags     = data[ii]; ii += 1
         self.checksum  = int.from_bytes(data[ii:ii+SIZE_CHECKSUM], byteorder='little')
         ii += SIZE_CHECKSUM
         self.len_kids  = data[ii]; ii += 1
@@ -57,7 +62,7 @@ class Head:
     def __repr__(self) -> str:
         if not self.valid_sync():
             return f"{{BAD id={self.id.encode()}, {self.sync}}}"
-        return f"{{{self.id}, v{self.version}, f={self.flags}, c={self.checksum_str()} l={self.len_sub}s+{self.len_kids}c+{self.len_k}k+{self.len_var}v}}"
+        return f"{{{self.id}, v{self.version}, c={self.checksum_str()} l={self.len_sub}s+{self.len_kids}c+{self.len_k}k+{self.len_var}v}}"
 
     def checksum_str(self) -> str:
         return f'{self.checksum:0{SIZE_CHECKSUM}X}'

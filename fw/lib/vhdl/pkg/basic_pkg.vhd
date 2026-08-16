@@ -36,7 +36,7 @@ package basic_pkg is
   --range conversion
   function rng_dt(lv : std_ulogic_vector) return std_ulogic_vector;
   -- maths
-  function ceil_div(num : integer; div : integer) return integer;
+  function ceil_div(num : natural; div : natural) return natural;
   function ceil_multiple(num : integer; multiple : integer) return integer;
   function ceil_log_base(num : natural; base : natural) return natural;
   function ceil_log2(num : natural) return natural;
@@ -170,7 +170,7 @@ package body basic_pkg is
     return lv_dt;
   end function;
 
-  function ceil_div(num : integer; div : integer) return integer is
+  function ceil_div(num : natural; div : natural) return natural is
   begin
     return (num + div-1) / div;
   end function;

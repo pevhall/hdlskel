@@ -2,16 +2,19 @@ from pathlib import Path
 from datetime import datetime
 from typing import Union
 
-from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeIpkg, RecipeK, RecipeVar, RecipeReg, RecipeMem, ResolvableFunction
+from .code_generator_parse_resolvable import ResolvableFunctionOperation, ResolvableT, ResolvableFunctionBuiltIn
+from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeIpkg, RecipeK, RecipeVar, RecipeReg, RecipeMem
 # from basic import promote_to_sw_w, ceil_div
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR, SKMAP_VER_MAJOR, SKMAP_VER_MINOR, SKMAP_VER_PATCH
 from . import code_generator_sw_common as common
 
 Sw = common.Sw
 
+def name_to_ipkg(name : str) -> str:
+    return "self."+name
 def name_to_reg_k(name : str) -> str:
     return "self._k_"+name
-common.name_to_reg_k = name_to_reg_k
+# common.name_to_reg_k = name_to_reg_k
 
 def name_to_reg_var(name : str) -> str:
     return "self._var_"+name
@@ -19,24 +22,53 @@ def name_to_reg_var(name : str) -> str:
 def name_to_ext_mem(name : str) -> str:
     return "self._mem_"+name
 
-common.name_to_reg_var = name_to_reg_var
+def reg_to_inst_str(reg : RecipeReg) -> str:
+    if isinstance(reg, Union[RecipeK, RecipeIpkg]):
+        return name_to_reg_k(reg.name)
+    assert isinstance(reg, RecipeVar)
+    return name_to_reg_var(reg.name)
+
+def to_python_source(node: ResolvableT) -> str:
+    """Render a ResolvableT tree back out as a Python source-code expression string."""
+    # if isinstance(node, bool):
+    #     return str(int(node))
+    if isinstance(node, int):
+        return str(node)
+    # if isinstance(node, str):   # plain-string leaf (e.g. name_to_k[name] = name)
+    #     return node
+    if isinstance(node, RecipeIpkg):
+        return f'self.{node.name}'
+    if isinstance(node, RecipeK):
+        return f'self.{node.name}'
+    if isinstance(node, ResolvableFunctionOperation):
+        return f'({to_python_source(node.lhs)} {node.op} {to_python_source(node.rhs)})'
+    if isinstance(node, ResolvableFunctionBuiltIn):
+        args = ', '.join(to_python_source(p) for p in node.params)
+        return f'skmap.recipe_functions.{node.func.name}({args})'
+    if hasattr(node, 'name'):  # RecipeK / RecipeIpkg leaf
+        return node.name #type:ignore
+    raise TypeError(f'Cannot render {node!r} {type(node)=} to python source')
+
+
+# common.name_to_reg_var = name_to_reg_var
 
 
 def resolve_k_ipkg_value(v : RecipeK) -> str:
     return f'self.{v.name}'
-common.resolve_k_ipkg_value = resolve_k_ipkg_value
+# common.resolve_k_ipkg_value = resolve_k_ipkg_value
 
-reg_to_inst_str = common.reg_to_inst_str
-resolvable_str = common.resolvable_str
-resolvable_member_function = common.resolvable_member_function
+# reg_to_inst_str = common.reg_to_inst_str
+# resolvable_str = common.resolvable_str
+# resolvable_member_function = common.resolvable_member_function
 
 def value_type_str(value_type : Union[ValueType, ValueTypeUnresolved]):
     assert value_type.width is not None
-    w = resolvable_member_function(value_type.width)
+    # w = resolvable_member_function(value_type.width)
+    w = to_python_source(value_type.width)
     t_str = f"skmap.ValueType(kind=skmap.{value_type.kind}, width={w}"
     if value_type.is_vec:
         assert value_type.vec_len is not None
-        vec_len = resolvable_member_function(value_type.vec_len)
+        vec_len = to_python_source(value_type.vec_len)
         t_str += f", vec_len={vec_len}"
     t_str += ")"
     return t_str
@@ -227,7 +259,7 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
             s += f'    @property\n'
             s += f'    def {f.name}_len(self) -> int:\n'
             s += f'        "{f.desc}"\n'
-            s += f'        return {resolvable_str(f.vec_len)}\n\n'
+            s += f'        return {to_python_source(f.vec_len)}\n\n'
 
         else:
             t_str = 'bool'
@@ -284,9 +316,12 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
     #         return {name_to_reg_k(f.name)}.{v_func}()
     # """
 
-common.all_reg_value_functions_str_is_flag = all_reg_value_functions_str_is_flag
-common.all_reg_value_functions_str_not_flag = all_reg_value_functions_str_not_flag
-all_reg_value_functions_str = common.all_reg_value_functions_str
+def all_reg_value_functions_str(reg : RecipeReg) -> str:
+    if reg.t.kind == ValueKind.flag:
+        return all_reg_value_functions_str_is_flag(reg)
+    else:
+        return all_reg_value_functions_str_not_flag(reg)
+
 
 def all_mem_value_functions_str(memv : RecipeMem) -> str:
     inst = name_to_ext_mem(memv.name)
@@ -386,13 +421,13 @@ class {recipe.sw_module}(skmap.Module):
             if kv.t.kind == ValueKind.flag:
                 assert kv.flags is not None
                 for f in kv.flags:
-                    vec_len_param = '' if f.vec_len is None else f' vec_len={resolvable_str(f.vec_len)},'
-                    bit = resolvable_member_function(f.bit)
+                    vec_len_param = '' if f.vec_len is None else f' vec_len={to_python_source(f.vec_len)},'
+                    bit = to_python_source(f.bit)
                     py_f.write(f"        {name_to_reg_k(f.name)} = skmap.RFlagK(name='{f.name}', bit={bit}, ass=skmap.Ass.{f.ass.to_str()},{vec_len_param} desc='{f.desc}')\n")
                 py_f.write("        flags = [")
                 for f in kv.flags: py_f.write(f" {name_to_reg_k(f.name)}, ")
                 py_f.write("]\n")
-                width = resolvable_member_function(kv.t.width)
+                width = to_python_source(kv.t.width)
                 py_f.write(f"        {name_k} = skmap.RegFlagsK(self, name='{kv.name}', width={width}, flags=flags, desc='{kv.desc}')\n")
             else:
                 t_str = value_type_str(kv.t)
@@ -411,7 +446,7 @@ class {recipe.sw_module}(skmap.Module):
                 py_f.write("        flags = [")
                 for f in varv.flags: py_f.write(f" {name_to_reg_var(f.name)}, ")
                 py_f.write("]\n")
-                w = resolvable_member_function(varv.t.width)
+                w = to_python_source(varv.t.width)
                 py_f.write(f"        {name_var} = skmap.RegFlags(self, name='{varv.name}', width={w}, acc=skmap.Acc.{varv.acc}, flags=flags, desc='{varv.desc}')\n")
             else:
                 t_str = value_type_str(varv.t)
