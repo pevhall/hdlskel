@@ -3,8 +3,8 @@ sw_module = "RecipeTestBenchModule"
 fw_module = "recipe_test_bench_module"
 id = "TBRecip"
 version = 1
-# fw_opts = {ports_use_basic_types = true, hdlskel_vhdl_lib='work'}
-fw_opts = { size_reserved=0x1000 }
+# fw_opts = { size_reserved=0x1000 , ports_use_basic_types = true}
+fw_opts = { size_reserved=0x1000}
 
 ipkg = [
   # {name = "INT_11", value = 11 },

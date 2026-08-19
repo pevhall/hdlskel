@@ -94,7 +94,10 @@ class Reg:
             case ValueKind.bits:
                 value_str = f'0x{self.read_uint_cached():0{ceil_div(self.value_type.width,8)}X}'
             case ValueKind.flag:
-                value_str = f'0b{self.read_uint_cached():0{self.value_type.width}b}'
+                if self.value_type.is_bool:
+                    value_str = str(self.read_bool_cached())
+                else:
+                    value_str = f'0b{self.read_uint_cached():0{self.value_type.width}b}'
             case ValueKind.char:
                 value_str = self.read_char_cached()
 

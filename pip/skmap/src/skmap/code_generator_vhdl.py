@@ -46,6 +46,11 @@ def optional_resize( s : str, width : Union[None, int, str]) -> str:
         return s
     return f"resize( {s}, {width} )";
 
+def optional_add_func_str( s : str, fstr : Optional[str]) -> str:
+    if fstr == None:
+        return s
+    return f"{fstr}({s})"
+
 def port_name(name : str, direction : Literal['in', 'out']):
     port_ext_in = "_i"
     port_ext_out = "_o"
@@ -65,7 +70,8 @@ def k_type_to_vhdl_str(t : ValueTypeT, port_types:PortTypes='all') -> str:
     elem_rng = f"({to_vhdl_source(t.width)}-1 downto 0)"
     if port_types == 'flat':
         if t.is_vec:
-            assert False, "yet to be implemented" 
+            vec_flat_rng = f'({to_vhdl_source(t.vec_len)}*{to_vhdl_source(t.width)}-1 downto 0)'
+            return f'std_ulogic_vector{vec_flat_rng}'
         else:
             match t.kind:
                 case ValueKind.uint: return "natural"
@@ -99,7 +105,8 @@ def var_type_to_vhdl_str(t : ValueTypeT, port_types:PortTypes = 'all', sl2slv : 
 
     if port_types == 'flat':
         if t.is_vec:
-            assert False
+            vec_flat_rng = f'({to_vhdl_source(t.vec_len)}*{to_vhdl_source(t.width)}-1 downto 0)'
+            return f'std_ulogic_vector{vec_flat_rng}'
         else:
             return f"std_ulogic_vector{elem_rng}"
 
@@ -450,24 +457,48 @@ entity {recipe.fw_module} is
             assert memv.acc in (Acc.rw, Acc.ro), "Not yet implemented for memory interfaces"
             vhdl_f.write(f"    --! {memv.desc}")
             if memv.acc == Acc.rw or memv.acc == Acc.wt:
-                vhdl_f.write(f"""
+                if port_types == 'flat':
+                    vhdl_f.write(f"""
+    {memv.name}_rqst_en_o   : out std_ulogic;
+    {memv.name}_rqst_addr_o : out std_ulogic_vector(ceil_log2({memv.fw_depth})-1 downto 0);
+    {memv.name}_rqst_wren_o : out std_ulogic_vector({memv.fw_width}/8-1 downto 0);
+    {memv.name}_rqst_data_o : out std_ulogic_vector({memv.fw_width}-1 downto 0);""")
+                else:
+                    vhdl_f.write(f"""
     {memv.name}_rqst_o : out ramface_rqst_t(
       addr(ceil_log2({memv.fw_depth})-1 downto 0),
       wren({memv.fw_width}/8-1 downto 0),
       data({memv.fw_width}-1 downto 0)
     );""")
             elif memv.acc == Acc.rc:
-                vhdl_f.write(f"""
+                if port_types == 'flat':
+                    vhdl_f.write(f"""
+    {memv.name}_rqst_en_o   : out std_ulogic;
+    {memv.name}_rqst_addr_o : out std_ulogic_vector(ceil_log2({memv.fw_depth})-1 downto 0);
+    {memv.name}_rqst_wren_o : out std_ulogic_vector({memv.fw_width}/8-1 downto 0);""")
+                else:
+                    vhdl_f.write(f"""
     {memv.name}_rqst_o : out ramface_rqst_rc_t(
       addr(ceil_log2({memv.fw_depth})-1 downto 0),
       wren({memv.fw_width}/8-1 downto 0)
     );""")
             elif memv.acc == Acc.ro or memv.acc == Acc.k:
-                vhdl_f.write(f"""
+                if port_types == 'flat':
+                    vhdl_f.write(f"""
+    {memv.name}_rqst_en_o   : out std_ulogic;
+    {memv.name}_rqst_addr_o : out std_ulogic_vector(ceil_log2({memv.fw_depth})-1 downto 0);""")
+                else:
+                    vhdl_f.write(f"""
     {memv.name}_rqst_o : out ramface_rqst_ro_t(
       addr(ceil_log2({memv.fw_depth})-1 downto 0)
     );""")
-            vhdl_f.write(f"""
+            if port_types == 'flat':
+                vhdl_f.write(f"""
+    {memv.name}_rply_en_i   : in  std_ulogic;
+    {memv.name}_rply_fail_i : in  std_ulogic;
+    {memv.name}_rply_data_i : in  std_ulogic_vector({memv.fw_width} -1 downto 0)""")
+            else:
+                vhdl_f.write(f"""
     {memv.name}_rply_i : in  ramface_rply_t(
       data({memv.fw_width} -1 downto 0)
     )""")
@@ -769,7 +800,12 @@ begin
 
                     if varv.flags is None:
                         if port_types == 'flat':
-                            vhdl_f.write(f'    {varv.p_name} <= {varv.name_ext};\n')
+                            if varv.t.is_bool:
+                                vhdl_f.write(f'    {varv.p_name} <= to_sl({varv.name_ext});\n')
+                            elif varv.t.is_vec:
+                                vhdl_f.write(f'    {varv.p_name} <= to_flat({varv.name_ext});\n')
+                            else:
+                                vhdl_f.write(f'    {varv.p_name} <= {varv.name_ext};\n')
                         elif varv.t.is_vec:
                             match varv.t.kind:
                                 case ValueKind.uint: vhdl_f.write(f'    {varv.p_name} <= to_vec_unsigned({varv.name_ext});\n')
@@ -802,23 +838,45 @@ begin
                 rs_addr_w = f'ceil_log2({str(memv.fw_depth)})'
                 rs_data_w = str(memv.fw_width)
                 rs_wren_w = rs_data_w + "/8"
-            vhdl_f.write(f"""
-    {memv.name}_rqst_o.addr <= { optional_resize( f'vec_ramface_external_mem_rqst({ii}).addr', rs_addr_w) };""");
-            if memv.acc == Acc.ro or memv.acc == Acc.k:
-                vhdl_f.write(f"""
-    {memv.name}_rqst_o.en   <= vec_ramface_external_mem_rqst_en_rd({ii});""");
-            elif memv.acc in (Acc.rw, Acc.rc, Acc.wt):
-                vhdl_f.write(f"""
-    {memv.name}_rqst_o.en   <= vec_ramface_external_mem_rqst({ii}).en;
-    {memv.name}_rqst_o.wren <= { optional_resize(f'vec_ramface_external_mem_rqst({ii}).wren', rs_wren_w) };""");
-                if memv.acc in (Acc.rw, Acc.wt):
-                    vhdl_f.write(f"""
-    {memv.name}_rqst_o.data <= { optional_resize(f'vec_ramface_external_mem_rqst({ii}).data', rs_data_w) };""");
+            if port_types == 'flat':
+                mem_q_addr = f'{memv.name}_rqst_addr_o'
+                mem_q_en   = f'{memv.name}_rqst_en_o'
+                mem_q_wren = f'{memv.name}_rqst_wren_o'
+                mem_q_data = f'{memv.name}_rqst_data_o'
+                slv_func = 'std_ulogic_vector'
+            else:
+                mem_q_addr = f'{memv.name}_rqst_o.addr'
+                mem_q_en   = f'{memv.name}_rqst_o.en'
+                mem_q_wren = f'{memv.name}_rqst_o.wren'
+                mem_q_data = f'{memv.name}_rqst_o.data'
+                slv_func = None
 
             vhdl_f.write(f"""
-    vec_ramface_external_mem_rply({ii}).en   <= {memv.name}_rply_i.en;
-    vec_ramface_external_mem_rply({ii}).fail <= {memv.name}_rply_i.fail;
-    vec_ramface_external_mem_rply({ii}).data <= { optional_resize( f'{memv.name}_rply_i.data', rs_data_w) };\n""");
+    {mem_q_addr} <= { optional_add_func_str( optional_resize( f'vec_ramface_external_mem_rqst({ii}).addr', rs_addr_w), slv_func) };""");
+            if memv.acc == Acc.ro or memv.acc == Acc.k:
+                vhdl_f.write(f"""
+    {mem_q_en}   <= vec_ramface_external_mem_rqst_en_rd({ii});""");
+            elif memv.acc in (Acc.rw, Acc.rc, Acc.wt):
+                vhdl_f.write(f"""
+    {mem_q_en}   <= vec_ramface_external_mem_rqst({ii}).en;
+    {mem_q_wren} <= { optional_resize(f'vec_ramface_external_mem_rqst({ii}).wren', rs_wren_w) };""");
+                if memv.acc in (Acc.rw, Acc.wt):
+                    vhdl_f.write(f"""
+    {mem_q_data} <= { optional_resize(f'vec_ramface_external_mem_rqst({ii}).data', rs_data_w) };""");
+
+            if port_types == 'flat':
+                mem_p_en   = f'{memv.name}_rply_en_i'
+                mem_p_fail = f'{memv.name}_rply_fail_i'
+                mem_p_data = f'{memv.name}_rply_data_i'
+            else:
+                mem_p_en   = f'{memv.name}_rply_i.en'
+                mem_p_fail = f'{memv.name}_rply_i.fail'
+                mem_p_data = f'{memv.name}_rply_i.data'
+
+            vhdl_f.write(f"""
+    vec_ramface_external_mem_rply({ii}).en   <= {mem_p_en};
+    vec_ramface_external_mem_rply({ii}).fail <= {mem_p_fail};
+    vec_ramface_external_mem_rply({ii}).data <= { optional_resize( f'{mem_p_data}', rs_data_w) };\n""");
 
         vhdl_f.write("""
 end architecture;
