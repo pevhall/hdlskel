@@ -138,7 +138,7 @@ begin
 
   i_ramface_rqst_w_adapt: entity work.ramface_rqst_w_adapt
   generic map(
-      SRC_RAMFACE_ADDR_W => RAMFACE_ADDR_W,
+      SRC_RAMFACE_ADDR_W => LOCAL_RAMFACE_ADDR_W,
       SRC_RAMFACE_DATA_W => RAMFACE_DATA_W,
       DST_RAMFACE_DATA_W => LOCAL_RAMFACE_DATA_W,
       DST_RAMFACE_ADDR_W => LOCAL_RAMFACE_ADDR_W,

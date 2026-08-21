@@ -1,6 +1,7 @@
 from .basic_types import Acc, Ass, ValueKind, ValueType
 from .reg import Reg, RegVec, RegK, RegVecK, RegFlags, RegFlagsK, RFlag
 from .external_mem import ExternalMem
+from typing import Union
 
 from rich.table import Table
 from .console import console
@@ -43,17 +44,21 @@ class RegMapTable :
     def print(self):
         console.print(self._table)
 
-def print_table_flags(log_f : list[RFlag], title, prepend_regs = True):
+def print_table_reg_list(l : list[Union[RFlag, Reg]], title, prepend_regs = True):
     """ Print table of flags
     NOTE: expects flags to be in order
     """
     table = RegMapTable(title=title)
     reg_prev = None
-    for f in log_f:
-        reg = f.reg_flags
-        if prepend_regs and reg is not reg_prev:
-            table.add_reg( reg, expand_flags=False)
-            reg_prev = reg
-        table.add_flag( f)
+    for v in l:
+        if isinstance(v, RFlag):
+            reg = v.reg_flags
+            if prepend_regs and reg is not reg_prev:
+                table.add_reg( reg, expand_flags=False)
+                reg_prev = reg
+            table.add_flag( v)
+        else:
+            assert isinstance(v, Reg)
+            table.add_reg(v)
     table.print()
 

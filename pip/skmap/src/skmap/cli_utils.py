@@ -7,7 +7,7 @@ from regio import RegioOptions
 import regio.cli_utils 
 from .basic_types import Ass
 from .module import make_module
-from . import print_table_flags
+from . import print_table_reg_list
 from pathlib import Path
 
 
@@ -97,10 +97,10 @@ async def main(args):
         module.print_reg_map_cached()
 
     if args.asserts:
-        flags = []
-        ass = module.check_assert_tree_cached(args.asserts_level, flags)
-        print(f'{ass=}, {len(flags)=}')
-        print_table_flags(flags, title='Asserts')
+        list_reg = []
+        ass = module.check_assert_tree_cached(args.asserts_level, list_reg)
+        # print(f'{ass=}, {len(flags)=}')
+        print_table_reg_list(list_reg, title='Asserts')
 
     if args.clear:
         if args.tree:

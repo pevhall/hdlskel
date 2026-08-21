@@ -249,8 +249,12 @@ class RecipeVar:
         self.t  = parse_value_type_resolvable(d['t'], name_to_k)
         self.acc = Acc[d['acc']]
         self.desc : str = d['desc']
+        self.ass = Ass.none
+        if 'ass' in d:
+            self.ass = Ass[d['ass']]
         flags, flags_width  = parse_recipe_flags(d, name_to_k=name_to_k)
         self.flags : Optional[list[RecipeFlag]] = flags
+
         if self.t.width is not None:
             if self.flags is not None:
                 if isinstance(flags_width, int) and isinstance(self.t.width, int):

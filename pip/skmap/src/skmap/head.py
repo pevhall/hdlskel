@@ -41,7 +41,6 @@ class Head:
 
     def __init__(self, data : bytes):
         self.id        = get_id_str(data[0:SIZE_ID])
-        print(f'{self.id=} {len(self.id)=}')
         ii = SIZE_ID;
         self.sync      = data[ii]; ii += 1
         self.version   = data[ii]; ii += 1

@@ -228,7 +228,9 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
     s = ''
     s += f'    #{reg.name}: {reg.desc}"\n'
     if reg.acc != Acc.k:
-        s += f'    def {reg.name}_inst(self):\n'
+
+        s += f'    @property\n'
+        s += f'    def {reg.name}_inst(self) -> skmap.Reg:\n'
         s += f'        return {reg_name} \n\n'
         s += f'    async def {reg.name}_update_cache(self):\n'
         s += f'        _ = await {reg_name}.read_bytes() \n\n'
@@ -271,16 +273,13 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
             case Acc.k:
                 s += f'    @property\n'
                 s += f'    def {f.name}(self) -> {t_str}:\n'
-                s += f'        "{f.desc}"\n'
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
             case Acc.ro | Acc.rc:
-                s += f'    #{f.name}: {f.desc}"\n'
                 s += f'    def {f.name}_read_cached(self) -> {t_str}:\n'
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
                 s += f'    async def {f.name}_read(self) -> {t_str}:\n'
                 s += f'        return await {f_name}.{func_read}()\n\n'
             case Acc.rw:
-                s += f'    #{f.name}: {f.desc}"\n'
                 s += f'    def {f.name}_read_cached(self) -> {t_str}:\n'
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
                 s += f'    async def {f.name}_read(self) -> {t_str}:\n'
@@ -290,7 +289,6 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
                 s += f'    async def {f.name}_write(self, value : {t_str}):\n'
                 s += f'        await {f_name}.{func_write}(value)\n\n'
             case Acc.wt:
-                s += f'    #{f.name}: {f.desc}"\n'
                 s += f'    def {f.name}_read_cached(self) -> {t_str}:\n'
                 s += f'        return {f_name}.{func_read_cached}()\n\n'
                 s += f'    async def {f.name}_read(self) -> {t_str}:\n'
@@ -449,9 +447,12 @@ class {recipe.sw_module}(skmap.Module):
                 w = to_python_source(varv.t.width)
                 py_f.write(f"        {name_var} = skmap.RegFlags(self, name='{varv.name}', width={w}, acc=skmap.Acc.{varv.acc}, flags=flags, desc='{varv.desc}')\n")
             else:
+                ass_str = ''
+                if varv.ass != Ass.none:
+                    ass_str = f', ass=skmap.Ass.{varv.ass.to_str()}'
                 t_str = value_type_str(varv.t)
                 reg_type = 'RegVec' if varv.t.is_vec else 'Reg'
-                py_f.write(f"        {name_var} = skmap.{reg_type}(self, name='{varv.name}', value_type={t_str}, acc=skmap.Acc.{varv.acc}, desc='{varv.desc}')\n")
+                py_f.write(f"        {name_var} = skmap.{reg_type}(self, name='{varv.name}', value_type={t_str}{ass_str}, acc=skmap.Acc.{varv.acc}, desc='{varv.desc}')\n")
             py_f.write(f"        self._add_reg_var({name_var})\n\n")
 
         py_f.write("    def _init_external_mem(self):\n")

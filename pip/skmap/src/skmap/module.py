@@ -36,7 +36,7 @@ class Module(ABC):
         self._kids     : list[Optional['Module']] = [None] * self._head.len_kids
         self._arr_reg_k   : list[RegKTypes] = []
         self._arr_reg_var : list[Reg]  = []
-        self._arr_reg_var_ass_flags : list[RegFlags] = []
+        self._arr_reg_var_ass : list[Reg] = []
         # self.map_reg_k   : dict[str, RegKTypes] = {}
         # self.map_reg_var : dict[str, Reg]  = {}
         self._use_cache = False
@@ -257,9 +257,8 @@ class Module(ABC):
 
         reg.addr = self._byte_idx + self._base_addr
         self._arr_reg_var.append(reg)
-        if isinstance(reg, RegFlags):
-            if reg.has_ass:
-                self._arr_reg_var_ass_flags.append(reg)
+        if reg.has_ass():
+            self._arr_reg_var_ass.append(reg)
         # self.map_reg_var[reg.name] = reg
         self._byte_idx_add_reg(reg)
 
@@ -378,15 +377,15 @@ class Module(ABC):
         #     else:
         #         kid.print_tree_cached(indent)
 
-    def check_assert_cached(self, log_ass : Ass = Ass.none, log_f : list[RFlag] = []) -> Ass:
+    def check_assert_cached(self, log_ass : Ass = Ass.none, log_f : list[Union[RFlag, Reg]] = []) -> Ass:
         ass = Ass.none
-        for reg in self._arr_reg_var_ass_flags:
+        for reg in self._arr_reg_var_ass:
             f_ass = reg.ass_check_cached(log_ass, log_f)
             if f_ass >= ass:
                 ass = f_ass
         return ass
 
-    def check_assert_tree_cached(self, log_ass : Ass = Ass.none, log_f : list[RFlag] = []) -> Ass:
+    def check_assert_tree_cached(self, log_ass : Ass = Ass.none, log_f : list[Union[RFlag, Reg]] = []) -> Ass:
         ass = self.check_assert_cached(log_ass, log_f)
         for kid in self.kids_cached():
             assert kid is not None
@@ -396,7 +395,7 @@ class Module(ABC):
         return ass
 
     async def clear_assert(self):
-        for reg_f in self._arr_reg_var_ass_flags:
+        for reg_f in self._arr_reg_var_ass:
             reg_f_ass = reg_f.ass_check_cached()
             if reg_f_ass >= Ass.debug:
                 # print(f'{reg_f_ass=}')

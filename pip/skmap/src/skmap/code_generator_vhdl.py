@@ -135,86 +135,6 @@ def var_type_to_vhdl_str(t : ValueTypeT, port_types:PortTypes = 'all', sl2slv : 
                 case ValueKind.bits: return f"std_ulogic_vector{elem_rng}"
                 case ValueKind.flag: return f"std_ulogic_vector{elem_rng}"
 
-# def var_to_type_cast_vhdl_str(name : str, t : ValueType, to_port_types:PortTypes = 'all') -> str:
-#     if to_port_types == 'flat':
-#         assert False, "not tested"
-#         if t.is_vec:
-#             assert False
-#         else:
-#             return f"std_ulogic_vector({name})"
-#
-#     elif to_port_types == 'slv_2d':
-#         if t.is_vec:
-#             match t.kind:
-#                 case ValueKind.uint: return f"to_vec_unsigned({name})"
-#                 case ValueKind.sint: return f"to_vec_signed({name})"
-#                 case ValueKind.char: assert False; return f"string"
-#                 case ValueKind.bits: return f"to_vec_slv({name})"
-#                 case ValueKind.flag: return f"to_vec_slv({name})"
-#         else:
-#             match t.kind:
-#                 case ValueKind.uint: return f"unsigned({name})"
-#                 case ValueKind.sint: return f"signed({name})"
-#                 case ValueKind.char: assert False; return f"character"
-#                 case ValueKind.bits: return f"{name}"
-#                 case ValueKind.flag: return f"{name}"
-#
-#     elif to_port_types == 'all':
-#         if t.is_vec:
-#             match t.kind:
-#                 case ValueKind.uint: return f"to_vec_unsigned({name})"
-#                 case ValueKind.sint: return f"to_vec_signed({name})"
-#                 case ValueKind.char: assert False; return f"string"
-#                 case ValueKind.bits: return f"to_vec_slv({name})"
-#                 case ValueKind.flag: return f"to_vec_slv({name})"
-#         else:
-#             match t.kind:
-#                 case ValueKind.uint: return f"unsigned({name})"
-#                 case ValueKind.sint: return f"signed({name})"
-#                 case ValueKind.char: assert False; return f"character"
-#                 case ValueKind.bits: return f"{name}"
-#                 case ValueKind.flag: return f"{name}"
-#
-# def var_from_type_cast_vhdl_str(name : str, t : ValueType, from_port_types:PortTypes = 'all') -> str:
-#     if to_port_types == 'flat':
-#         assert False, "not tested"
-#         if t.is_vec:
-#             assert False
-#         else:
-#             return f"std_ulogic_vector({name})"
-#
-#     elif to_port_types == 'slv_2d':
-#         if t.is_vec:
-#             match t.kind:
-#                 case ValueKind.uint: return f"to_vec_unsigned({name})"
-#                 case ValueKind.sint: return f"to_vec_signed({name})"
-#                 case ValueKind.char: assert False; return f"string"
-#                 case ValueKind.bits: return f"to_vec_slv({name})"
-#                 case ValueKind.flag: return f"to_vec_slv({name})"
-#         else:
-#             match t.kind:
-#                 case ValueKind.uint: return f"unsigned({name})"
-#                 case ValueKind.sint: return f"signed({name})"
-#                 case ValueKind.char: assert False; return f"character"
-#                 case ValueKind.bits: return f"{name}"
-#                 case ValueKind.flag: return f"{name}"
-#
-#     elif to_port_types == 'all':
-#         if t.is_vec:
-#             match t.kind:
-#                 case ValueKind.uint: return f"to_vec_unsigned({name})"
-#                 case ValueKind.sint: return f"to_vec_signed({name})"
-#                 case ValueKind.char: assert False; return f"string"
-#                 case ValueKind.bits: return f"to_vec_slv({name})"
-#                 case ValueKind.flag: return f"to_vec_slv({name})"
-#         else:
-#             match t.kind:
-#                 case ValueKind.uint: return f"unsigned({name})"
-#                 case ValueKind.sint: return f"signed({name})"
-#                 case ValueKind.char: assert False; return f"character"
-#                 case ValueKind.bits: return f"{name}"
-#                 case ValueKind.flag: return f"{name}"
-
 def regs_len_str(regs : list[RecipeReg], name : str, k : bool = False, offset_bytes = 0) -> str:
 
     s = (f"""
@@ -269,7 +189,7 @@ package {recipe.fw_module}_ipkg is\n\n""")
         if len(recipe.ipkg) > 1:
             vhdl_f.write('\n')
         for ipkgv in recipe.ipkg:
-            vhdl_t = k_type_to_vhdl_str(ipkgv.t, port_types=port_types)
+            vhdl_t = k_type_to_vhdl_str(ipkgv.t, port_types='all')
             value = ipkgv.value
             if ipkgv.t.kind == ValueKind.char:
                 if ipkgv.t.is_vec:
@@ -318,8 +238,12 @@ use work.{recipe.fw_module}_ipkg;""")
         vhdl_f.write(f"""\n
 entity {recipe.fw_module} is
   generic (
-    BASE_ADDR       : natural;
-    SKMAP_KIDS : integer_vector := NULL_INTEGER_VECTOR;
+    BASE_ADDR       : natural;\n""")
+        if port_types == 'flat':
+            vhdl_f.write(f"    SKMAP_KIDS_FLAT : std_ulogic_vector := NULL_SLV;\n")
+        else:
+            vhdl_f.write(f"    SKMAP_KIDS : integer_vector := NULL_INTEGER_VECTOR;\n")
+        vhdl_f.write(f"""\n
     SKMAP_BYTE_ALIGN : integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG;""");
         # assert recipe.with_vec_external_mem == False or recipe.with_external_mem == False
         # if recipe.with_vec_external_mem:
@@ -512,7 +436,9 @@ architecture rtl of {recipe.fw_module} is
 
   alias BYTE_ALIGN is SKMAP_BYTE_ALIGN;\n""")
 
-        vhdl_f.write("  constant SKMAP_VEC_EXTERNAL_MEM : skmap_vec_external_mem_t :=");
+        if port_types == 'flat':
+            vhdl_f.write(f"  constant SKMAP_KIDS : integer_vector :=   to_vec_int(to_vec_signed(to_vec_slv(rng_dt(SKMAP_KIDS_FLAT),32)));\n")
+        vhdl_f.write("  constant SKMAP_VEC_EXTERNAL_MEM : skmap_vec_external_mem_t := ");
         if (len(recipe.mem) == 0 ):
             vhdl_f.write("NULL_SKMAP_VEC_EXTERNAL_MEM;\n")
         else:

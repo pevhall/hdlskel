@@ -1,28 +1,28 @@
 
 import asyncio
 from typing import Optional
-from regio.tcp_client import RegioTcpClient
-from regio.tcp import PORT_DEFAULT
+import regio
+import regio.cli_utils
+
 
  
 
-async def single_op(host : str, port : int, addr : int, size : Optional[int] = None, wr_data : Optional[bytes] = None) -> bytes:
+async def single_op(args) -> bytes:
+
+    rio : regio.Regio = await regio.cli_utils.make_regio_from_args(args)
+    addr = args.addr;
+    size = args.size
+    wr_data = args.wr_bytes
     assert size is not None or wr_data is not None
-    client = RegioTcpClient(host=host, port=port, timeout=3.0)
 
-    try:
-        await client.connect()
-        if  wr_data is not None:
-            await client.write(addr, wr_data)
-        if size is None:
-            assert wr_data is not None
-            size = len(wr_data)
+    if  wr_data is not None:
+        await rio.write(addr, wr_data)
+    if size is None:
+        assert wr_data is not None
+        size = len(wr_data)
 
-        rd_data = await client.read(addr, size)
+    rd_data = await rio.read(addr, size)
 
-    finally:
-
-        await client.close()
 
     return rd_data
 
@@ -38,24 +38,7 @@ if __name__ == '__main__':
             description="Regio TCP Client"
         )
 
-        parser.add_argument(
-            "--host",
-            default="127.0.0.1",
-            help="Server host (default: %(default)s)"
-        )
-
-        parser.add_argument(
-            "--port",
-            type=int,
-            default=PORT_DEFAULT,
-            help=f"Server port (default: {PORT_DEFAULT})"
-        )
-
-        parser.add_argument(
-            "--debug",
-            action="store_true",
-            help="Enable debug mode"
-        )
+        regio.cli_utils.add_parser_args(parser);
 
         parser.add_argument(
             "-v",
@@ -113,7 +96,7 @@ if __name__ == '__main__':
         args = parse_args()
         print(args)
 
-        rd_bytes = asyncio.run( single_op(args.host, args.port, args.addr, args.size, args.wr_bytes) )
+        rd_bytes = asyncio.run( single_op(args) )
         print(f'{rd_bytes=}')
 
     main()

@@ -12,6 +12,9 @@ package basic_pkg is
   function zeros(w : natural) return std_ulogic_vector;
   function resize(v : std_ulogic_vector; W : natural) return std_ulogic_vector;
 
+  constant NULL_INTEGER_VECTOR : integer_vector(0 to -1);
+  constant NULL_SLV : std_logic_vector(-1 downto 0);
+
   --
   function if_then_else(b : boolean; num1 : integer; num2 : integer) return integer;
 
@@ -52,6 +55,9 @@ package basic_pkg is
 end package;
 
 package body basic_pkg is
+
+  constant NULL_INTEGER_VECTOR : integer_vector(0 to -1) := (others => 0);
+  constant NULL_SLV : std_logic_vector(-1 downto 0) := (others => '0');
 
   function zeros(w : natural) return std_ulogic_vector is
     constant SLV : std_ulogic_vector(w-1 downto 0) := (others => '0');

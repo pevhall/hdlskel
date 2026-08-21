@@ -1,6 +1,7 @@
 
 import argparse
 from pathlib import Path
+from . import Regio
 from .tcp import PORT_DEFAULT
 from .options import RegioOptions
 
@@ -35,7 +36,7 @@ def add_parser_args(parser : argparse.ArgumentParser):
         help="If true, print all regio operations"
     )
 
-async def make_regio_from_args(args):
+async def make_regio_from_args(args) -> Regio:
     regio_options = RegioOptions()
 
     if args.file is not None:
@@ -46,6 +47,6 @@ async def make_regio_from_args(args):
             regio_options.tcp_port = args.port
 
     regio_options.check()
-    regio = await regio_options.make_regio()
-    return regio
+    rio = await regio_options.make_regio()
+    return rio
 

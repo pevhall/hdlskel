@@ -31,7 +31,7 @@ ExternalMem = external_mem.ExternalMem
 
 make_module     = module.make_module
 register_Module = module.register_Module
-print_table_flags = reg_map_table.print_table_flags
+print_table_reg_list = reg_map_table.print_table_reg_list
 
 generate_py_module   = code_generator_py.generate_py_module
 generate_vhdl_module = code_generator_vhdl.generate_vhdl_module

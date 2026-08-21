@@ -2,6 +2,7 @@ from typing import Optional
 from pathlib import Path
 from dataclasses import dataclass
 
+from . import Regio
 from . import cache
 from . import tcp_client
 
@@ -15,7 +16,7 @@ class RegioOptions:
         assert self.tcp_host is None or self.load_cache_file is None, "One read option at a time"
         assert self.tcp_host is not None or self.load_cache_file is not None, "One option must be specified"
 
-    async def make_regio(self):
+    async def make_regio(self) -> Regio:
         if self.tcp_host is not None:
             rio = tcp_client.RegioTcpClient(host=self.tcp_host, port=self.tcp_port)
             await rio.connect()

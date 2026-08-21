@@ -153,7 +153,7 @@ entity skmap_module is
 
     vec_ramface_external_mem_rply_i : in  vec_ramface_rply_t ( 0 to SKMAP_VEC_EXTERNAL_MEM'length-1)(
       data(skmap_get_external_mem_max_data_w(SKMAP_VEC_EXTERNAL_MEM)-1 downto 0)
-    ) := NULL_VEC_RAMFACE_RPLY;
+    ) := ( others => ( en => '0', fail => '1', data => (others => '0')));
 
     regs_var_rd_data_i : in  vec_slv32_t(0 to REGS_VAR_LEN-1);
     regs_var_wr_wren_o : out vec_slv4_t (0 to REGS_VAR_LEN-1);
@@ -198,7 +198,7 @@ architecture rtl of skmap_module is
   constant SKMAP_LEN_VAR : skmap_len_var_t := REGS_VAR_LEN;
   
   constant EXTERNAL_MEM_BASE_ADDR_OFF : natural := skmap_module_ipkg.priv_EXTERNAL_MEM_BASE_ADDR_OFF(SKMAP_VEC_EXTERNAL_MEM => SKMAP_VEC_EXTERNAL_MEM,  SKMAP_SIZE_RESERVED_BASE_REGS => SKMAP_SIZE_RESERVED_BASE_REGS);
-  constant EXTERNAL_MEM_BASE_ADDRS : integer_vector := (get_vec_int_range(TOTAL_EXTERNAL_MEM)+1) * EXTERNAL_MEM_BASE_ADDR_OFF; 
+  constant EXTERNAL_MEM_BASE_ADDRS : integer_vector := (get_vec_int_range(TOTAL_EXTERNAL_MEM)+1) * EXTERNAL_MEM_BASE_ADDR_OFF + BASE_ADDR;
   ------------------------------
   -- MATCH IPKG ABOVE BEGIN
   constant REGS_DATA_W : natural := 32;

@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from module import Module
 
 class Reg:
-    def __init__(self, module : "Module", name : str, value_type : ValueType, acc : Acc, desc : str): #, fmt : Fmt = Fmt.default): #, ass : Ass = Ass.none):
+    def __init__(self, module : "Module", name : str, value_type : ValueType, acc : Acc, desc : str, ass : Ass = Ass.none): #, fmt : Fmt = Fmt.default): #, ass : Ass = Ass.none):
         # assert (ass != ass.passed)
         self.module = module
         self.name   = name
@@ -19,6 +19,10 @@ class Reg:
         self.size   = promote_to_sw_w(value_type.width)>>3
         self.elem_size = self.size
         self.addr : Optional[int]  = None
+        self.ass    = ass
+
+    def has_ass(self) -> bool:
+        return self.ass != Ass.none
 
     def value_type_str(self) -> str:
         return f'{self.value_type}'
@@ -85,6 +89,22 @@ class Reg:
             case ValueKind.char:
                 return self.read_char_cached()
 
+    def ass_check_cached(self, log_ass : Ass = Ass.none, log_f : list[Union["RFlag","Reg"]] = []) -> Ass:
+        if self.ass == Ass.none:
+            return Ass.none
+        value = self.read_bool_cached()
+        if not value:
+            return Ass.passed
+        if log_ass != Ass.none and self.ass >= log_ass:
+            log_f.append(self)
+        return self.ass
+
+    async def ass_check(self, log_ass : Ass = Ass.none, log_f : list[Union["RFlag","Reg"]] = []) -> Ass:
+        if self.ass == Ass.none:
+            return Ass.none
+        _ = await self.read_bytes()
+        return self.ass_check_cached(log_ass, log_f)
+
     def read_rich_str_cached(self) -> str:
         match self.value_type.kind:
             case ValueKind.uint:
@@ -101,9 +121,13 @@ class Reg:
             case ValueKind.char:
                 value_str = self.read_char_cached()
 
+        if self.ass == Ass.none:
+            return value_str
+        ass_checked = self.ass_check_cached()
+        return to_rich_str(f'{self.ass}: {value_str}', ass_checked.color)
+
         # print(f'{value_int=:x} = int.from_bytes({b=})')
         #TODO change to hex for bits / x
-        return value_str
 
     async def write_cache(self):
         assert isinstance(self.addr, int)
@@ -175,6 +199,10 @@ class RegVec(Reg):
             value_vec_int[ii] = cast_uint_to_sint(value_vec_int[ii], self.elem_size)
         return value_vec_int
 
+    def _bytes_to_list_bool(self, b:bytes) -> list[bool]:
+        value_vec_int = self._bytes_to_list_uint(b)
+        return [bool(a) for a in value_vec_int]
+
     def read_list_uint_cached(self) -> list[int]:
         b = self.read_bytes_cached()
         return self._bytes_to_list_uint(b)
@@ -190,6 +218,14 @@ class RegVec(Reg):
     async def read_list_sint(self) -> list[int]:
         _ = await self.read_bytes()
         return self.read_list_sint_cached()
+
+    def read_list_bool_cached(self) -> list[bool]:
+        b = self.read_bytes_cached()
+        return self._bytes_to_list_bool(b)
+
+    async def read_list_bool(self) -> list[bool]:
+        b = await self.read_bytes()
+        return self._bytes_to_list_bool(b)
 
     def _idx_elem_offset(self, idx) -> int:
         assert isinstance(self.addr, int)
@@ -235,6 +271,12 @@ class RegVec(Reg):
         _ = await self.read_idx_bytes(idx)
         return self.read_idx_sint_cached(idx)
 
+    def read_idx_bool_cached(self, idx : int) -> bool:
+        return self.read_idx_uint_cached(idx) != 0
+
+    async def read_idx_bool(self, idx : int) -> bool:
+        return await self.read_idx_uint(idx) != 0
+
     def write_idx_uint_cached(self, idx : int, val : int):
         b = val.to_bytes(self.elem_size, byteorder='little', signed=False)
         self.write_idx_bytes_cached(idx, b)
@@ -278,10 +320,66 @@ class RegVec(Reg):
         self.write_list_sint_cached(value)
         await self.write_cache()
 
+    def ass_check_cached(self, log_ass : Ass = Ass.none, log_f : list[Union["RFlag",Reg]] = []) -> Ass:
+        if self.ass == Ass.none:
+            return Ass.none
+        value = max(self.read_list_bool_cached())
+        if not value:
+            return Ass.passed
+        if log_ass != Ass.none and self.ass >= log_ass:
+            log_f.append(self)
+        return self.ass
+
+    async def ass_check(self, log_ass : Ass = Ass.none, log_f : list[Union["RFlag",Reg]] = []) -> Ass:
+        _ = await self.read_bytes()
+        return self.ass_check_cached(log_ass, log_f)
+
+    def ass_check_cached_idx(self, idx : int, log_ass : Ass = Ass.none, log_f : list[Union["RFlag",Reg]] = []) -> Ass:
+        if self.ass == Ass.none:
+            return Ass.none
+        value = self.read_idx_bool_cached(idx)
+        if not value:
+            return Ass.passed
+        if log_ass != Ass.none and self.ass >= log_ass:
+            log_f.append(self)
+        return self.ass
+
+    async def ass_check_idx(self, idx : int, log_ass : Ass = Ass.none, log_f : list[Union["RFlag",Reg]] = []) -> Ass:
+        _ = await self.read_idx_bytes(idx)
+        return self.ass_check_cached_idx(idx, log_ass, log_f)
+
     def read_rich_str_cached(self) -> str:
+        use_hex = False
+        match self.value_type.kind:
+            case ValueKind.uint:
+                value = self.read_list_uint_cached()
+            case ValueKind.sint:
+                value = self.read_list_sint_cached()
+            case ValueKind.bits:
+                value = self.read_list_uint_cached()
+                use_hex = True
+            case ValueKind.flag:
+                assert self.value_type.is_bool
+                value = self.read_list_bool_cached()
+            case ValueKind.char:
+                value = self.read_str_cached()
         # assert self.fmt == Fmt.hex
-        value = self.read_list_uint_cached()
-        return str(value)
+        if self.ass == Ass.none:
+            return str(value)
+        ass_checked = self.ass_check_cached()
+        value_str = to_rich_str(f'{self.ass}', ass_checked.color)+": [ "
+        for idx, v in enumerate(value):
+            ass = self.ass_check_cached(idx)
+            if use_hex:
+                assert isinstance(v, int)
+                v_str = hex(v)
+            else:
+                v_str= str(v)
+            value_str +=to_rich_str(v_str, ass.color)
+            if idx != len(value)-1:
+                value_str+= ", "
+        value_str += " ]"
+        return value_str
 
 class RegK(Reg):
     def __init__(self, *args, **kwargs):
@@ -438,7 +536,6 @@ class RegFlags(Reg):
                 result = ass
         return result
 
-    @property
     def has_ass(self) -> bool:
         for f in self.flags:
             if f.ass != None:

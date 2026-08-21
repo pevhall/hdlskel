@@ -61,11 +61,11 @@ async def test_skmap_module_test_acc_types(dut):
         flags = []
         ass = module_top.check_assert_tree_cached(skmap.Ass.debug, flags)
         print(f'{ass=}, {len(flags)=}')
-        skmap.print_table_flags(flags, title='Triggered Asserts')
+        skmap.print_table_reg_list(flags, title='Triggered Asserts')
         await module_top.clear_assert_tree()
         flags = []
         ass = module_top.check_assert_tree_cached(skmap.Ass.debug, flags)
-        print(f'{ass=}, {len(flags)=}')
+        # print(f'{ass=}, {len(flags)=}')
 
         cache_path = f'skmap_tree_cache.{regio_cache.FILE_EXTENSION}'
         module_top.write_cache_tree_to_file(cache_path)
