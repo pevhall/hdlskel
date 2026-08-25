@@ -27,9 +27,9 @@ def add_parser_args(parser : argparse.ArgumentParser):
         "-p", "--port",
         type=auto_int,
         default=PORT_DEFAULT,
-        help=f"TCP Regio port" # number (default: {PORT_DEFAULT})"
+        help=f"SKMap TCP Regio server's port" # number (default: {PORT_DEFAULT})"
     )
-    
+
     parser.add_argument(
         "--debug-print-regio",
         action="store_true",
@@ -48,5 +48,7 @@ async def make_regio_from_args(args) -> Regio:
 
     regio_options.check()
     rio = await regio_options.make_regio()
+    if args.debug_print_regio:
+        rio.log_regio = True
     return rio
 

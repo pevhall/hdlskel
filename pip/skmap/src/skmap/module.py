@@ -145,6 +145,10 @@ class Module(ABC):
     def external_mem_at(self, idx : int) -> ExternalMem:
         return self._arr_external_mem[idx] #type:ignore
 
+    @property
+    def all_kids_initialised(self) -> bool:
+        return None not in self._kids
+
     async def kid_at(self, idx : int) -> 'Module':
         if self._kids[idx] is None:
             self._kids[idx] = await make_module(self._regio, self._kid_addrs[idx])
@@ -212,18 +216,19 @@ class Module(ABC):
             await self._regio.write(addr, self.read_cached(addr, op_size))
 
 
-    async def read_cache(self, read_external_mem_cache : bool = False):
+    async def read_all(self, read_external_mem_cache : bool = False, skip_self : bool = False):
         assert not self._use_cache
-        _ = await self.read_bytes(self._base_addr_var, self._size_var)
+        if not skip_self:
+            _ = await self.read_bytes(self._base_addr_var, self._size_var)
         if read_external_mem_cache:
             for mem in self._arr_external_mem:
                 if isinstance(mem, ExternalMemCached):
                     await mem.read(0, mem.size)
 
-    async def read_cache_tree(self, read_external_mem_cache : bool = True):
-        await self.read_cache(read_external_mem_cache)
+    async def read_all_tree(self, read_external_mem_cache : bool = True, skip_self = False):
+        await self.read_all(read_external_mem_cache, skip_self=skip_self)
         for kid in await self.kids():
-            await kid.read_cache_tree(read_external_mem_cache)
+            await kid.read_all_tree(read_external_mem_cache)
 
     async def write_cache(self):
         cache_addr = self._cache_addr(self._base_addr_var)

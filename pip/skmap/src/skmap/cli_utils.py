@@ -84,10 +84,19 @@ def parse_args(parser : Optional[argparse.ArgumentParser] = None, return_parser 
     args.asserts_level = Ass.debug
     return args
 
+async def make_module_from_args(args, read_tree = True, read_ext_mem = True):
+    rio = await regio.cli_utils.make_regio_from_args(args)
+    addr = 0
+    if hasattr(args, 'addr'):
+        addr = args.addr
+    module = await make_module(rio, addr=addr)
+    if read_tree:
+        await module.read_all_tree(skip_self=True, read_external_mem_cache=read_ext_mem)
+    return module
+
 async def main(args):
 
-    regio_inst = await regio.cli_utils.make_regio_from_args(args)
-    module = await make_module(regio_inst, addr=args.addr)
+    module = await make_module_from_args(args, args.tree)
 
     if args.tree:
         await module.make_tree()

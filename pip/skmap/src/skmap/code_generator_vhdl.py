@@ -240,7 +240,7 @@ entity {recipe.fw_module} is
   generic (
     BASE_ADDR       : natural;\n""")
         if port_types == 'flat':
-            vhdl_f.write(f"    SKMAP_KIDS_FLAT : std_ulogic_vector := NULL_SLV;\n")
+            vhdl_f.write(f"    SKMAP_KIDS_FLAT : std_ulogic_vector := "";\n")
         else:
             vhdl_f.write(f"    SKMAP_KIDS : integer_vector := NULL_INTEGER_VECTOR;\n")
         vhdl_f.write(f"""\n

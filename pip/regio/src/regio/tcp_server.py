@@ -25,7 +25,7 @@ class RegioTcpServer:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # Allow quick restart
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.bind((self.host, self.port))
+        # self._sock.bind((self.host, self.port))
         self._sock.listen(self.backlog)
         print(f"RegioTcpServer listening on {self.host}:{self.port}")
         try:

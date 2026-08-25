@@ -136,22 +136,6 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     s += f'    def {reg.name}_inst(self) -> skmap.{inst_type}:\n'
     s += f'        return {reg_name}\n\n'
 
-    # s += f'    @property\n'
-    # s += f'    def {reg.name}_value_kind(self) -> skmap.ValueKind:\n'
-    # s += f'        return skmap.{reg.t.kind}\n\n'
-    #
-    # s += f'    @property\n'
-    # s += f'    def {reg.name}_w(self) -> int:\n'
-    # s += f'        return {resolvable_str(reg.t.width)}\n\n'
-    # if reg.t.vec_len is not None:
-    #     s += f'    @property\n'
-    #     s += f'    def {reg.name}_len(self) -> int:\n'
-    #     s += f'        return {resolvable_str(reg.t.vec_len)}\n\n'
-    # if reg.t.vec_len is not None:
-    #     s += f'    @property\n'
-    #     s += f'    def {reg.name}_len(self) -> int:\n'
-    #     s += f'        return {resolvable_str(reg.t.vec_len)}()\n\n'
-
     match reg.acc:
         case Acc.k:
             s += f'    @property\n'
@@ -295,7 +279,7 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
                 s += f'        return await {f_name}.{func_read}()\n\n'
                 s += f'    async def {f.name}_trigger(self, value : {t_str}):\n'
                 s += f'        await {f_name}.{func_write}(value)\n\n'
-                s += f'    async def {f.name}_write_cached(self, value : {t_str}):\n'
+                s += f'    def {f.name}_write_cached(self, value : {t_str}):\n'
                 s += f'        {f_name}.{func_write_cached}(value)\n\n'
             case _:
                 assert False
@@ -439,7 +423,7 @@ class {recipe.sw_module}(skmap.Module):
             # if varv.t.kind == ValueKind.flag:
             if varv.flags is not None:
                 for f in varv.flags:
-                    vec_len_param = '' if f.vec_len is None else f' vec_len={f.vec_len},'
+                    vec_len_param = '' if f.vec_len is None else f' vec_len={to_python_source(f.vec_len)},'
                     py_f.write(f"        {name_to_reg_var(f.name)} = skmap.RFlag(name='{f.name}', bit={f.bit}, ass=skmap.Ass.{f.ass.to_str()},{vec_len_param} desc='{f.desc}')\n")
                 py_f.write("        flags = [")
                 for f in varv.flags: py_f.write(f" {name_to_reg_var(f.name)}, ")

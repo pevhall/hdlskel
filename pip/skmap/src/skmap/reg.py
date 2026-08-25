@@ -304,12 +304,12 @@ class RegVec(Reg):
         _ = await self.read_bytes()
         return self.read_str_cached()
 
-    def write_list_uint_cache(self, value : list[int]):
+    def write_list_uint_cached(self, value : list[int]):
         b = list_int_to_bytes(value, self.elem_size, endian='little', signed=False)
         self.write_bytes_cached(b)
 
     async def write_list_uint(self, value : list[int]):
-        self.write_list_uint_cache(value)
+        self.write_list_uint_cached(value)
         await self.write_cache()
 
     def write_list_sint_cached(self, value : list[int]):
