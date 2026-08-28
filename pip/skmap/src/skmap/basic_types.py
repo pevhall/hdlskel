@@ -110,9 +110,10 @@ class ValueType:
         return self.kind == ValueKind.flag and self.width == 1
 
     def __repr__(self) -> str:
-        s = f'{self.kind.char_str}{self.width}'
+        s = ''
         if self.is_vec:
             s += f'[{self.vec_len}]'
+        s += f'{self.kind.char_str}{self.width}'
         return s
 
 value_type_u8  = ValueType(kind=ValueKind.uint, width=8)

@@ -141,14 +141,14 @@ async def test_skmap_module_test_acc_types(dut):
     await module.regs_wt_write_trigger(0x1F)
 
     # print(f'{await module.regs_rw_read()=}')
-    await module.read_cache()
+    await module.read_all()
     # print(f'{await module.regs_rw_read()=}')
     await module.ctrl_flag_0_write(True)
     module.print_reg_map_cached()
     # print('write zero')
     await module.write_zero_all_rc()
     # print('update')
-    await module.read_cache()
+    await module.read_all()
     module.print_reg_map_cached()
 
     module.mem_rw_inst._regio.log_regio = True

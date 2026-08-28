@@ -119,6 +119,10 @@ class Module(ABC):
         return addr - self._base_addr
 
     @property
+    def base_addr(self) -> int:
+        return self._base_addr
+
+    @property
     def use_cache(self) -> bool:
         return self._use_cache
 
@@ -174,7 +178,7 @@ class Module(ABC):
                 kids.append(k)
         return kids
 
-    def get_kid_with_class_cached(self, clss) -> 'Module':
+    def only_kid_with_class_cached(self, clss) -> 'Module':
         k = self.kids_with_class_cached(clss)
         assert(len(k) == 1)
         return k[0]

@@ -39,7 +39,11 @@ class RecipeIpkg:
             if isinstance(self.value, int):
                 self.t = ValueType(kind=ValueKind.sint, width=32)
             elif isinstance(self.value, str):
-                self.t = ValueType(kind=ValueKind.char, width=8, vec_len=len(self.value))
+                if self.value[0] == '{' and self.value[-1] == '}':
+                    self.t = ValueType(kind=ValueKind.sint, width=32)
+                    self.value = parse_unresolved_word(self.value, name_to_k=name_to_k)
+                else:
+                    self.t = ValueType(kind=ValueKind.char, width=8, vec_len=len(self.value))
             else:
                 assert False, "Could not determine ipkg value type"
 

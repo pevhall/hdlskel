@@ -84,14 +84,14 @@ def parse_args(parser : Optional[argparse.ArgumentParser] = None, return_parser 
     args.asserts_level = Ass.debug
     return args
 
-async def make_module_from_args(args, read_tree = True, read_ext_mem = True):
+async def make_module_from_args(args, read_tree = True, read_external_mem_cache = False):
     rio = await regio.cli_utils.make_regio_from_args(args)
     addr = 0
     if hasattr(args, 'addr'):
         addr = args.addr
     module = await make_module(rio, addr=addr)
     if read_tree:
-        await module.read_all_tree(skip_self=True, read_external_mem_cache=read_ext_mem)
+        await module.read_all_tree(skip_self=True, read_external_mem_cache=read_external_mem_cache)
     return module
 
 async def main(args):
@@ -113,8 +113,10 @@ async def main(args):
 
     if args.clear:
         if args.tree:
+            print('Clearing all RC regs in tree')
             await module.clear_reg_rc_tree()
         else:
+            print('Clearing all RC regs in module')
             await module.clear_reg_rc()
 
     if args.write:

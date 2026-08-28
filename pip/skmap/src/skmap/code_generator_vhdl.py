@@ -228,9 +228,9 @@ use {hdlskel_lib}.skmap_recipe_functions_pkg.all;
 
 use {hdlskel_lib}.skmap_module_ipkg;
 
-use work.{recipe.fw_module}_ipkg;""")
+use work.{recipe.fw_module}_ipkg;\n""")
         if len(recipe.ipkg) > 0:
-        
+
             vhdl_f.write(f"use work.{recipe.fw_module}_ipkg.all\n;")
 
 

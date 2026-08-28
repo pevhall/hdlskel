@@ -34,8 +34,8 @@ def to_python_source(node: ResolvableT) -> str:
     #     return str(int(node))
     if isinstance(node, int):
         return str(node)
-    # if isinstance(node, str):   # plain-string leaf (e.g. name_to_k[name] = name)
-    #     return node
+    if isinstance(node, str):   # plain-string leaf (e.g. name_to_k[name] = name)
+        return node
     if isinstance(node, RecipeIpkg):
         return f'self.{node.name}'
     if isinstance(node, RecipeK):
@@ -97,12 +97,8 @@ write_value_function_str  = common.write_value_function_str
 
 def all_ipkg_value_parameters_str(ipkgv : RecipeIpkg) -> str:
     t_str = value_ret_type_str(ipkgv.t)
-    value = ipkgv.value
-    if ipkgv.t.kind == ValueKind.char:
-        if ipkgv.t.is_vec:
-            value = f'"{value}"'
-        else:
-            value = f"'{value}'"
+    value = to_python_source(ipkgv.value)
+
     s = ''
     s += f'    @property\n'
     s += f'    def {ipkgv.name}(self) -> {t_str}:\n'

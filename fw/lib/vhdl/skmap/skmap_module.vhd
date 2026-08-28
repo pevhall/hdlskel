@@ -267,6 +267,9 @@ architecture rtl of skmap_module is
 
 begin
 
+  assert BASE_ADDR rem SKMAP_ALIGMENT_SIZE_MAX = 0
+  report "BASE_ADDR base address must be divisible by the maximum byte aligment, "&to_string(SKMAP_ALIGMENT_SIZE_MAX)
+  severity FAILURE;
 
   assert is_power_of_2(RAMFACE_WREN_W)
   report "RAMFACE_WREN_W needs to be power of 2 (for addr divide)"

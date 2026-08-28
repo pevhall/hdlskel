@@ -13,6 +13,7 @@ package skmap_pkg is
   constant SKMAP_WORD_W   : natural := SKMAP_WORD_BYTES * 8;
   constant SKMAP_HEAD_W   : natural := SKMAP_HEAD_LEN * SKMAP_WORD_W;
 
+  constant SKMAP_ALIGMENT_SIZE_MAX : natural := 16;
 
 --            ╓──────────┬──────────┬──────────┬──────────┐
 --            ║  Byte 0  │  Byte 1  │  Byte 2  │  Byte 3  │
@@ -29,7 +30,8 @@ package skmap_pkg is
   constant SKMAP_ID_BYTES     : natural := 8;
   constant SKMAP_ID_W        : natural := SKMAP_ID_BYTES*8;
   constant SKMAP_SYNC_W      : natural := 8;
-  constant SKMAP_VERSION_W   : natural := 8;
+  constant SKMAP_VERSION_W   : natural := 4;
+  constant SKMAP_RESERVED_W  : natural := 4;
   constant SKMAP_CHECKSUM_W  : natural := 16;
   constant SKMAP_LEN_KIDS_W  : natural := 8;
   constant SKMAP_LEN_SUB_W   : natural := 8;
@@ -109,6 +111,7 @@ package body skmap_pkg is
     SKMAP_ID_W,
     SKMAP_SYNC_W,
     SKMAP_VERSION_W,
+    SKMAP_RESERVED_W,
     SKMAP_CHECKSUM_W,
     SKMAP_LEN_KIDS_W,
     SKMAP_LEN_SUB_W ,
@@ -125,11 +128,12 @@ package body skmap_pkg is
     to_flat_rec(regs_flat, SKMAP_HEAD_WS, 0, to_slv(head.id));
     to_flat_rec(regs_flat, SKMAP_HEAD_WS, 1, SKMAP_SYNC);
     to_flat_rec(regs_flat, SKMAP_HEAD_WS, 2, to_slv(head.version, SKMAP_VERSION_W));
-    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 3, to_slv(head.checksum, SKMAP_CHECKSUM_W));
-    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 4, to_slv(head.len_kids, SKMAP_LEN_KIDS_W));
-    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 5, to_slv(head.len_sub, SKMAP_LEN_SUB_W));
-    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 6, to_slv(head.len_k, SKMAP_LEN_K_W));
-    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 7, to_slv(head.len_var, SKMAP_LEN_VAR_W));
+    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 3, to_slv(0, SKMAP_RESERVED_W));
+    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 4, to_slv(head.checksum, SKMAP_CHECKSUM_W));
+    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 5, to_slv(head.len_kids, SKMAP_LEN_KIDS_W));
+    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 6, to_slv(head.len_sub, SKMAP_LEN_SUB_W));
+    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 7, to_slv(head.len_k, SKMAP_LEN_K_W));
+    to_flat_rec(regs_flat, SKMAP_HEAD_WS, 8, to_slv(head.len_var, SKMAP_LEN_VAR_W));
     regs := to_vec_slv32(regs_flat);
     return regs;
   end function;

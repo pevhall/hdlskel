@@ -49,8 +49,9 @@ if __name__ == '__main__':
         )
 
         parser.add_argument(
+            "-a,",
             "--addr",
-            type=int,
+            type=regio.cli_utils.auto_int,
             required=True,
             help="Target register address"
         )
@@ -58,7 +59,7 @@ if __name__ == '__main__':
         parser.add_argument(
             "-s",
             "--size",
-            type=int,
+            type=regio.cli_utils.auto_int,
             default=None,
             help="Transfer size in bytes"
         )
@@ -67,7 +68,7 @@ if __name__ == '__main__':
 
         write_group.add_argument(
             "--wr-int",
-            type=int,
+            type=regio.cli_utils.auto_int,
             help="Write integer value"
         )
 
