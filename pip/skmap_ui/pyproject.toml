@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "skmap-ui"
+version = "0.6.0"
+authors = [
+  { name="Pev Hall", email="pev.hall@gmail.com" },
+]
+description = "hdlskel skmap register map TUI (textual) — browses real skmap.Module trees"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Environment :: Console",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "textual>=8.0",
+  "skmap",
+  "regio"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8"
+]
+
+[project.scripts]
+skmap-ui = "skmap_ui:main"
+
+[project.urls]
+Homepage = "https://github.com/pevhall/hdlskel"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/skmap_ui"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
