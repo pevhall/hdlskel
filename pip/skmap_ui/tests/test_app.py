@@ -892,29 +892,63 @@ def test_refresh_reads_all_registers():
 def test_cycle_refresh_key():
     async def run():
         app = SkmapUiApp(make_demo())
-        assert app.refresh is None
+        assert app.refresh_period is None
+        # the attribute must not shadow App.refresh() (Textual internal)
+        assert callable(getattr(app, "refresh"))
         async with app.run_test() as pilot:
             await _wait_asserts(app, pilot)
             assert app._refresh_timer is None
 
             await pilot.press("r")
             await pilot.pause()
-            assert app.refresh == 1.0
+            assert app.refresh_period == 1.0
             assert app._refresh_timer is not None
 
             await pilot.press("r")
             await pilot.pause()
-            assert app.refresh == 5.0
+            assert app.refresh_period == 5.0
 
             await pilot.press("r")
             await pilot.pause()
-            assert app.refresh == 30.0
+            assert app.refresh_period == 30.0
 
             await pilot.press("r")  # back to off
             await pilot.pause()
-            assert app.refresh is None
+            assert app.refresh_period is None
             assert app._refresh_timer is None
             assert "refresh: off" in app.log_view.border_title
+    _run(run())
+
+
+def test_refresh_period_does_not_shadow_app_refresh():
+    """Regression: the refresh period must not shadow ``App.refresh()``.
+
+    It used to be stored as ``self.refresh`` (float | None); Textual
+    internals call ``app.refresh(...)``, e.g. when a screen is removed
+    (pressing the ``keys`` / help key), which then crashed with
+    ``TypeError: 'NoneType' object is not callable``.
+    """
+    # attribute check without running the app
+    off = SkmapUiApp(make_demo())
+    assert off.refresh_period is None
+    assert callable(off.refresh)  # still the real Textual method
+    on = SkmapUiApp(make_demo(), refresh=5.0)
+    assert on.refresh_period == 5.0
+    assert callable(on.refresh)
+
+    async def run():
+        app = SkmapUiApp(make_demo(), refresh=0.5)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            # simulate opening / closing a screen (like the keys screen):
+            # App.remove() calls parent.refresh(layout=True) on the App
+            from textual.screen import Screen
+
+            await app.push_screen(Screen())
+            await pilot.pause()
+            await app.pop_screen()
+            await pilot.pause()
+            assert app.is_running
     _run(run())
 
 

@@ -266,7 +266,10 @@ class SkmapUiApp(App):
         super().__init__()
         self.top_module = top_module
         self.asserts_level = asserts_level
-        self.refresh = refresh
+        # NB: must NOT be named "refresh" — that would shadow App.refresh()
+        # and break Textual internals (e.g. screen removal when the keys
+        # screen is closed: parent.refresh(layout=True) -> TypeError).
+        self.refresh_period = refresh
         self._refresh_timer: Timer | None = None
         self.last_asserts: list[Union[RFlag, Reg]] = []
         self.last_worst_ass: Ass = Ass.passed
@@ -279,6 +282,15 @@ class SkmapUiApp(App):
         self._drag: str | None = None  # "h" (tree|table) or "v" (workspace|log)
         # one regio connection on one event loop: serialize device I/O
         self._regio_lock = asyncio.Lock()
+        # last value strings shown in the register map (row key -> plain
+        # text), plus the value-column padding used when the table was
+        # built.  Used to skip DataTable.update_cell() for unchanged
+        # values: every update_cell() call bumps the table's _update_count,
+        # which invalidates its whole render cache, so per-tick no-op
+        # updates would re-render the table and grow its caches
+        # (memory churn).
+        self._row_value_str: dict[str, str] = {}
+        self._value_pad = 2
 
     # ------------------------------------------------------------------
     # layout
@@ -450,6 +462,7 @@ class SkmapUiApp(App):
         self._row_module = module
         self._row_keys = []
         self._row_objs = {}
+        self._row_value_str = {}
         self.table.clear(columns=False)
 
         rows: list[tuple[tuple, RowObj]] = []
@@ -464,9 +477,13 @@ class SkmapUiApp(App):
         pad = 2
         for cells, _ in rows:
             pad = max(pad, len(cells[4].plain))
+        self._value_pad = pad
 
         for ii, (cells, obj) in enumerate(rows):
             key = f"r{ii}"
+            # remember the shown value so refreshes can skip update_cell()
+            # for unchanged values (keeps the table render cache warm)
+            self._row_value_str[key] = cells[4].plain
             # rich Text.pad() has no left/right in 8.x-era rich: prefix spaces
             cells = (
                 cells[:4]
@@ -486,6 +503,8 @@ class SkmapUiApp(App):
         self._row_objs = {}
         self.table.clear(columns=False)
         cells, obj = self._mem_row(mem)
+        self._row_value_str = {"r0": cells[4].plain}
+        self._value_pad = 2
         self.table.add_row(*cells, key="r0")
         self._row_keys.append("r0")
         self._row_objs["r0"] = obj
@@ -641,10 +660,29 @@ class SkmapUiApp(App):
 
     def _update_log_title(self) -> None:
         """Border title of the log pane: current assert option values."""
-        refresh = f"refresh: {self.refresh:g} s" if self.refresh else "refresh: off"
+        refresh = (
+            f"refresh: {self.refresh_period:g} s"
+            if self.refresh_period
+            else "refresh: off"
+        )
         self.log_view.border_title = (
             f"asserts (level >= {self.asserts_level.name})  ·  {refresh}"
         )
+
+    def _update_row_value(self, key: str, value: Text) -> None:
+        """Update a register map value cell, unless the value is unchanged.
+
+        Skipping no-op updates keeps the DataTable render cache warm: every
+        update_cell() call bumps the table's _update_count, which
+        invalidates its whole cell/row/line render cache, so per-tick no-op
+        updates would re-render the table and grow its caches (memory churn).
+        """
+        plain = value.plain
+        if self._row_value_str.get(key) == plain:
+            return
+        self._row_value_str[key] = plain
+        padded = Text(" " * max(0, self._value_pad - len(plain))) + value
+        self.table.update_cell(key, COL_VALUE, padded, update_width=True)
 
     def _refresh_shown_values(self) -> None:
         """Update the value cells of the currently shown table (cached)."""
@@ -659,7 +697,7 @@ class SkmapUiApp(App):
                     value = Text(f"(Mem {data.hex(' ')})", style="dim")
             except Exception:  # noqa: BLE001
                 continue
-            self.table.update_cell(key, COL_VALUE, value, update_width=True)
+            self._update_row_value(key, value)
 
     # ------------------------------------------------------------------
     # assert options: level (l), refresh (r), clear triggered (x)
@@ -676,8 +714,8 @@ class SkmapUiApp(App):
 
     def action_cycle_refresh(self) -> None:
         """'r' key: cycle the refresh period (off -> 1 -> 5 -> 30 s)."""
-        idx = refresh_intervals.index(self.refresh)
-        self.refresh = refresh_intervals[(idx + 1) % len(refresh_intervals)]
+        idx = refresh_intervals.index(self.refresh_period)
+        self.refresh_period = refresh_intervals[(idx + 1) % len(refresh_intervals)]
         self._set_refresh_timer()
         self._update_log_title()
 
@@ -685,9 +723,9 @@ class SkmapUiApp(App):
         if self._refresh_timer is not None:
             self._refresh_timer.stop()
             self._refresh_timer = None
-        if self.refresh:
+        if self.refresh_period:
             self._refresh_timer = self.set_interval(
-                self.refresh, self._on_refresh_tick, name="refresh"
+                self.refresh_period, self._on_refresh_tick, name="refresh"
             )
 
     def _on_refresh_tick(self) -> None:
@@ -700,7 +738,7 @@ class SkmapUiApp(App):
         try:
             await self.top_module.read_all_tree(read_external_mem_cache=False)
         except Exception as err:  # noqa: BLE001
-            logging.warning("read_all_tree failed: %s", err)
+            logging.warning("read_all_tree failed: %s", err, exc_info=True)
             return
         await self._recheck_asserts()
 
@@ -780,25 +818,16 @@ class SkmapUiApp(App):
             return  # the row was replaced meanwhile (module switched)
         if isinstance(obj, ExternalMem):
             data = obj.read_cached(0, n)
-            self.table.update_cell(
-                key,
-                COL_VALUE,
-                Text(f"(Mem {data.hex(' ')})", style="dim"),
-                update_width=True,
+            self._update_row_value(
+                key, Text(f"(Mem {data.hex(' ')})", style="dim")
             )
         elif isinstance(obj, RFlag):
-            self.table.update_cell(
-                key,
-                COL_VALUE,
-                Text.from_markup(obj._value_rich_str()),
-                update_width=True,
+            self._update_row_value(
+                key, Text.from_markup(obj._value_rich_str())
             )
         else:
-            self.table.update_cell(
-                key,
-                COL_VALUE,
-                Text.from_markup(obj.read_rich_str_cached()),
-                update_width=True,
+            self._update_row_value(
+                key, Text.from_markup(obj.read_rich_str_cached())
             )
 
     # ------------------------------------------------------------------
@@ -1116,9 +1145,10 @@ async def _smoke(app: "SkmapUiApp") -> None:
 def main() -> None:
     """Console-script entry point: run the TUI on a skmap module.
 
-    By default the built-in demo module is used.  With ``-f/--file`` the
-    module is built from a skelregi cache file (see ``regio``); with
-    ``-i/--host`` / ``-p/--port`` a live regio TCP connection is used.
+    By default a live regio TCP connection is used (``-i/--host`` /
+    ``-p/--port``).  With ``-f/--file`` the module is built from a
+    skelregi cache file (see ``regio``); with ``--demo`` the built-in
+    demo module is used (no device needed).
 
     Module build and TUI run in a *single* asyncio loop (``run_async()``):
     the regio TCP client is asyncio-based, so the connection created
