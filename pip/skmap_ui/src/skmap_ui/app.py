@@ -341,7 +341,7 @@ class SkmapUiApp(App):
         # line swallows the single-key shortcuts l / r / x)
         self.table.focus()
         self._set_refresh_timer()
-        self.run_worker(self._check_asserts(), name="check_asserts", exclusive=True)
+        self.run_worker(self._check_asserts(), name="check_asserts", exclusive=False)
 
     # ------------------------------------------------------------------
     # tree view (mirrors Module.print_tree_cached)
@@ -709,7 +709,7 @@ class SkmapUiApp(App):
         self.asserts_level = asserts_levels[(idx + 1) % len(asserts_levels)]
         self._update_log_title()
         self.run_worker(
-            self._recheck_asserts(), name="recheck_asserts", exclusive=True
+            self._recheck_asserts(), name="recheck_asserts", exclusive=False
         )
 
     def action_cycle_refresh(self) -> None:
@@ -731,7 +731,7 @@ class SkmapUiApp(App):
     def _on_refresh_tick(self) -> None:
         if self._asserts_checking:
             return  # previous check / refresh still in flight: skip tick
-        self.run_worker(self._refresh_worker(), name="refresh", exclusive=True)
+        self.run_worker(self._refresh_worker(), name="refresh", exclusive=False)
 
     async def _refresh_worker(self) -> None:
         """Periodic tick: read all registers from the device, re-check."""
@@ -745,14 +745,14 @@ class SkmapUiApp(App):
     def action_clear_triggered(self) -> None:
         """'x' key: write zero to every triggered rc register."""
         self.run_worker(
-            self._clear_triggered_worker(), name="clear_triggered", exclusive=True
+            self._clear_triggered_worker(), name="clear_triggered", exclusive=False
         )
 
     async def _clear_triggered_worker(self) -> None:
         try:
-            await self.top_module.clear_assert_tree()
+            # await self.top_module.read_all_tree(read_external_mem_cache=False)
+            await self.top_module.clear_reg_rc_tree()
             # re-read the cleared values from the device, then re-check
-            await self.top_module.read_all_tree(read_external_mem_cache=False)
         except Exception as err:  # noqa: BLE001
             logging.warning("clear triggered asserts failed: %s", err)
             return
@@ -893,7 +893,7 @@ class SkmapUiApp(App):
     # ------------------------------------------------------------------
 
     def action_check_asserts(self) -> None:
-        self.run_worker(self._check_asserts(), name="check_asserts", exclusive=True)
+        self.run_worker(self._check_asserts(), name="check_asserts", exclusive=False)
 
     def action_clear_log(self) -> None:
         self._log_lines.clear()

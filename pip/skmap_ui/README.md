@@ -1,5 +1,9 @@
 # skmap_ui
 
+A debug user interface for the SkMap protocol.
+
+**WARNING**: this part of the project is still in draft and this part was mostly wirrten by AI. It is supposed to be used for debugging purposes only use at own risk.
+
 A [Textual](https://textual.textualize.io/) TUI for browsing
 [skmap](https://github.com/pevhall/hdlskel) register maps.
 
