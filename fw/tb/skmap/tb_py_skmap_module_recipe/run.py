@@ -72,6 +72,7 @@ sim = HdlWorkflow(
            "FLAGK1=false" ,
            "FLAGK2=true" ,
            "SKMAP_BYTE_ALIGN=4",
+           "REGS_WT_INIT=15",
     ],
     libraries = 'hdlskel',
     cocotb=f'test_skmap_module_recipe',

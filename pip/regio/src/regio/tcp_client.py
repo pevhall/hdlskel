@@ -102,7 +102,7 @@ class RegioTcpClient(Regio):
                 raise IOError("server reported error on read")
             if rply_head.size != size:
                 # Server returned different size, treat as error
-                raise IOError(f"unexpected response size {rply_head.size}, expected {size}")
+                raise IOError(f"unexpected response size {rply_head.size}, expected {size}. ({addr=})")
             # Read payload
             rply_payload_size = rply_head.payload_size
             if rply_payload_size > 0: 

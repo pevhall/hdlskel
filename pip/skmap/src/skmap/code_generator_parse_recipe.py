@@ -23,6 +23,26 @@ for vk in ValueKind:
 def char_to_ValueKind(char : str) -> ValueKind:
     return dict_char_to_value_kind[char]
 
+class FwInitMode(Enum):
+    zero = auto()
+    k = auto()
+    k_int = auto()
+
+    @property
+    def is_k(self) -> bool:
+        return {
+            FwInitMode.zero:      False,
+            FwInitMode.k:         True,
+            FwInitMode.k_int:     True,
+        }[self]
+
+    @property
+    def is_k_int(self) -> bool:
+        return {
+            FwInitMode.zero:      False,
+            FwInitMode.k:         False,
+            FwInitMode.k_int:     True,
+        }[self]
 
 class RecipeIpkg:
     def __init__(self, d : dict, name_to_k : NameToKT):
@@ -256,6 +276,9 @@ class RecipeVar:
         self.ass = Ass.none
         if 'ass' in d:
             self.ass = Ass[d['ass']]
+        self.fw_init = FwInitMode.zero
+        if 'fw_init' in d:
+            self.fw_init = FwInitMode[d['fw_init']]
         flags, flags_width  = parse_recipe_flags(d, name_to_k=name_to_k)
         self.flags : Optional[list[RecipeFlag]] = flags
 

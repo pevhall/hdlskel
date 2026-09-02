@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Literal, Optional, Union
 
 from .code_generator_parse_resolvable import ResolvableFunctionOperation, ResolvableT, ResolvableFunctionBuiltIn
-from .code_generator_parse_recipe import parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ValueTypeT, RecipeIpkg
+from .code_generator_parse_recipe import parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ValueTypeT, RecipeIpkg, FwInitMode
 from .basic import promote_to_sw_w, ceil_div
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
 
@@ -29,6 +29,9 @@ def to_vhdl_source(node: ResolvableT) -> str:
         return node.name #type:ignore
     raise TypeError(f'Cannot render {node!r} {type(node)=} to python source')
 
+
+def k_var_init_name(kvar_name : str) -> str:
+    return kvar_name.upper()+"_INIT"
 
 def port_name_trig(port_name : str) -> str:
     return port_name[:-2]+"_trigger_o"
@@ -98,6 +101,22 @@ def k_type_to_vhdl_str(t : ValueTypeT, port_types:PortTypes='all') -> str:
                 case ValueKind.bits: return f"std_ulogic_vector{elem_rng}"
                 case ValueKind.flag: return f"std_ulogic_vector{elem_rng}"
 
+def fw_init_mode_to_vhdl_type_str( varv : RecipeVar, port_types : PortTypes = 'all'):
+
+    match varv.fw_init:
+      case  FwInitMode.k:     return var_type_to_vhdl_str(varv.t, port_types)
+      case  FwInitMode.k_int: return "integer_vector" if varv.t.is_vec else "integer"
+      case _: raise ValueError("FwInitMode has not vhdl_type_str");
+
+def vhdl_add_slv_cast( name : str, t: ValueTypeT) -> str:
+    if t.is_vec:
+        if t.kind in (ValueKind.uint, ValueKind.sint):
+            return f"to_vec_slv({name})"
+    else:
+        if t.kind in (ValueKind.uint, ValueKind.sint):
+            return f"std_ulogic_vector({name})"
+    return name;
+
 def var_type_to_vhdl_str(t : ValueTypeT, port_types:PortTypes = 'all', sl2slv : bool = False) -> str:
     if not sl2slv and t.is_bool:
         return "std_ulogic";
@@ -135,6 +154,15 @@ def var_type_to_vhdl_str(t : ValueTypeT, port_types:PortTypes = 'all', sl2slv : 
                 case ValueKind.bits: return f"std_ulogic_vector{elem_rng}"
                 case ValueKind.flag: return f"std_ulogic_vector{elem_rng}"
 
+def vhdl_skmap_map_acc_byte_inc_func_str(r : RecipeReg, k : bool) -> str:
+    s = (f"    skmap_map_acc_byte_inc(byte_idx, VAL_W=>{to_vhdl_source(r.t.width)}")
+    if not k:
+        s += (", BYTE_ALIGN=>BYTE_ALIGN")
+    if r.t.is_vec:
+        s += (f", VEC_LEN=>{to_vhdl_source(r.t.vec_len)}");
+    s += (f"); -- {r.name}\n")
+    return s;
+
 def regs_len_str(regs : list[RecipeReg], name : str, k : bool = False, offset_bytes = 0) -> str:
 
     s = (f"""
@@ -142,20 +170,13 @@ def regs_len_str(regs : list[RecipeReg], name : str, k : bool = False, offset_by
     variable byte_idx : natural := {offset_bytes};
   begin\n""")
     for r in regs:
-        s += (f"    skmap_map_acc_byte_inc(byte_idx, VAL_W=>{to_vhdl_source(r.t.width)}")
-        if not k:
-            s += (", BYTE_ALIGN=>BYTE_ALIGN")
-        if r.t.is_vec:
-            s += (f", VEC_LEN=>{to_vhdl_source(r.t.vec_len)}");
-        s += (f"); -- {r.name}\n")
+        s += vhdl_skmap_map_acc_byte_inc_func_str(r, k)
     if offset_bytes != 0:
         s += (f"    inc(byte_idx, -1*({offset_bytes}));\n")
     s += (f"""    return ceil_div(byte_idx, 4);
   end function;
   constant {name} : natural := get_{name};\n""")
     return s;
-
-
 
 def generate_vhdl_module(recipe_file : Path, vhdl_file : Path):
     recipe = parse_recipe_file(recipe_file)
@@ -231,7 +252,7 @@ use {hdlskel_lib}.skmap_module_ipkg;
 use work.{recipe.fw_module}_ipkg;\n""")
         if len(recipe.ipkg) > 0:
 
-            vhdl_f.write(f"use work.{recipe.fw_module}_ipkg.all\n;")
+            vhdl_f.write(f"use work.{recipe.fw_module}_ipkg.all;\n")
 
 
         #write module entity declaration begining
@@ -240,7 +261,7 @@ entity {recipe.fw_module} is
   generic (
     BASE_ADDR       : natural;\n""")
         if port_types == 'flat':
-            vhdl_f.write(f"    SKMAP_KIDS_FLAT : std_ulogic_vector := "";\n")
+            vhdl_f.write(f'    SKMAP_KIDS_FLAT : std_ulogic_vector := "";\n')
         else:
             vhdl_f.write(f"    SKMAP_KIDS : integer_vector := NULL_INTEGER_VECTOR;\n")
         vhdl_f.write(f"""\n
@@ -258,9 +279,12 @@ entity {recipe.fw_module} is
     RAMFACE_LATENCY : natural := skmap_module_ipkg.get_RAMFACE_LATENCY""")
         # if recipe.with_vec_external_mem or recipe.with_external_mem:
         #     vhdl_f.write("(SKMAP_VEC_EXTERNAL_MEM=>SKMAP_VEC_EXTERNAL_MEM)");
+        last_desc = None
         if len(recipe.k) > 0:
             vhdl_f.write(";\n")
         for ii, kv in enumerate(recipe.k):
+            if last_desc is not None:
+                vhdl_f.write(f" --! {last_desc}")
             if kv.t.kind == ValueKind.flag and kv.flags is not None:
                 for jj, f in enumerate(kv.flags):
                     if f.vec_len != None:
@@ -269,15 +293,28 @@ entity {recipe.fw_module} is
                         vhdl_t = 'boolean'
                     vhdl_f.write(f'\n    {f.name} : {vhdl_t}')
                     if jj != len(kv.flags)-1: vhdl_f.write(";")
-                    if f.desc is not None:
-                        vhdl_f.write(f" --! {f.desc}")
+                    last_desc = f.desc
 
             else:
                 vhdl_t = k_type_to_vhdl_str(kv.t, port_types=port_types)
                 vhdl_f.write(f'\n    {kv.name} : {vhdl_t}')
             if ii != len(recipe.k)-1: vhdl_f.write(";")
-            if kv.desc is not None:
-                vhdl_f.write(f" --! {kv.desc}")
+            last_desc = kv.desc
+
+        for varv in recipe.var:
+            if varv.fw_init.is_k:
+                vhdl_f.write(f";")
+                if last_desc is not None:
+                    vhdl_f.write(f" --! {last_desc}")
+                    last_desc = None
+                init_t_str = fw_init_mode_to_vhdl_type_str(varv, port_types=port_types)
+                vhdl_f.write(f'\n    {k_var_init_name(varv.name)} : {init_t_str}')
+                last_desc = f'{varv.name} inital value'
+
+        if last_desc is not None:
+            vhdl_f.write(f" --! {last_desc}")
+            last_desc = None
+
         vhdl_f.write(f"""
   );
   port (
@@ -500,7 +537,7 @@ architecture rtl of {recipe.fw_module} is
         #     kv = recipe.k[ii]
         for kv in recipe.k:
             if kv.t.kind == ValueKind.flag:
-                vhdl_f.write(f"    skmap_map_acc_k(k_vec_int_io=>k_vec_int, byte_idx_io=>byte_idx, flags_i=>{kv.name});\n")
+                vhdl_f.write(f"    skmap_map_acc_k(k_vec_int_io=>k_vec_int, byte_idx_io=>byte_idx, val_i=>{kv.name});\n")
             else:
                 if(kv.t.width > 32):
                    raise RuntimeError(f"Currently k must support 32bit integers {kv.t.width=} {kv.t.kind=}")
@@ -531,6 +568,41 @@ architecture rtl of {recipe.fw_module} is
         # arecipe.k:
 
         vhdl_f.write(regs_len_str(recipe.var, 'REGS_VAR_LEN', offset_bytes="HEAD_AND_K_LEN*4"))
+
+###################################
+        use_var_wr_init = False
+        for varv in recipe.var:
+            if varv.fw_init != FwInitMode.zero:
+                use_var_wr_init = True
+                break
+
+        if use_var_wr_init:
+            vhdl_f.write(f"""
+  function get_REGS_VAR_WR_INIT return integer_vector is
+    variable vec_int : integer_vector(0 to REGS_VAR_LEN-1) := (others => 0);
+    variable byte_idx : integer := 0;
+  begin\n""")
+            # variable offset_v : integer := 0;
+            # for ii in range(total_k_with_fixed_idx):
+            #     kv = recipe.k[ii]
+            align_str = "BYTE_ALIGN=>BYTE_ALIGN"
+            for varv in recipe.var:
+                init_name = k_var_init_name(varv.name)
+                if varv.fw_init == FwInitMode.zero:
+                    vhdl_f.write(vhdl_skmap_map_acc_byte_inc_func_str(varv,k=False))
+                elif varv.fw_init.is_k_int:
+                    is_signed_str = 'TRUE' if varv.t.kind == ValueKind.sint else 'FALSE'
+                    vhdl_f.write(f"    skmap_map_acc_k(k_vec_int_io=>vec_int, byte_idx_io=>byte_idx, val_i=>{init_name}, w_i=>{varv.t.width}, signed_i=>{is_signed_str}, {align_str});\n")
+                elif varv.fw_init == FwInitMode.k :
+                    init_name = vhdl_add_slv_cast(init_name, varv.t)
+                    vhdl_f.write(f"    skmap_map_acc_k(k_vec_int_io=>vec_int, byte_idx_io=>byte_idx, val_i=>{init_name}, {align_str});\n")
+            vhdl_f.write(f"""    return vec_int;
+  end function;
+  constant REGS_VAR_WR_INIT : integer_vector := get_REGS_VAR_WR_INIT;""")
+##################################
+
+
+
   #       vhdl_f.write(f"""
   # function get_REGS_VAR_LEN return natural is
   #   variable byte_idx : natural := 0;
@@ -593,7 +665,10 @@ begin
     RAMFACE_WREN_W     => RAMFACE_WREN_W,
     RAMFACE_LATENCY    => RAMFACE_LATENCY,
     REGS_K_INT         => REGS_K_INT,
-    REGS_VAR_LEN       => REGS_VAR_LEN
+    REGS_VAR_LEN       => REGS_VAR_LEN""")
+        if use_var_wr_init:
+            vhdl_f.write(f",\n    REGS_VAR_WR_DATA_INIT_VEC_INT => REGS_VAR_WR_INIT")
+        vhdl_f.write(f"""
   ) port map (
     clk_i              => clk_i,
 

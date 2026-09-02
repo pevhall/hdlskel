@@ -98,7 +98,7 @@ if __name__ == '__main__':
         print(args)
 
         rd_bytes = asyncio.run( single_op(args) )
-        print(f'{rd_bytes=}')
+        print(f'rd_bytes = {[hex(a) for a in rd_bytes]}')
 
     main()
 

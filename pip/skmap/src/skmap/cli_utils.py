@@ -108,7 +108,6 @@ async def main(args):
     if args.asserts:
         list_reg = []
         ass = module.check_assert_tree_cached(args.asserts_level, list_reg)
-        # print(f'{ass=}, {len(flags)=}')
         print_table_reg_list(list_reg, title='Asserts')
 
     if args.clear:

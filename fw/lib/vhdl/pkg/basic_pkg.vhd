@@ -13,7 +13,8 @@ package basic_pkg is
   function resize(v : std_ulogic_vector; W : natural) return std_ulogic_vector;
 
   constant NULL_INTEGER_VECTOR : integer_vector(0 to -1);
-  constant NULL_SLV : std_logic_vector(-1 downto 0);
+  constant NULL_BOOLEAN_VECTOR : boolean_vector(0 to -1);
+  -- constant NULL_SLV : std_logic_vector(-1 downto 0);
 
   --
   function if_then_else(b : boolean; num1 : integer; num2 : integer) return integer;
@@ -22,9 +23,11 @@ package basic_pkg is
   function to_int(b : boolean) return integer;
   function to_sl(b : boolean) return std_ulogic;
   function to_sl(l : std_ulogic_vector) return std_ulogic;
+  function to_bool(l : std_ulogic) return boolean;
   function to_slv(l : std_ulogic) return std_ulogic_vector;
   function to_slv(num : integer; w : natural) return std_ulogic_vector;
   function to_slv(str : string) return std_ulogic_vector;
+  function to_vec_bool(l : std_ulogic_vector) return boolean_vector;
 
   function to_uint8 (v : sint8_t)  return uint8_t;
   function to_uint16(v : sint16_t) return uint16_t;
@@ -57,7 +60,8 @@ end package;
 package body basic_pkg is
 
   constant NULL_INTEGER_VECTOR : integer_vector(0 to -1) := (others => 0);
-  constant NULL_SLV : std_logic_vector(-1 downto 0) := (others => '0');
+  constant NULL_BOOLEAN_VECTOR : boolean_vector(0 to -1) := (others => FALSE);
+  -- constant NULL_SLV : std_logic_vector(-1 downto 0) := (others => '0');
 
   function zeros(w : natural) return std_ulogic_vector is
     constant SLV : std_ulogic_vector(w-1 downto 0) := (others => '0');
@@ -103,6 +107,14 @@ package body basic_pkg is
     return l(l'low);
   end function;
 
+  function to_bool(l : std_ulogic) return boolean is
+  begin
+    if l = '1' then
+      return TRUE;
+    end if;
+    return FALSE;
+  end function;
+
   function to_slv(l : std_ulogic) return std_ulogic_vector is
     variable slv : std_ulogic_vector(0 downto 0) := (0 => l);
   begin
@@ -129,6 +141,15 @@ package body basic_pkg is
       inc(lv_idx);
     end loop;
     return lv;
+  end function;
+
+  function to_vec_bool(l : std_ulogic_vector) return boolean_vector is
+    variable v : boolean_vector(0 to l'length-1);
+  begin
+    for ii in v'range loop
+      v(ii) := to_bool(l(ii));
+    end loop;
+    return v;
   end function;
 
   function to_uint8 (v : sint8_t)  return uint8_t is

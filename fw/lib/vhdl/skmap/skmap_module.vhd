@@ -128,7 +128,8 @@ entity skmap_module is
     );
 
     REGS_K_INT      : integer_vector := NULL_INTEGER_VECTOR;
-    REGS_VAR_LEN    : natural
+    REGS_VAR_LEN    : natural;
+    REGS_VAR_WR_DATA_INIT_VEC_INT : integer_vector := NULL_INTEGER_VECTOR
   );
   port (
     clk_i : in  std_ulogic;
@@ -315,7 +316,8 @@ begin
     RAMFACE_WREN_W => RAMFACE_WREN_W,
     REGS_DATA_W    => REGS_DATA_W,
     REGS_LEN       => REGS_VAR_LEN,
-    RAMFACE_LATENCY => RAMFACE_REG_LATENCY
+    RAMFACE_LATENCY => RAMFACE_REG_LATENCY,
+    REGS_WR_DATA_INIT_VEC_INT => REGS_VAR_WR_DATA_INIT_VEC_INT
   )
   port map (
     clk_i          => clk_i,

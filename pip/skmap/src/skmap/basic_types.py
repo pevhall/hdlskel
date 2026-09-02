@@ -2,7 +2,7 @@ from enum import Enum, auto, IntEnum
 from typing import Optional
 
 SKMAP_VER_MAJOR = 1
-SKMAP_VER_MINOR = 0
+SKMAP_VER_MINOR = 1
 SKMAP_VER_PATCH = 0
 
 SKMAP_VER_STR = f'v{SKMAP_VER_MAJOR}.{SKMAP_VER_MINOR}.{SKMAP_VER_PATCH}'

@@ -23,7 +23,8 @@ entity ramface_regs_rw is
 
     REGS_LEN    : natural;
     REGS_DATA_W : natural;
-    RAMFACE_LATENCY : natural := ramface_regs_rw_ipkg.RAMFACE_LATENCY
+    RAMFACE_LATENCY : natural := ramface_regs_rw_ipkg.RAMFACE_LATENCY;
+    REGS_WR_DATA_INIT_VEC_INT : integer_vector := NULL_INTEGER_VECTOR
   );
   port (
     clk_i : in  std_ulogic;
@@ -52,6 +53,37 @@ architecture rtl of ramface_regs_rw is
   constant REGS_PAD_LEN : natural := get_ramface_ram_pad(REGS_LEN, REGS_DATA_W, RAMFACE_DATA_W);
 
   constant LOCAL_RAMFACE_ADDR_W : natural := ceil_log2(LOCAL_RAMFACE_DEPTH);
+
+  function get_REGS_RW_INIT return vec_slv_t is
+    variable result : vec_slv_t(0 to LOCAL_RAMFACE_DEPTH-1)(RAMFACE_DATA_W-1 downto 0) := (others => (others => '0') );
+
+    constant REG_PER_RAMFACE : natural := RAMFACE_DATA_W/REGS_DATA_W;
+    variable idx_reg : natural := 0;
+    variable reg_data : std_ulogic_vector(REGS_DATA_W-1 downto 0);
+  begin
+    if REGS_WR_DATA_INIT_VEC_INT'length /= 0 then
+
+      assert REGS_DATA_W <= RAMFACE_DATA_W
+      report "Not yet implemented"
+      severity FAILURE;
+
+      for ii in 0 to LOCAL_RAMFACE_DEPTH-1 loop
+        for jj in 0 to REG_PER_RAMFACE-1 loop
+          if idx_reg < REGS_LEN then
+            reg_data := to_slv(REGS_WR_DATA_INIT_VEC_INT(idx_reg), REGS_DATA_W);
+            inc(idx_reg);
+          else
+            reg_data := (others => '0');
+          end if;
+          to_flat_vec(result(ii), jj, reg_data);
+        end loop;
+      end loop;
+
+    end if;
+    return result;
+  end function;
+
+
   signal local_ramface_rqst : ramface_rqst_t(
     addr(LOCAL_RAMFACE_ADDR_W-1 downto 0),
     wren(RAMFACE_WREN_W-1 downto 0),
@@ -69,7 +101,7 @@ architecture rtl of ramface_regs_rw is
 
   signal regs_pad : vec_slv_t(0 to REGS_PAD_LEN-1)(REGS_DATA_W-1 downto 0) := (others => (others => '0'));
   signal regs_ramface_rd_data : vec_slv_t(0 to LOCAL_RAMFACE_DEPTH-1)(RAMFACE_DATA_W-1 downto 0);
-  signal regs_ramface_wr_data : vec_slv_t(0 to LOCAL_RAMFACE_DEPTH-1)(RAMFACE_DATA_W-1 downto 0) := (others => (others => '0'));
+  signal regs_ramface_wr_data : vec_slv_t(0 to LOCAL_RAMFACE_DEPTH-1)(RAMFACE_DATA_W-1 downto 0) := get_REGS_RW_INIT;
   signal regs_ramface_wr_wren : vec_slv_t(0 to LOCAL_RAMFACE_DEPTH-1)(RAMFACE_WREN_W-1 downto 0) := (others => (others => '0'));
 
 begin

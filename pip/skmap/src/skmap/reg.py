@@ -196,7 +196,7 @@ class RegVec(Reg):
     def _bytes_to_list_sint(self, b:bytes) -> list[int]:
         value_vec_int = self._bytes_to_list_uint(b)
         for ii in range(len(value_vec_int)):
-            value_vec_int[ii] = cast_uint_to_sint(value_vec_int[ii], self.elem_size)
+            value_vec_int[ii] = cast_uint_to_sint(value_vec_int[ii], self.value_type.width)
         return value_vec_int
 
     def _bytes_to_list_bool(self, b:bytes) -> list[bool]:
@@ -364,12 +364,13 @@ class RegVec(Reg):
             case ValueKind.char:
                 value = self.read_str_cached()
         # assert self.fmt == Fmt.hex
-        if self.ass == Ass.none:
-            return str(value)
-        ass_checked = self.ass_check_cached()
-        value_str = to_rich_str(f'{self.ass}', ass_checked.color)+": [ "
+        value_str = ''
+        if self.ass != Ass.none:
+            ass_checked = self.ass_check_cached()
+            value_str = to_rich_str(f'{self.ass}', ass_checked.color)+": "
+        value_str += "[ "
         for idx, v in enumerate(value):
-            ass = self.ass_check_cached(idx)
+            ass = self.ass_check_cached_idx(idx)
             if use_hex:
                 assert isinstance(v, int)
                 v_str = hex(v)

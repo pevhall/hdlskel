@@ -5,6 +5,7 @@ import cocotb
 import tbskel.ramface
 import regio.tcp_server
 import skmap
+import skmap.basic
 import logging
 
 from dataclasses import dataclass
@@ -125,7 +126,10 @@ async def test_skmap_module_test_acc_types(dut):
     logging.basicConfig(level=logging.DEBUG)
     # await skmap.Module.read_init_module_data(ramface_ctrl, 0)
     module = await skmap.make_module(ramface_ctrl, 0) #type:ignore
+    # module.print_reg_map_cached()
     assert isinstance(module, RecipeTestBenchModule)
+    assert module.regs_wt_read_cached() == dut.REGS_WT_INIT.value
+    print(f'{await module.regs_rw_read()=}')
     if 1:
         RW_LEN   = module.regs_rw_inst.value_type.vec_len 
         RW_VAL_W = module.regs_rw_inst.value_type.width 
