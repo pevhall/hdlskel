@@ -26,25 +26,30 @@ Pass a real ``skmap.Module`` (e.g. built with ``make_module``):
     SkmapUiApp(module).run()
 
 On start (and with the ``a`` key) the app runs ``make_tree()`` and
-``check_assert_tree_cached()``.  The bottom log view is a *snapshot*
-of the triggered register assets (skmap's "asserts": registers /
-flags whose value is set and that carry an ``Ass`` level), not an
-append-only stream: on every assert check it is rewritten with one
-time stamp followed by one line per triggered assert, in a table
-layout like ``print_table_reg_list``.  The register map table
-mirrors ``print_reg_map_cached`` (skmap's ``RegMapTable``): address,
-value type, access, name, value, description; ``k`` registers are
-shown (value is fixed, never read from the device).
+``check_assert_tree_cached()``.  The bottom log view is an *event
+log* of the triggered register assets (skmap's "asserts": registers
+/ flags whose value is set and that carry an ``Ass`` level):
+every assert check that finds triggered asserts appends one block —
+a time stamp followed by a table with one row per triggered assert
+(same columns as ``print_table_reg_list``) — so the log grows after
+every refresh that contains triggered asserts; checks without
+triggered asserts append nothing.  The register map table mirrors
+``print_reg_map_cached`` (skmap's ``RegMapTable``): address, value
+type, access, name, value, description; ``k`` registers are shown
+(value is fixed, never read from the device).
 
 Assert options: ``--asserts-level`` / the ``l`` key selects the
 ``Ass`` level at which asserts are logged (debug -> info -> warn
 -> error -> fatal; lower levels are still evaluated, just not
 logged).  ``--refresh SECS`` / the ``r`` key periodically re-reads
-all registers from the device (``read_all_tree()``) and re-checks
-all asserts after each read (0 = off).  The ``x`` key writes zero
-to every triggered ``rc`` register (``clear_assert_tree()``) and
-re-checks.  Device I/O errors are reported on the console via
-``logging`` so the log view stays a pure assert snapshot.
+all registers from the device (``read_all_tree()``), re-checks all
+asserts (logging the triggered ones, if any), updates the register
+map, then clears the triggered ``rc`` registers
+(``clear_reg_rc_tree()`` + ``clear_assert_tree()``) so the next
+refresh only logs new events (0 = off).  The ``x`` key does the same
+clear on demand and re-checks.  Device I/O errors are reported on
+the console via ``logging`` so the log view only ever contains
+triggered asserts.
 
 The tree starts fully expanded; ``enter``
 selects the module under the cursor and shows its register map (mirrors
@@ -514,7 +519,7 @@ class SkmapUiApp(App):
         )
 
     # ------------------------------------------------------------------
-    # asserts: check, log snapshot, periodic refresh, clear triggered
+    # asserts: check, append log, periodic refresh, clear triggered
     # ------------------------------------------------------------------
 
     async def _check_asserts(self) -> None:
@@ -539,7 +544,7 @@ class SkmapUiApp(App):
             self.last_asserts = list(log_f)
             self.last_worst_ass = worst
             self.asserts_checked = True
-            self._render_assert_log(worst, log_f)
+            self._append_assert_log(worst, log_f)
             self._refresh_shown_values()
             root_node = self._build_tree()
             self._force_lines()
@@ -571,7 +576,7 @@ class SkmapUiApp(App):
             self.last_asserts = list(log_f)
             self.last_worst_ass = worst
             self.asserts_checked = True
-            self._render_assert_log(worst, log_f)
+            self._append_assert_log(worst, log_f)
             self._refresh_shown_values()
         except Exception as err:  # noqa: BLE001
             logging.warning("re-check asserts failed: %s", err)
@@ -594,16 +599,21 @@ class SkmapUiApp(App):
         return worst
 
     # ------------------------------------------------------------------
-    # assert log snapshot (time stamp + table of triggered asserts)
+    # assert log (appended blocks: time stamp + table of triggered asserts)
     # ------------------------------------------------------------------
 
-    def _render_assert_log(self, worst: Ass, log_f: list) -> None:
-        """Rewrite the log view as a snapshot of the triggered asserts.
+    def _append_assert_log(self, worst: Ass, log_f: list) -> None:
+        """Append a time-stamped block of the triggered asserts to the log.
 
-        One time stamp header, then one row per triggered assert
-        (register or flag) in the same column layout as
-        ``print_table_reg_list``.
+        The log is append-only: one block per assert check that found
+        triggered asserts — the time stamp first, then one row per
+        triggered assert (register or flag) in the same column layout
+        as ``print_table_reg_list``.  So the log grows after every
+        refresh that contains triggered asserts; checks without
+        triggered asserts append nothing.
         """
+        if not log_f:
+            return
         level = self.asserts_level
         header = (
             f"{_timestamp()}  asserts level >= {level.name}  —  "
@@ -624,39 +634,37 @@ class SkmapUiApp(App):
                     f"{str(item.acc)}  {item.name}  "
                     f"{_assert_value_str(item)}  {item.desc}"
                 )
-        self._log_lines = lines
+        self._log_lines.extend(lines)
 
-        self.log_view.clear()
         self.log_view.write(Text(header))
-        if log_f:
-            table = Table(expand=True, pad_edge=False, box=None)
-            table.add_column("Addr", justify="right", style="cyan", no_wrap=True)
-            table.add_column("T", justify="right", style="blue", no_wrap=True)
-            table.add_column("Acc", style="blue", no_wrap=True)
-            table.add_column("Name", style="cyan")
-            table.add_column("Value", justify="right", style=Ass.none.color)
-            table.add_column("Description", style="blue", ratio=1)
-            for item in log_f:
-                if isinstance(item, RFlag):
-                    reg = item.reg_flags
-                    table.add_row(
-                        hex(reg.addr),
-                        f"b{item.bit}",
-                        str(reg.acc),
-                        f"{reg.name}.{item.name}",
-                        _assert_value_str(item),
-                        item.desc,
-                    )
-                else:
-                    table.add_row(
-                        hex(item.addr),
-                        item.value_type_str(),
-                        str(item.acc),
-                        item.name,
-                        _assert_value_str(item),
-                        item.desc,
-                    )
-            self.log_view.write(table)
+        table = Table(expand=True, pad_edge=False, box=None)
+        table.add_column("Addr", justify="right", style="cyan", no_wrap=True)
+        table.add_column("T", justify="right", style="blue", no_wrap=True)
+        table.add_column("Acc", style="blue", no_wrap=True)
+        table.add_column("Name", style="cyan")
+        table.add_column("Value", justify="right", style=Ass.none.color)
+        table.add_column("Description", style="blue", ratio=1)
+        for item in log_f:
+            if isinstance(item, RFlag):
+                reg = item.reg_flags
+                table.add_row(
+                    hex(reg.addr),
+                    f"b{item.bit}",
+                    str(reg.acc),
+                    f"{reg.name}.{item.name}",
+                    _assert_value_str(item),
+                    item.desc,
+                )
+            else:
+                table.add_row(
+                    hex(item.addr),
+                    item.value_type_str(),
+                    str(item.acc),
+                    item.name,
+                    _assert_value_str(item),
+                    item.desc,
+                )
+        self.log_view.write(table)
 
     def _update_log_title(self) -> None:
         """Border title of the log pane: current assert option values."""
@@ -734,13 +742,23 @@ class SkmapUiApp(App):
         self.run_worker(self._refresh_worker(), name="refresh", exclusive=False)
 
     async def _refresh_worker(self) -> None:
-        """Periodic tick: read all registers from the device, re-check."""
+        """Periodic tick: read all registers from the device, re-check
+        the asserts (appending a time-stamped block to the log if any
+        are triggered, so the log grows), update the register map, and
+        clear the ``rc`` registers so the next tick only logs new
+        events."""
         try:
             await self.top_module.read_all_tree(read_external_mem_cache=False)
         except Exception as err:  # noqa: BLE001
             logging.warning("read_all_tree failed: %s", err, exc_info=True)
             return
         await self._recheck_asserts()
+        try:
+            await self.top_module.clear_reg_rc_tree()
+            await self.top_module.clear_assert_tree()
+        except Exception as err:  # noqa: BLE001
+            logging.warning("clear triggered failed: %s", err, exc_info=True)
+        self._refresh_shown_values()
 
     def action_clear_triggered(self) -> None:
         """'x' key: write zero to every triggered rc register."""
@@ -750,9 +768,8 @@ class SkmapUiApp(App):
 
     async def _clear_triggered_worker(self) -> None:
         try:
-            # await self.top_module.read_all_tree(read_external_mem_cache=False)
             await self.top_module.clear_reg_rc_tree()
-            # re-read the cleared values from the device, then re-check
+            await self.top_module.clear_assert_tree()
         except Exception as err:  # noqa: BLE001
             logging.warning("clear triggered asserts failed: %s", err)
             return

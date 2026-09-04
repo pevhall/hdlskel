@@ -188,7 +188,6 @@ class Reg:
         s = ''
         if self.ass != Ass.none:
             s += to_rich_str(str(self.ass), ass_color)+": "
-            return to_rich_str(f'{self.ass}: {value_str}', ass_color)
         elif value_int is not None and (self.min is not None or self.max is not None):
             min_s = ''
             max_s = ''
@@ -206,10 +205,6 @@ class Reg:
             value_str = self._str_num(value_int, base)
         s += to_rich_str(value_str, ass_color)
         return s
-        
-
-        # print(f'{value_int=:x} = int.from_bytes({b=})')
-        #TODO change to hex for bits / x
 
     async def write_cache(self):
         assert isinstance(self.addr, int)

@@ -65,15 +65,28 @@ async def _select_node(app, node, pilot, max_pause=50):
 async def _wait_log(app, pilot, pred, max_pause=500):
     """Wait until ``pred(app._log_lines)`` is true.
 
-    The log is a snapshot: it is rewritten (in a worker, a few event
-    loop turns after the triggering device I/O finished) with a time
-    stamp header and one line per triggered assert.
+    The log is append-only: each check / refresh that found triggered
+    asserts appends a time-stamped block (in a worker, a few event
+    loop turns after the triggering device I/O finished).
     """
     for _ in range(max_pause):
         if pred(app._log_lines):
             return
         await pilot.pause()
     raise AssertionError("expected log line never appeared")
+
+
+def _last_block(lines: list[str]) -> list[str]:
+    """Lines of the last logged block (its time-stamped header + rows)."""
+    for i in range(len(lines) - 1, -1, -1):
+        if "triggered, worst:" in lines[i]:
+            return lines[i:]
+    return []
+
+
+def _n_blocks(lines: list[str]) -> int:
+    """Number of time-stamped blocks in the log."""
+    return sum(1 for line in lines if "triggered, worst:" in line)
 
 
 async def _wait_cell(app, pilot, row, col, expected, max_pause=500):
@@ -558,10 +571,10 @@ def test_unknown_kid_partial_asserts():
             await _wait_asserts(app, pilot)
 
             # make_tree's failure is reported via logging (not in the
-            # log snapshot); nothing triggered -> header-only snapshot
+            # log); nothing triggered -> no block appended at all
             lines = app._log_lines
-            assert len(lines) == 1
-            assert "0 triggered, worst: none" in lines[0]
+            assert lines == []
+            assert _n_blocks(lines) == 0
             assert app.last_worst_ass == Ass.none  # nothing triggered
 
             # the uninitialised kid shows up in the tree
@@ -833,34 +846,42 @@ def test_cycle_asserts_level():
         async with app.run_test() as pilot:
             await _wait_asserts(app, pilot)
             assert "3 triggered" in app._log_lines[0]
+            n0 = _n_blocks(app._log_lines)
+            assert n0 == 1  # the initial check appended one block
 
-            # l: info -> all three still logged (V_EVENT is info)
+            # l: info -> all three still logged (V_EVENT is info);
+            # the check appends a new block (the log grows)
             await pilot.press("l")
             await pilot.pause()
             assert app.asserts_level == Ass.info
             await _wait_log(
                 app, pilot,
-                lambda ls: ls and "asserts level >= info" in ls[0],
+                lambda ls: _n_blocks(ls) == n0 + 1
+                and "asserts level >= info" in _last_block(ls)[0],
             )
-            assert "3 triggered, worst: error" in app._log_lines[0]
+            assert "3 triggered, worst: error" in _last_block(app._log_lines)[0]
 
-            # l: warn -> V_EVENT (info) drops out
+            # l: warn -> V_EVENT (info) drops out of the new block
             await pilot.press("l")
             await pilot.pause()
             assert app.asserts_level == Ass.warn
             await _wait_log(
-                app, pilot, lambda ls: ls and "2 triggered" in ls[0]
+                app, pilot,
+                lambda ls: _n_blocks(ls) == n0 + 2
+                and "2 triggered" in _last_block(ls)[0],
             )
-            assert "V_EVENT" not in "\n".join(app._log_lines)
+            assert "V_EVENT" not in "\n".join(_last_block(app._log_lines))
 
-            # l: error -> only STATUS
+            # l: error -> only STATUS in the new block
             await pilot.press("l")
             await pilot.pause()
             assert app.asserts_level == Ass.error
             await _wait_log(
-                app, pilot, lambda ls: ls and "1 triggered" in ls[0]
+                app, pilot,
+                lambda ls: _n_blocks(ls) == n0 + 3
+                and "1 triggered" in _last_block(ls)[0],
             )
-            joined = "\n".join(app._log_lines)
+            joined = "\n".join(_last_block(app._log_lines))
             assert "STATUS" in joined
             assert "f0" not in joined
 
@@ -886,6 +907,40 @@ def test_refresh_reads_all_registers():
             top._regio.write_mem(_SYSCTRL_ADDR, bytes(data))
 
             await _wait_cell(app, pilot, 0, VALUE, "error: 0x0007")
+    _run(run())
+
+
+def test_refresh_appends_log_and_clears_rc():
+    """Each refresh: read_all_tree -> re-check (the log grows with a
+    time-stamped block of the triggered asserts) -> clear the rc
+    registers so they do not re-trigger on the next refresh."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top, refresh=0.1)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            pmu = top.kids_cached()[1]
+            v_event = pmu.arr_reg_var[0]
+            assert v_event.name == "V_EVENT"
+            assert v_event.read_uint_cached() == 1  # triggered on start
+            n0 = _n_blocks(app._log_lines)
+
+            # wait until several refreshes have appended their blocks
+            for _ in range(1000):
+                if _n_blocks(app._log_lines) >= n0 + 3:
+                    break
+                await pilot.pause()
+            assert _n_blocks(app._log_lines) >= n0 + 3
+
+            # the rc register was cleared by the first refresh
+            assert v_event.read_uint_cached() == 0
+            # the first block still lists V_EVENT, later blocks do not
+            joined = "\n".join(app._log_lines)
+            assert "V_EVENT" in joined
+            last = "\n".join(_last_block(app._log_lines))
+            assert "V_EVENT" not in last
+            # ro STATUS (error) is not rc: it re-triggers every refresh
+            assert "STATUS" in last
     _run(run())
 
 
@@ -973,13 +1028,15 @@ def test_clear_triggered():
                 await pilot.pause()
             assert v_event.read_uint_cached() == 0
 
-            # the snapshot drops V_EVENT (rc, cleared); the warn flag
-            # and the error register (not rc) remain
+            # the block appended after the clear drops V_EVENT (rc,
+            # cleared); the warn flag and the error register (not rc)
+            # remain in it
             await _wait_log(
                 app, pilot,
-                lambda ls: ls and "2 triggered, worst: error" in ls[0],
+                lambda ls: _last_block(ls)
+                and "2 triggered, worst: error" in _last_block(ls)[0],
             )
-            joined = "\n".join(app._log_lines)
+            joined = "\n".join(_last_block(app._log_lines))
             assert "V_EVENT" not in joined
             assert "FLAGS.f0" in joined
             assert "STATUS" in joined

@@ -13,7 +13,7 @@ Pass a real `skmap.Module` (e.g. built with `make_module`) and the app shows:
 |------|---------|
 | **left tree** | the module tree — top module (as the tree root), kids + external memories, laid out like `Module.print_tree_cached` |
 | **right table** | the register map of the selected module — `Addr | T | Acc | Name | Value | Description` (mirrors `Module.print_reg_map_cached` / `RegMapTable`), flags expanded as sub-rows |
-| **bottom log** | the triggered register assets (asserts) as a **timestamped table** (like `print_table_reg_list(list_reg, title='Asserts')`) — refreshed by `make_tree()` + `Module.check_assert_tree_cached()` |
+| **bottom log** | an **event log** of the triggered register assets (asserts): every check that finds triggered asserts appends a **timestamped table** block (like `print_table_reg_list(list_reg, title='Asserts')`) — the log grows over time |
 
 Uses skmap's native vocabulary: `Acc` codes `na/k/ro/rc/rw/wt` in the *Acc*
 column, and skmap's notion of a **trigger** (register write).
@@ -30,11 +30,10 @@ currently displayed is **highlighted** (bold bright blue).
 | `enter` | tree: open the register map of the node under the cursor; table: **edit** the value of the row under the cursor (see below) |
 | `left` / `right` | collapse / expand the tree node under the cursor (`space` toggles too) |
 | `t` | *trigger* the selected table row: writable regs (`rw`/`wt`) and flags are **written** (random value); `ro`/`rc` regs, flags and external mems are **read from the device**; `k`/`na` are never read (hardwired / no access); the *Value* cell is refreshed from the device |
-| `a` | re-run `make_tree()` + `check_assert_tree_cached()` and redraw the assert log |
+| `a` | re-run `make_tree()` + `check_assert_tree_cached()` and append the triggered asserts to the log |
 | `l` | cycle the **assert level** (debug → info → warn → error → fatal): asserts below the level are no longer logged (see *Assert log*) |
-| `r` | cycle the **refresh period** (off → 1 → 5 → 30 s): every period the app calls `Module.read_all_tree()` and re-checks the asserts (see *Assert log*) |
-| `x` | **clear triggered**: write zero to every triggered `rc` register (skmap's `Module.clear_assert_tree()`), re-read from the device, re-check (see *Assert log*) |
-| `c` | clear the log view (the next assert check redraws it) |
+| `r` | cycle the **refresh period** (off → 1 → 5 → 30 s): every period the app calls `Module.read_all_tree()`, re-checks the asserts (appending any triggered ones to the log) and clears the `rc` registers (see *Assert log*) |
+| `x` | **clear triggered**: write zero to the `rc` registers (skmap's `Module.clear_reg_rc_tree()` + `Module.clear_assert_tree()`), then re-check |
 
 On start the top module is selected (its register map is shown right away)
 and the assert check runs automatically.
@@ -57,14 +56,22 @@ to toggle a flag). Device errors are reported on stderr (Python
 
 ## Assert log
 
-The bottom log is a **snapshot, not a stream**: on every assert check it
-is cleared and redrawn as
+The bottom log is an **event log, not a snapshot** (append-only): every
+assert check — the initial one on start, the `a` key, or a periodic
+refresh — that finds triggered asserts appends one block:
 
-1. a header line with a **time stamp** and the current options:  
+1. a header line starting with a **time stamp** and the current options:  
    `2026-08-30 05:54:04.519  asserts level >= debug  —  3 triggered, worst: error`, and
 2. a table (same columns as the register map: `Addr | T | Acc | Name |
    Value | Description`) with one row per **triggered** assert — the same
    assets/rows as `print_table_reg_list(list_reg, title='Asserts')`.
+
+Checks without triggered asserts append nothing, so the log **grows
+after every refresh that contains triggered asserts** and is otherwise
+left alone (`c` clears it).  Because a periodic refresh clears the
+triggered `rc` registers after logging them (see below), a refresh only
+re-logs an `rc` assert if it was re-triggered in the meantime, while
+`ro`/`rw` asserts keep being logged until their value changes.
 
 The log view's border shows the current options, e.g.
 `asserts (level >= debug)  ·  refresh: 5 s` (or `refresh: off`).
@@ -73,11 +80,11 @@ The three options:
 
 | option | CLI | key | effect |
 |--------|-----|-----|--------|
-| assert level | `--asserts-level {debug,info,warn,error,fatal}` (default `debug`) | `l` | asserts below the level still count for the *worst* level, but are **not** listed in the log table |
-| refresh period | `--refresh SECS` (default `0` = off) | `r` (cycles off/1/5/30) | every period the app calls `Module.read_all_tree()` (all registers of the whole tree, including external mem caches, are **read from the device**) and re-checks the asserts — the log and the *Value* cells of the displayed table update automatically |
-| clear triggered | — | `x` | write zero to every triggered `rc` register via `Module.clear_assert_tree()`, then re-read the tree from the device and re-check |
+| assert level | `--asserts-level {debug,info,warn,error,fatal}` (default `debug`) | `l` | asserts below the level still count for the *worst* level, but are **not** listed in the log |
+| refresh period | `--refresh SECS` (default `0` = off) | `r` (cycles off/1/5/30) | every period the app 1. calls `Module.read_all_tree()` (all registers of the whole tree, including external mem caches, are **read from the device**), 2. re-checks the asserts — appending a block to the log if any are triggered — and updates the *Value* cells of the displayed table, and 3. clears the triggered `rc` registers via `Module.clear_reg_rc_tree()` + `Module.clear_assert_tree()`, so the next refresh only logs **new** events |
+| clear triggered | — | `x` | writes zero to the `rc` registers the same way as a refresh (without the device read), then re-checks |
 
-`make_tree()` is only re-run by `a` (it loads uninitalised kids); the
+`make_tree()` is only re-run by `a` (it loads uninitialised kids); the
 periodic refresh and `x` work on the already-built tree, so they never
 block on an unreadable module.
 
