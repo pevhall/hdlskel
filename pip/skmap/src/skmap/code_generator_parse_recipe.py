@@ -268,6 +268,7 @@ def parse_recipe_flags(d : dict, name_to_k : NameToKT) -> tuple[Optional[list[Re
     return flags, width
 
 class RecipeVar:
+
     def __init__(self, d : dict, name_to_k : NameToKT):
         self.name : str = d['name']
         self.t  = parse_value_type_resolvable(d['t'], name_to_k)
@@ -279,6 +280,12 @@ class RecipeVar:
         self.fw_init = FwInitMode.zero
         if 'fw_init' in d:
             self.fw_init = FwInitMode[d['fw_init']]
+        self.max = None
+        if 'max' in d:
+            self.max = parse_unresolved_word(d['max'], name_to_k)
+        self.min = None
+        if 'min' in d:
+            self.min = parse_unresolved_word(d['min'], name_to_k)
         flags, flags_width  = parse_recipe_flags(d, name_to_k=name_to_k)
         self.flags : Optional[list[RecipeFlag]] = flags
 
@@ -290,6 +297,7 @@ class RecipeVar:
             assert self.flags is not None
             assert isinstance(self.t, ValueTypeUnresolved)
             self.t.width = flags_width
+
     @property
     def vec_len(self):
         return self.t.vec_len

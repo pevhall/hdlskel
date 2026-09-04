@@ -1,3 +1,4 @@
+import ast
 from typing import Optional, Type, Literal, Union, TYPE_CHECKING
 
 from .basic_types import Acc, Ass, ValueKind, ValueType, value_type_u8, value_type_x32
@@ -7,7 +8,7 @@ if TYPE_CHECKING:
     from module import Module
 
 class Reg:
-    def __init__(self, module : "Module", name : str, value_type : ValueType, acc : Acc, desc : str, ass : Ass = Ass.none): #, fmt : Fmt = Fmt.default): #, ass : Ass = Ass.none):
+    def __init__(self, module : "Module", name : str, value_type : ValueType, acc : Acc, desc : str, ass : Ass = Ass.none, max : Optional[int] = None, min : Optional[int] = None): #, fmt : Fmt = Fmt.default): #, ass : Ass = Ass.none):
         # assert (ass != ass.passed)
         self.module = module
         self.name   = name
@@ -20,6 +21,8 @@ class Reg:
         self.elem_size = self.size
         self.addr : Optional[int]  = None
         self.ass    = ass
+        self.max    = max
+        self.min    = min
 
     def has_ass(self) -> bool:
         return self.ass != Ass.none
@@ -76,7 +79,7 @@ class Reg:
         _ = await self.read_bytes()
         return self.read_char_cached()
 
-    def read_cached(self):
+    def read_value_cached(self):
         match self.value_type.kind:
             case ValueKind.uint:
                 return self.read_uint_cached()
@@ -91,7 +94,7 @@ class Reg:
 
     def ass_check_cached(self, log_ass : Ass = Ass.none, log_f : list[Union["RFlag","Reg"]] = []) -> Ass:
         if self.ass == Ass.none:
-            return Ass.none
+            return max(self.ass_check_value_min_cached(), self.ass_check_value_max_cached())
         value = self.read_bool_cached()
         if not value:
             return Ass.passed
@@ -105,26 +108,105 @@ class Reg:
         _ = await self.read_bytes()
         return self.ass_check_cached(log_ass, log_f)
 
+    def _limit_comparision(self, lhs : Optional[int], op : str, rhs : Optional[int]) -> bool:
+        if lhs is None or rhs is None:
+            return False
+        b = ast.literal_eval(f'{lhs}{op}{rhs}')
+        assert isinstance(b, bool)
+        return b
+
+    def _limit_comparision_lhs_read_value_cached(self, op : str, rhs : Optional[int]) -> bool:
+        value = self.read_value_cached()
+        if not isinstance(value, int):
+            return False
+        return self._limit_comparision(value, op, rhs)
+
+    def read_value_at_min_cached(self) -> bool:
+        return self._limit_comparision_lhs_read_value_cached('==', self.min)
+
+    def read_value_at_max_cached(self) -> bool:
+        return self._limit_comparision_lhs_read_value_cached('==', self.max)
+
+    def read_value_error_min_cached(self) -> bool:
+        return self._limit_comparision_lhs_read_value_cached('<', self.min)
+
+    def read_value_error_max_cached(self) -> bool:
+        return self._limit_comparision_lhs_read_value_cached('>', self.max)
+
+    def ass_check_value_min_cached(self, value : Optional[int] = None) -> Ass:
+        if self.min is None:
+            return Ass.none
+        if value is None:
+            value = self.read_value_cached() #type:ignore
+            assert isinstance(value, int)
+        if value > self.min:
+            return Ass.passed
+        if value == self.min:
+            return Ass.debug
+        return Ass.error
+
+    def ass_check_value_max_cached(self, value : Optional[int] = None) -> Ass:
+        if self.max is None:
+            return Ass.none
+        if value is None:
+            value = self.read_value_cached() #type:ignore
+            assert isinstance(value, int)
+        if value < self.max:
+            return Ass.passed
+        if value == self.max:
+            return Ass.debug
+        return Ass.error
+
+    def _str_num(self, value : int, base : Literal[2, 10, 16]) -> str:
+        match (base):
+            case 2:  return f'0b{value:0{self.value_type.width}b}'
+            case 10: return str(value)
+            case 16: return f'0x{value:0{ceil_div(self.value_type.width,8)}X}'
+
     def read_rich_str_cached(self) -> str:
+        value_str = None
+        value_int = None
+        base = 10
         match self.value_type.kind:
             case ValueKind.uint:
-                value_str = str(self.read_uint_cached())
+                value_int = self.read_uint_cached()
             case ValueKind.sint:
-                value_str = str(self.read_sint_cached())
+                value_int = self.read_sint_cached()
             case ValueKind.bits:
-                value_str = f'0x{self.read_uint_cached():0{ceil_div(self.value_type.width,8)}X}'
+                value_int = self.read_uint_cached()
+                base = 16
             case ValueKind.flag:
                 if self.value_type.is_bool:
                     value_str = str(self.read_bool_cached())
                 else:
-                    value_str = f'0b{self.read_uint_cached():0{self.value_type.width}b}'
+                    value_str = self._str_num(self.read_uint_cached(), 2)
+                    # f'0b{self.read_uint_cached():0{self.value_type.width}b}'
             case ValueKind.char:
                 value_str = self.read_char_cached()
 
-        if self.ass == Ass.none:
-            return value_str
-        ass_checked = self.ass_check_cached()
-        return to_rich_str(f'{self.ass}: {value_str}', ass_checked.color)
+        ass_color = self.ass_check_cached().color
+        s = ''
+        if self.ass != Ass.none:
+            s += to_rich_str(str(self.ass), ass_color)+": "
+            return to_rich_str(f'{self.ass}: {value_str}', ass_color)
+        elif value_int is not None and (self.min is not None or self.max is not None):
+            min_s = ''
+            max_s = ''
+            if self.min is not None:
+                min_color = self.ass_check_value_min_cached(value_int).color;
+                min_s = f'{to_rich_str(self._str_num(self.min, base), min_color)} <= '
+            if self.max is not None:
+                max_color = self.ass_check_value_max_cached(value_int).color;
+                print(f'{self.max=}')
+                max_s = f' <= {to_rich_str(self._str_num(self.max, base), max_color)}'
+                print(f'{max_s=}')
+            s += f"({min_s}{to_rich_str('v', ass_color)}{max_s}) "
+        if value_str is None:
+            assert value_int is not None
+            value_str = self._str_num(value_int, base)
+        s += to_rich_str(value_str, ass_color)
+        return s
+        
 
         # print(f'{value_int=:x} = int.from_bytes({b=})')
         #TODO change to hex for bits / x
@@ -322,7 +404,7 @@ class RegVec(Reg):
 
     def ass_check_cached(self, log_ass : Ass = Ass.none, log_f : list[Union["RFlag",Reg]] = []) -> Ass:
         if self.ass == Ass.none:
-            return Ass.none
+            return max(self.ass_check_value_min_cached(), self.ass_check_value_max_cached())
         value = max(self.read_list_bool_cached())
         if not value:
             return Ass.passed
@@ -349,6 +431,7 @@ class RegVec(Reg):
         return self.ass_check_cached_idx(idx, log_ass, log_f)
 
     def read_rich_str_cached(self) -> str:
+        #TODO:!!!!! CHECK MAX MIN
         use_hex = False
         match self.value_type.kind:
             case ValueKind.uint:

@@ -545,11 +545,14 @@ class ModuleFactory():
                     if module_class.skmap_ver_major() != SKMAP_VER_MAJOR:
                         logging.error("SKMAP major version missmatch module has %s, expected %s",
                                       module_class.skmap_ver_str(), SKMAP_VER_STR)
-                    if module_class.skmap_ver_minor() != SKMAP_VER_MINOR:
+                    if module_class.skmap_ver_minor() > SKMAP_VER_MINOR:
                         logging.error("SKMAP minor version missmatch module has %s, expected %s",
                                       module_class.skmap_ver_str(), SKMAP_VER_STR)
+                    elif module_class.skmap_ver_minor() != SKMAP_VER_MINOR:
+                        logging.info("SKMAP minor version missmatch module has %s, expected %s",
+                                      module_class.skmap_ver_str(), SKMAP_VER_STR)
                     if module_class.skmap_ver_patch() != SKMAP_VER_PATCH:
-                        logging.warning("SKMAP patch version missmatch module has %s, expected %s",
+                        logging.debug("SKMAP patch version missmatch module has %s, expected %s",
                                       module_class.skmap_ver_str(), SKMAP_VER_STR)
                     logging.info('Creating module (head =  %s)', module_head)
                     return module_class(regio, addr, module_head, module_data)

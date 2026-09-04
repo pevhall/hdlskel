@@ -430,9 +430,14 @@ class {recipe.sw_module}(skmap.Module):
                 ass_str = ''
                 if varv.ass != Ass.none:
                     ass_str = f', ass=skmap.Ass.{varv.ass.to_str()}'
+                max_s = ''
+                min_s = ''
+                if varv.max != None: max_s = f', max={to_python_source(varv.max)}'
+                if varv.min != None: min_s = f', min={to_python_source(varv.min)}'
+
                 t_str = value_type_str(varv.t)
                 reg_type = 'RegVec' if varv.t.is_vec else 'Reg'
-                py_f.write(f"        {name_var} = skmap.{reg_type}(self, name='{varv.name}', value_type={t_str}{ass_str}, acc=skmap.Acc.{varv.acc}, desc='{varv.desc}')\n")
+                py_f.write(f"        {name_var} = skmap.{reg_type}(self, name='{varv.name}', value_type={t_str}{ass_str}{min_s}{max_s}, acc=skmap.Acc.{varv.acc}, desc='{varv.desc}')\n")
             py_f.write(f"        self._add_reg_var({name_var})\n\n")
 
         py_f.write("    def _init_external_mem(self):\n")

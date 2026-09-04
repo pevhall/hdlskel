@@ -1,10 +1,13 @@
 import argparse
+import logging
 # import importlib
 from typing import Optional
 
 from regio.tcp import PORT_DEFAULT
 from regio import RegioOptions
-import regio.cli_utils 
+import regio.cli_utils
+
+from skmap.basic import to_rich_str 
 from .basic_types import Ass
 from .module import make_module
 from . import print_table_reg_list
@@ -51,6 +54,11 @@ def parse_args(parser : Optional[argparse.ArgumentParser] = None, return_parser 
         action="store_true",
         help="print asserts"
     )
+    parser.add_argument(
+        "-x", "--allow-unknowen",
+        action="store_true",
+        help="print asserts"
+    )
     # parser.add_argument(
     #     "-l", "--asserts-level",
     #     type=lambda x: Ass[x],
@@ -73,6 +81,7 @@ def parse_args(parser : Optional[argparse.ArgumentParser] = None, return_parser 
     # -v, -vv, -vvv
     parser.add_argument(
         "-v",
+        dest='verbose',
         action="count",
         default=0,
         help="Increase logging verbosity (repeat up to -vvv)"
@@ -84,19 +93,27 @@ def parse_args(parser : Optional[argparse.ArgumentParser] = None, return_parser 
     args.asserts_level = Ass.debug
     return args
 
-async def make_module_from_args(args, read_tree = True, read_external_mem_cache = False):
+async def make_module_from_args(args, read_tree = True, allow_unknowen = False, read_external_mem_cache = False):
     rio = await regio.cli_utils.make_regio_from_args(args)
     addr = 0
     if hasattr(args, 'addr'):
         addr = args.addr
-    module = await make_module(rio, addr=addr)
+    module = await make_module(rio, addr=addr, allow_unknowen=allow_unknowen)
     if read_tree:
         await module.read_all_tree(skip_self=True, read_external_mem_cache=read_external_mem_cache)
     return module
 
 async def main(args):
 
-    module = await make_module_from_args(args, args.tree)
+    module = await make_module_from_args(args, args.tree, allow_unknowen=args.allow_unknowen)
+
+    if (args.verbose == 0):
+        level = logging.WARNING
+    elif (args.verbose == 1):
+        level = logging.INFO
+    else:
+        level = logging.DEBUG
+    logging.basicConfig(level=level)
 
     if args.tree:
         await module.make_tree()
@@ -107,8 +124,11 @@ async def main(args):
 
     if args.asserts:
         list_reg = []
-        ass = module.check_assert_tree_cached(args.asserts_level, list_reg)
-        print_table_reg_list(list_reg, title='Asserts')
+        if args.tree:
+            ass = module.check_assert_tree_cached(args.asserts_level, list_reg)
+        else:
+            ass = module.check_assert_cached(args.asserts_level, list_reg)
+        print_table_reg_list(list_reg, title=f'Asserts (max {to_rich_str(ass.to_str(), ass.color)})')
 
     if args.clear:
         if args.tree:
