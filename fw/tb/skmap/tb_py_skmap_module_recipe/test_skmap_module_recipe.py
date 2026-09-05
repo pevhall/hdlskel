@@ -137,7 +137,7 @@ async def test_skmap_module_test_acc_types(dut):
         # RW_VAL_W = module.regs_rw_value_type.width 
         assert RW_LEN is not None
         for ii in range(RW_LEN):
-            await module.regs_rw_write_idx(ii,ii+0xA0)
+            await module.regs_rw_write_idx(ii,100-70*ii)
             # await module.regs_rw_write_idx(ii,(1<<RW_VAL_W)-1)
         # print(f'{module.regs_rw_read_cached()=}')
         # print(f'{await module.regs_rw_read()=}')

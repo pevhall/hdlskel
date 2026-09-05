@@ -8,7 +8,7 @@ fw_opts = { size_reserved=0x1000}
 
 ipkg = [
   # {name = "INT_11", value = 11 },
-  # {name = "INT_3", value = 3 },
+  {name = "INT_2", value = 2 },
   # {name = "INT_33", value = "{INT11}*{INT3}" },
   {name = "INT_11", value = 11 },
   {name = "INT_33", value = "{INT_11*3}" },
@@ -45,7 +45,7 @@ var = [
      { name = "ctrl_flag_16_vec", bit = 16, desc = "ctrl_flag_vec 16", vec_len = 5},
   ]},
   {name = "regs_ro",  t = "[{RO_LEN}]s{RO_VAL_W}", ass = "debug", acc = "ro", desc = "RO registers"},
-  {name = "regs_rw",  t = "[{RW_LEN}]s{RW_VAL_W}", acc = "rw", desc = "RW registers"},
+  {name = "regs_rw",  t = "[{RW_LEN}]s{RW_VAL_W}", acc = "rw", desc = "RW registers", min = "{-1*INT_2}", max=100},
   {name = "regs_wt",  t = "x5", acc = "wt", desc = "WT registers", fw_init="k_int", max=3},
   {name = "regs_rc",  t = "[{RW_LEN}]s{RW_VAL_W}", acc = "rc", desc = "RC registers"},
   # {name = "reg_s_wt",  t = "s40", acc = "wt", desc = "RC registers"},

@@ -753,12 +753,12 @@ class SkmapUiApp(App):
             logging.warning("read_all_tree failed: %s", err, exc_info=True)
             return
         await self._recheck_asserts()
+        self._refresh_shown_values()
         try:
-            await self.top_module.clear_reg_rc_tree()
+            await self.top_module.clear_reg_rc()
             await self.top_module.clear_assert_tree()
         except Exception as err:  # noqa: BLE001
             logging.warning("clear triggered failed: %s", err, exc_info=True)
-        self._refresh_shown_values()
 
     def action_clear_triggered(self) -> None:
         """'x' key: write zero to every triggered rc register."""
@@ -768,7 +768,6 @@ class SkmapUiApp(App):
 
     async def _clear_triggered_worker(self) -> None:
         try:
-            await self.top_module.clear_reg_rc_tree()
             await self.top_module.clear_assert_tree()
         except Exception as err:  # noqa: BLE001
             logging.warning("clear triggered asserts failed: %s", err)
