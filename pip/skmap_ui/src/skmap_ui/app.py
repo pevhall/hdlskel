@@ -619,7 +619,10 @@ class SkmapUiApp(App):
         triggered assert (register or flag) in the same column layout
         as ``print_table_reg_list``.  So the log grows after every
         refresh that contains triggered asserts; checks without
-        triggered asserts append nothing.
+        triggered asserts append nothing.  The assert level names are
+        shown in their ``Ass`` colors (the header's log level and
+        worst level, and the evaluated level of each value) — the
+        same colors as the register map view.
         """
         if not log_f:
             return
@@ -628,6 +631,13 @@ class SkmapUiApp(App):
             f"{_timestamp()}  asserts level >= {level.name}  —  "
             f"{len(log_f)} triggered, worst: {worst.name}"
         )
+        # same header with the assert level names in their Ass colors
+        # (like the register map view)
+        rich_header = Text()
+        rich_header.append(f"{_timestamp()}  asserts level >= ")
+        rich_header.append(level.name, style=level.color)
+        rich_header.append(f"  —  {len(log_f)} triggered, worst: ")
+        rich_header.append(worst.name, style=worst.color)
         lines = [header]
         for item in log_f:
             if isinstance(item, RFlag):
@@ -645,7 +655,7 @@ class SkmapUiApp(App):
                 )
         self._log_lines.extend(lines)
 
-        self.log_view.write(Text(header))
+        self.log_view.write(rich_header)
         table = Table(expand=True, pad_edge=False, box=None)
         table.add_column("Addr", justify="right", style="cyan", no_wrap=True)
         table.add_column("T", justify="right", style="blue", no_wrap=True)
@@ -661,7 +671,8 @@ class SkmapUiApp(App):
                     f"b{item.bit}",
                     str(reg.acc),
                     f"{reg.name}.{item.name}",
-                    _assert_value_str(item),
+                    # same colored markup as the register map view
+                    Text.from_markup(item._value_rich_str()),
                     item.desc,
                 )
             else:
@@ -670,7 +681,8 @@ class SkmapUiApp(App):
                     item.value_type_str(),
                     str(item.acc),
                     item.name,
-                    _assert_value_str(item),
+                    # same colored markup as the register map view
+                    Text.from_markup(item.read_rich_str_cached()),
                     item.desc,
                 )
         self.log_view.write(table)

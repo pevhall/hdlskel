@@ -72,6 +72,11 @@ refresh — that finds triggered asserts appends one block:
    Value | Description`) with one row per **triggered** assert — the same
    assets/rows as `print_table_reg_list(list_reg, title='Asserts')`.
 
+Assert level names are shown in their `Ass` colors
+(`Ass.level.color`, e.g. `error` in `orange_red1`) — the header's log
+and worst level, and each value's evaluated level — matching the
+colors of the register map view.
+
 Checks without triggered asserts append nothing, so the log **grows
 after every refresh that contains triggered asserts** and is otherwise
 left alone (`c` clears it).  Because a periodic refresh clears the

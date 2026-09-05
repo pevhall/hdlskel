@@ -973,6 +973,59 @@ def test_write_held_while_refresh_in_flight():
     _run(run())
 
 
+def test_log_assert_levels_colored():
+    """Assert level names in the log use their ``Ass`` color
+    (e.g. ``Ass.error.color``), matching the register map view."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            from rich.style import Style
+            from rich.text import Text
+
+            written: list = []
+            real_write = app.log_view.write
+
+            def spy_write(content, *args, **kwargs):
+                written.append(content)
+                return real_write(content, *args, **kwargs)
+
+            app.log_view.write = spy_write
+            try:
+                app._append_assert_log(
+                    app.last_worst_ass, list(app.last_asserts)
+                )
+            finally:
+                app.log_view.write = real_write
+
+            header, table = written[0], written[1]
+
+            def norm_style(st):
+                return st if isinstance(st, Style) else Style.parse(st)
+
+            # header: the log level and the worst level in their colors
+            spans = {
+                header[s.start : s.end].plain: norm_style(s.style)
+                for s in header.spans
+            }
+            assert spans[app.asserts_level.name] == Style.parse(
+                app.asserts_level.color
+            )
+            assert spans[app.last_worst_ass.name] == Style.parse(
+                app.last_worst_ass.color
+            )
+            # value rows: the same colored markup as the register map
+            # view — each value carries its evaluated level's color
+            ass_colors = {Style.parse(m.color) for m in Ass}
+            value_cells = table.columns[VALUE]._cells
+            assert len(value_cells) == len(app.last_asserts)
+            for value in value_cells:
+                assert isinstance(value, Text)
+                assert any(norm_style(s.style) in ass_colors for s in value.spans)
+    _run(run())
+
+
 def test_cycle_refresh_key():
     async def run():
         app = SkmapUiApp(make_demo())
