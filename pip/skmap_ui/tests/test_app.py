@@ -944,6 +944,35 @@ def test_refresh_appends_log_and_clears_rc():
     _run(run())
 
 
+def test_write_held_while_refresh_in_flight():
+    """A register write must not go to the device while a refresh is
+    in progress: the write worker holds the write until the refresh
+    has finished."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            sysctrl = top.kids_cached()[0]
+            await _select_node(app, _find_node(app, sysctrl), pilot)
+            ctrl = sysctrl.arr_reg_var[1]
+            assert ctrl.name == "CTRL"
+
+            # simulate a refresh in flight: the write must be held
+            assert app._refresh_idle.is_set()
+            app._refresh_idle.clear()
+            app._write_row(1, ctrl, 0x42, "WRITE")
+            for _ in range(50):
+                await pilot.pause()
+            assert ctrl.read_uint_cached() == 0  # still not written
+
+            # the refresh finishes: the held write now goes out
+            app._refresh_idle.set()
+            await _wait_cell(app, pilot, 1, VALUE, "0x0042")
+            assert ctrl.read_uint_cached() == 0x42
+    _run(run())
+
+
 def test_cycle_refresh_key():
     async def run():
         app = SkmapUiApp(make_demo())

@@ -47,9 +47,10 @@ asserts (logging the triggered ones, if any), updates the register
 map, then clears the triggered ``rc`` registers
 (``clear_reg_rc_tree()`` + ``clear_assert_tree()``) so the next
 refresh only logs new events (0 = off).  The ``x`` key does the same
-clear on demand and re-checks.  Device I/O errors are reported on
-the console via ``logging`` so the log view only ever contains
-triggered asserts.
+clear on demand and re-checks.  Register writes (``enter`` / ``t``)
+are **held** while a refresh is in progress and only go to the device
+once it has finished.  Device I/O errors are reported on the console
+via ``logging`` so the log view only ever contains triggered asserts.
 
 The tree starts fully expanded; ``enter``
 selects the module under the cursor and shows its register map (mirrors
@@ -287,6 +288,14 @@ class SkmapUiApp(App):
         self._drag: str | None = None  # "h" (tree|table) or "v" (workspace|log)
         # one regio connection on one event loop: serialize device I/O
         self._regio_lock = asyncio.Lock()
+        # set while no periodic refresh is in flight.  Register writes
+        # (enter / t) wait on this, so a write is never made in the
+        # middle of a refresh: a refresh reads the whole tree and then
+        # clears the rc registers, so a write landing inside it would
+        # be observed (or wiped) by the refresh.  The write is held
+        # until the refresh has finished.
+        self._refresh_idle = asyncio.Event()
+        self._refresh_idle.set()
         # last value strings shown in the register map (row key -> plain
         # text), plus the value-column padding used when the table was
         # built.  Used to skip DataTable.update_cell() for unchanged
@@ -747,18 +756,25 @@ class SkmapUiApp(App):
         are triggered, so the log grows), update the register map, and
         clear the ``rc`` registers so the next tick only logs new
         events."""
+        self._refresh_idle.clear()
         try:
-            await self.top_module.read_all_tree(read_external_mem_cache=False)
-        except Exception as err:  # noqa: BLE001
-            logging.warning("read_all_tree failed: %s", err, exc_info=True)
-            return
-        await self._recheck_asserts()
-        self._refresh_shown_values()
-        try:
-            await self.top_module.clear_reg_rc()
-            await self.top_module.clear_assert_tree()
-        except Exception as err:  # noqa: BLE001
-            logging.warning("clear triggered failed: %s", err, exc_info=True)
+            try:
+                await self.top_module.read_all_tree(
+                    read_external_mem_cache=False
+                )
+            except Exception as err:  # noqa: BLE001
+                logging.warning("read_all_tree failed: %s", err, exc_info=True)
+                return
+            await self._recheck_asserts()
+            self._refresh_shown_values()
+            try:
+                await self.top_module.clear_reg_rc()
+                await self.top_module.clear_assert_tree()
+            except Exception as err:  # noqa: BLE001
+                logging.warning("clear triggered failed: %s", err, exc_info=True)
+        finally:
+            # register writes held by _wait_refresh_idle() may now go out
+            self._refresh_idle.set()
 
     def action_clear_triggered(self) -> None:
         """'x' key: write zero to every triggered rc register."""
@@ -1024,7 +1040,17 @@ class SkmapUiApp(App):
             self._write_row_async(key, reg, value, op), name=f"write {reg.name}"
         )
 
+    async def _wait_refresh_idle(self) -> None:
+        """Hold until no periodic refresh is in flight (see
+        ``_refresh_idle``): a register write must not land in the
+        middle of a refresh, or the refresh would read (or clear) the
+        value while it is being written."""
+        while not self._refresh_idle.is_set():
+            await self._refresh_idle.wait()
+
     async def _write_row_async(self, key: str, reg: Reg, value, op: str) -> None:
+        # hold the write until an in-flight refresh has finished
+        await self._wait_refresh_idle()
         try:
             if op == "CLEAR":
                 await self._regio(reg.write_zero())
@@ -1094,6 +1120,8 @@ class SkmapUiApp(App):
 
     async def _flag_write_async(self, key: str, flag: RFlag, value: bool) -> None:
         reg = flag.reg_flags
+        # hold the write until an in-flight refresh has finished
+        await self._wait_refresh_idle()
         try:
             await self._regio(flag.write_bool(value))
         except Exception as err:  # noqa: BLE001

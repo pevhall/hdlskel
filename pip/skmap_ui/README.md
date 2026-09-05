@@ -54,6 +54,12 @@ Flag and external-mem rows cannot be edited from the input bar (use `t`
 to toggle a flag). Device errors are reported on stderr (Python
 `logging`), never in the log view.
 
+If a periodic refresh is in progress when a write is made (input bar
+`enter`, `t`, or an `rc` clear), the write is **held** and only goes
+to the device once the refresh has finished — a refresh reads the
+whole tree and then clears the `rc` registers, so a write landing in
+the middle of it would be observed (or wiped) by the refresh.
+
 ## Assert log
 
 The bottom log is an **event log, not a snapshot** (append-only): every
@@ -81,7 +87,7 @@ The three options:
 | option | CLI | key | effect |
 |--------|-----|-----|--------|
 | assert level | `--asserts-level {debug,info,warn,error,fatal}` (default `debug`) | `l` | asserts below the level still count for the *worst* level, but are **not** listed in the log |
-| refresh period | `--refresh SECS` (default `0` = off) | `r` (cycles off/1/5/30) | every period the app 1. calls `Module.read_all_tree()` (all registers of the whole tree, including external mem caches, are **read from the device**), 2. re-checks the asserts — appending a block to the log if any are triggered — and updates the *Value* cells of the displayed table, and 3. clears the triggered `rc` registers via `Module.clear_reg_rc_tree()` + `Module.clear_assert_tree()`, so the next refresh only logs **new** events |
+| refresh period | `--refresh SECS` (default `0` = off) | `r` (cycles off/1/5/30) | every period the app 1. calls `Module.read_all_tree()` (all registers of the whole tree, including external mem caches, are **read from the device**), 2. re-checks the asserts — appending a block to the log if any are triggered — and updates the *Value* cells of the displayed table, and 3. clears the triggered `rc` registers via `Module.clear_reg_rc()` + `Module.clear_assert_tree()`, so the next refresh only logs **new** events. Register writes made while a refresh is in progress are **held** until it has finished (see *Editing register values*) |
 | clear triggered | — | `x` | writes zero to the `rc` registers the same way as a refresh (without the device read), then re-checks |
 
 `make_tree()` is only re-run by `a` (it loads uninitialised kids); the
