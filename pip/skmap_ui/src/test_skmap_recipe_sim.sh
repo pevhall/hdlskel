@@ -18,7 +18,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-TB_DIR="../../../../fw/tb/skmap/tb_py_skmap_tree"
+TB_DIR="../../../fw/tb/skmap/tb_py_skmap_module_recipe"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-39600}"   # regio PORT_DEFAULT = 0x9AB0
 
@@ -59,4 +59,4 @@ fi
 echo "simulation server is up; starting TUI (Ctrl+Q to quit)"
 
 # no exec: the EXIT trap must fire to clean up the simulation
-python3 -m skmap_ui -i "$HOST" -p "$PORT" -m ./test_skmap_tree_module.py
+python3 -m skmap_ui -i "$HOST" -p "$PORT" -m $TB_DIR/recipe_test_bench_module.py

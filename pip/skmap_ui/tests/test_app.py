@@ -9,7 +9,7 @@ import asyncio
 import itertools
 import re
 
-from skmap import Ass, Head, RFlag, Reg
+from skmap import Acc, Ass, Head, RFlag, Reg, RegVec, ValueKind, ValueType
 from skmap import register_Module
 from skmap_ui import SkmapUiApp
 # column indices of the register map table (see SkmapUiApp.on_mount)
@@ -23,6 +23,7 @@ from skmap_ui.demo import (
     _head_bytes,
     _u32,
 )
+from rich.text import Text
 from textual.css.scalar import Unit
 from textual.widgets import DataTable, RichLog, Tree
 from textual.widgets._data_table import Coordinate
@@ -685,7 +686,10 @@ def test_enter_edits_rw_value():
             assert app.app.focused is app.value_input
             assert "CTRL" in app.value_input.placeholder
 
-            await pilot.press(*"0x2f")
+            # the input line is prefilled with the current value (hex
+            # for x32 bits registers)
+            assert app.value_input.value == "0x0"
+            app.value_input.value = "0x2f"
             await pilot.press("enter")
             await pilot.pause()
             assert app.app.focused is app.table
@@ -766,7 +770,7 @@ def test_enter_edit_cancel_and_invalid():
             # (focus stays on the input line to fix the value)
             await pilot.press("enter")
             await pilot.pause()
-            await pilot.press(*"0x100000000")
+            app.value_input.value = "0x100000000"
             await pilot.press("enter")
             await pilot.pause()
             assert ctrl.read_uint_cached() == 0
@@ -804,18 +808,18 @@ def test_enter_on_readonly_and_flag_rows():
 
 def test_parse_value():
     class _VT:
-        def __init__(self, width, vec_len=None):
+        def __init__(self, kind, width):
+            self.kind = kind
             self.width = width
-            self.vec_len = vec_len
 
     class _RegStub:
-        def __init__(self, width, vec_len=None):
-            self.value_type = _VT(width, vec_len)
+        def __init__(self, kind, width):
+            self.value_type = _VT(kind, width)
 
     parse = SkmapUiApp._parse_value
 
     # scalar: decimal or 0x-hex, in range [0, 2**width)
-    r32 = _RegStub(32)
+    r32 = _RegStub(ValueKind.uint, 32)
     assert parse(r32, "255") == 255
     assert parse(r32, "0x2f") == 0x2F
     assert parse(r32, " 0xff ") == 0xFF
@@ -825,12 +829,184 @@ def test_parse_value():
     assert parse(r32, "zz") is None
     assert parse(r32, "") is None
 
-    # vector: comma-separated lanes; one value repeats over all lanes
-    v8 = _RegStub(8, vec_len=4)
-    assert parse(v8, "1,2,3,4") == [1, 2, 3, 4]
-    assert parse(v8, "0x5") == [5, 5, 5, 5]
-    assert parse(v8, "1,2") is None  # wrong lane count
-    assert parse(v8, "256,2,3,4") is None  # lane out of range
+    # sint: negative values fit in [-2**(w-1), 2**(w-1))
+    s8 = _RegStub(ValueKind.sint, 8)
+    assert parse(s8, "-1") == -1
+    assert parse(s8, "-128") == -128
+    assert parse(s8, "127") == 127
+    assert parse(s8, "128") is None
+    assert parse(s8, "-129") is None
+
+
+# ---------------------------------------------------------------------------
+# value editing: prefill, vector lane inputs, value-cell wrapping
+# ---------------------------------------------------------------------------
+
+_edit_top_counter = itertools.count()
+
+
+def make_edit_top():
+    """A module with wide / vector registers for the edit tests."""
+    n = next(_edit_top_counter)
+    edit_mid = f"EDITTOP{n}"[:8]
+    big = 0xDEADBEEFCAFEBABE1234567890ABCDEF
+
+    vt_big = ValueType(kind=ValueKind.bits, width=128)
+    vt_u4 = ValueType(kind=ValueKind.uint, width=8, vec_len=4)
+    vt_s2 = ValueType(kind=ValueKind.sint, width=8, vec_len=2)
+
+    class _EditTop(_DemoModule):
+        mid = edit_mid
+
+        @classmethod
+        def name(cls) -> str:
+            return "EDITTOP"
+
+        @classmethod
+        def checksum(cls) -> int:
+            return n
+
+        def _init_reg_map_k(self) -> None:
+            pass
+
+        def _init_reg_map_var(self) -> None:
+            self._add_reg_var(
+                Reg(self, "BIG", vt_big, acc=Acc.rw, desc="wide value")
+            )
+            self._add_reg_var(
+                RegVec(self, "V4", vt_u4, acc=Acc.rw, desc="uint vec")
+            )
+            self._add_reg_var(
+                RegVec(self, "S2", vt_s2, acc=Acc.rw, desc="sint vec")
+            )
+
+    register_Module(_EditTop)
+
+    data = (
+        # 16 + 4 + 2 = 22 bytes of regs, word padded -> 6 words
+        _head_bytes(edit_mid, 1, 0, len_kids=0, len_sub=0, len_k=0, len_var=6)
+        + big.to_bytes(16, "little")
+        + bytes([0xAA, 0xBB, 0xCC, 0xDD])
+        + bytes([5, 0xAB])  # sint lanes: 5 and -85
+    )
+    regio = MemRegio()
+    regio.write_mem(0x70000000, data)
+    return _EditTop(regio, 0x70000000, Head(data), bytearray(data))
+
+
+def test_scalar_edit_prefills_current_value():
+    """enter on a register prefills the input line with the current
+    value (hex for bits kinds, decimal for uint/sint)."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+
+            # BIG (bits, row 0): prefilled in hex
+            app.table.focus()
+            app.table.move_cursor(row=0, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.value_input.value == (
+                "0xdeadbeefcafebabe1234567890abcdef"
+            )
+
+            # V4 is a vector: enter opens one input per index instead
+            await pilot.press("escape")
+            await pilot.pause()
+            assert len(app.value_inputs.query("ValueInput.lane")) == 0
+            app.table.move_cursor(row=1, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            lanes = list(app.value_inputs.query("ValueInput.lane"))
+            assert len(lanes) == 4
+            # uint lanes are prefilled in decimal
+            assert [l.value for l in lanes] == ["170", "187", "204", "221"]
+            # the single input is hidden while the lanes are open
+            assert app.value_input.parent is None
+    _run(run())
+
+
+def test_vector_edit_writes_lanes():
+    """enter on a vector register opens one input column per index
+    (prefilled via Reg.read_idx_value_cached); submit writes every lane
+    with Reg.write_idx_uint (hex and decimal both accepted)."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            v4 = top.arr_reg_var[1]
+            assert v4.name == "V4"
+
+            app.table.focus()
+            app.table.move_cursor(row=1, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            lanes = list(app.value_inputs.query("ValueInput.lane"))
+            assert len(lanes) == 4
+            # edit one lane (0x-hex), keep the prefilled others
+            lanes[2].value = "0xF0"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            # the lane inputs close and the write goes out per lane
+            assert len(app.value_inputs.query("ValueInput.lane")) == 0
+            await _wait_cell(app, pilot, 1, VALUE, "[ 170, 187, 240, 221 ]")
+            assert v4.read_idx_uint_cached(2) == 0xF0
+            assert v4.read_idx_uint_cached(0) == 0xAA
+    _run(run())
+
+
+def test_vector_edit_sint_lanes():
+    """sint vector lanes are prefilled as signed decimal and written
+    with Reg.write_idx_sint (negative values accepted)."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            s2 = top.arr_reg_var[2]
+            assert s2.name == "S2"
+
+            app.table.focus()
+            app.table.move_cursor(row=2, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            lanes = list(app.value_inputs.query("ValueInput.lane"))
+            assert [l.value for l in lanes] == ["5", "-85"]
+            lanes[0].value = "-1"
+            await pilot.press("enter")
+            await pilot.pause()
+            await _wait_cell(app, pilot, 2, VALUE, "[ -1, -85 ]")
+            assert s2.read_idx_sint_cached(0) == -1
+            assert s2.read_idx_sint_cached(1) == -85
+    _run(run())
+
+
+def test_value_cells_wrap_over_multiple_lines():
+    """A value wider than the Value column wraps over multiple lines
+    (auto-height rows) instead of being clipped."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(70, 24)) as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            await pilot.pause()
+            # the 34-char hex value of BIG does not fit the 22-wide
+            # Value column: its row must grow to at least 2 lines
+            assert app.table.get_row_height("r0") >= 2
+
+            # a short value (different length) makes the row collapse to
+            # one line again: the auto-height row is re-measured
+            app._update_row_value("r0", Text("0x0"))
+            assert app.table.get_row_height("r0") == 1
+    _run(run())
 
 
 # ---------------------------------------------------------------------------

@@ -45,7 +45,7 @@ logged).  ``--refresh SECS`` / the ``r`` key periodically re-reads
 all registers from the device (``read_all_tree()``), re-checks all
 asserts (logging the triggered ones, if any), updates the register
 map, then clears the triggered ``rc`` registers
-(``clear_reg_rc_tree()`` + ``clear_assert_tree()``) so the next
+(``clear_reg_rc()`` + ``clear_assert_tree()``) so the next
 refresh only logs new events (0 = off).  The ``x`` key does the same
 clear on demand and re-checks.  Register writes (``enter`` / ``t``)
 are **held** while a refresh is in progress and only go to the device
@@ -57,10 +57,14 @@ selects the module under the cursor and shows its register map (mirrors
 ``print_reg_map_cached``), and the node of the module whose register map
 is currently shown is highlighted in the tree.  ``left`` / ``right``
 collapse / expand the cursor node.  ``enter`` on a table row edits the
-value of ``rw`` / ``wt`` registers (type the new value, ``enter`` to
-write, ``escape`` to cancel) and clears ``rc`` registers (writes zero);
-vector registers take comma-separated lanes (or one value for all
-lanes).  ``t`` triggers the selected register row: writable registers /
+value of ``rw`` / ``wt`` registers: the input line is prefilled with
+the *current* value and can be edited in place (``enter`` to write,
+``escape`` to cancel, both hex and decimal accepted); a *vector*
+register opens one input column per vector index (each prefilled with
+the current lane value via ``Reg.read_idx_value_cached``), written
+lane by lane with ``Reg.write_idx_uint`` / ``Reg.write_idx_sint``;
+``rc`` registers are cleared (writes zero).  Long values wrap over
+multiple lines in the *Value* column.  ``t`` triggers the selected register row: writable registers /
 flags are *written*, read-only ones are *read* (skmap's "trigger" =
 register write).  All register / flag / mem device accesses use
 skmap's async *non-cached* regio reads/writes (never ``*_cached``), so
@@ -245,7 +249,9 @@ class SkmapUiApp(App):
     #workspace { height: 80%; }
     #modules { width: 35%; border: round $primary; }
     #registers { width: 1fr; border: round $accent; }
-    #value-input { height: 3; border: round $warning; }
+    #value-inputs { height: 3; }
+    #value-input { width: 100%; border: round $warning; }
+    #value-inputs .lane { width: 1fr; border: round $warning; }
     #log { height: 1fr; min-height: 7; border: round $success; }
     """
 
@@ -315,13 +321,14 @@ class SkmapUiApp(App):
         with Horizontal(id="workspace"):
             yield ModuleTree(self.top_module.name(), id="modules")
             yield RegMapTable(id="registers")
-        yield ValueInput(
-            id="value-input",
-            placeholder=(
-                "enter: edit (rw/wt) / clear (rc) | l: assert level | "
-                "r: refresh | x: clear triggered | a: check asserts"
-            ),
-        )
+        with Horizontal(id="value-inputs"):
+            yield ValueInput(
+                id="value-input",
+                placeholder=(
+                    "enter: edit (rw/wt) / clear (rc) | l: assert level | "
+                    "r: refresh | x: clear triggered | a: check asserts"
+                ),
+            )
         yield RichLog(id="log", markup=True, min_width=0)
         yield Footer()
 
@@ -329,6 +336,7 @@ class SkmapUiApp(App):
         self.tree_view = self.query_one("#modules", ModuleTree)
         self.table = self.query_one("#registers", RegMapTable)
         self.value_input = self.query_one("#value-input", ValueInput)
+        self.value_inputs = self.query_one("#value-inputs", Horizontal)
         self.log_view = self.query_one("#log", RichLog)
         self.workspace = self.query_one("#workspace", Horizontal)
         self.header = self.query_one(Header)
@@ -487,11 +495,13 @@ class SkmapUiApp(App):
         for mem in module.arr_external_mem:
             rows.append(self._mem_row(mem))
 
-        # right-align the value column (8.x DataTable has no per-column justify)
+        # right-align the value column (8.x DataTable has no per-column
+        # justify).  Cap the padding at the column width so short values
+        # are not padded into wrapping on auto-height rows.
         pad = 2
         for cells, _ in rows:
             pad = max(pad, len(cells[4].plain))
-        self._value_pad = pad
+        self._value_pad = min(pad, 22)
 
         for ii, (cells, obj) in enumerate(rows):
             key = f"r{ii}"
@@ -504,7 +514,9 @@ class SkmapUiApp(App):
                 + (Text(" " * (pad - len(cells[4].plain))) + cells[4],)
                 + cells[5:]
             )
-            self.table.add_row(*cells, key=key)
+            # height=None: auto-height row, so a long value wraps over
+            # multiple lines instead of being clipped
+            self.table.add_row(*cells, key=key, height=None)
             self._row_keys.append(key)
             self._row_objs[key] = obj
         if rows:
@@ -519,7 +531,7 @@ class SkmapUiApp(App):
         cells, obj = self._mem_row(mem)
         self._row_value_str = {"r0": cells[4].plain}
         self._value_pad = 2
-        self.table.add_row(*cells, key="r0")
+        self.table.add_row(*cells, key="r0", height=None)
         self._row_keys.append("r0")
         self._row_objs["r0"] = obj
         self.table.move_cursor(row=0, column=0)
@@ -706,12 +718,25 @@ class SkmapUiApp(App):
         invalidates its whole cell/row/line render cache, so per-tick no-op
         updates would re-render the table and grow its caches (memory churn).
         """
+        old = self._row_value_str.get(key)
         plain = value.plain
-        if self._row_value_str.get(key) == plain:
+        if old == plain:
             return
         self._row_value_str[key] = plain
         padded = Text(" " * max(0, self._value_pad - len(plain))) + value
         self.table.update_cell(key, COL_VALUE, padded, update_width=True)
+        # auto-height rows are only measured when they are added: if the
+        # new value needs a different number of lines, re-measure the row
+        row = self.table.rows.get(key)
+        if (
+            row is not None
+            and row.auto_height
+            and old is not None
+            and len(old) != len(plain)
+        ):
+            row.height = 0
+            self.table._update_dimensions([key])  # noqa: SLF001
+            self.table.refresh(layout=True)
 
     def _refresh_shown_values(self) -> None:
         """Update the value cells of the currently shown table (cached)."""
@@ -947,15 +972,15 @@ class SkmapUiApp(App):
     # value editing (enter on a table row -> input line -> write/clear)
     # ------------------------------------------------------------------
 
-    def action_edit_selected_value(self) -> None:
-        self._edit_cursor_row()
+    async def action_edit_selected_value(self) -> None:
+        await self._edit_cursor_row()
 
-    def on_reg_map_table_edit_requested(
+    async def on_reg_map_table_edit_requested(
         self, event: RegMapTable.EditRequested
     ) -> None:
-        self._edit_cursor_row()
+        await self._edit_cursor_row()
 
-    def _edit_cursor_row(self) -> None:
+    async def _edit_cursor_row(self) -> None:
         """Enter on a table row: edit (rw/wt) or clear (rc) its value."""
         if self.table.row_count == 0:
             return
@@ -966,25 +991,66 @@ class SkmapUiApp(App):
         if not isinstance(obj, Reg):
             return  # flag / external mem rows are not editable
         if obj.acc in (Acc.rw, Acc.wt):
-            self._open_value_input(row, obj)
+            await self._open_value_input(row, obj)
         elif obj.acc == Acc.rc:
             self._clear_row(row, obj)
         # k (hardwired), na (no access), ro: nothing to edit
 
-    def _open_value_input(self, row: int, reg: Reg) -> None:
+    @staticmethod
+    def _value_str(reg: Reg, idx: int | None = None) -> str:
+        """Current value of ``reg`` (or lane ``idx``) for the input line.
+
+        Hex for ``bits`` kinds, decimal otherwise — the same number
+        bases the table shows.  The input accepts both hex and decimal.
+        """
+        value = (
+            reg.read_idx_value_cached(idx) if idx is not None
+            else reg.read_value_cached()
+        )
+        if isinstance(value, str):
+            return value
+        if reg.value_type.kind is ValueKind.bits:
+            return f"0x{value:x}"
+        return str(value)
+
+    async def _open_value_input(self, row: int, reg: Reg) -> None:
         vt = reg.value_type
-        hint = f"{reg.name}: {vt.width}-bit value (0x-hex or decimal)"
         if vt.vec_len:
-            hint += (
-                f", {vt.vec_len} lanes: comma-separate, or one for all"
-            )
-        self.value_input.placeholder = hint
-        self.value_input.value = ""
+            await self._open_vector_inputs(reg)
+            return
+        self.value_input.placeholder = (
+            f"{reg.name}: {vt.width}-bit value (0x-hex or decimal)"
+        )
+        # prefill with the current value so it can be edited in place
+        self.value_input.value = self._value_str(reg)
         self.value_input.focus()
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input is not self.value_input:
-            return
+    async def _open_vector_inputs(self, reg: Reg) -> None:
+        """Open one input column per vector index, each prefilled with
+        the current lane value (``Reg.read_idx_value_cached``)."""
+        vt = reg.value_type
+        container = self.value_inputs
+        # hide the single input for the duration of the vector edit
+        await self.value_input.remove()
+        for idx in range(vt.vec_len):
+            lane = ValueInput(
+                id=f"value-input-{idx}",
+                classes="lane",
+                placeholder=f"{reg.name}[{idx}]",
+                value=self._value_str(reg, idx),
+            )
+            await container.mount(lane)
+        container.query_one("ValueInput.lane").focus()
+
+    async def _close_vector_inputs(self) -> None:
+        """Remove the lane inputs and restore the single input."""
+        container = self.value_inputs
+        for lane in container.query("ValueInput.lane"):
+            await lane.remove()
+        if self.value_input.parent is None:
+            await container.mount(self.value_input)
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
         if self.table.row_count == 0:
             return
         row = self.table.cursor_row
@@ -992,47 +1058,72 @@ class SkmapUiApp(App):
             return
         obj = self._row_objs[self._row_keys[row]]
         if not isinstance(obj, Reg) or obj.acc not in (Acc.rw, Acc.wt):
-            self.value_input.value = ""
             return
-        value = self._parse_value(obj, event.value)
+        lanes = self.value_inputs.query("ValueInput.lane")
+        if lanes:
+            await self._submit_vector_edit(obj, lanes)
+        else:
+            self._submit_scalar_edit(row, obj, event.input)
+
+    def _submit_scalar_edit(self, row: int, reg: Reg, inp: Input) -> None:
+        value = self._parse_value(reg, inp.value)
         if value is None:
             # keep focus + value so the user can fix the input
             return
         self.table.focus()
-        self.value_input.value = ""
-        self._write_row(row, obj, value, "WRITE")
+        inp.value = ""
+        self._write_row(row, reg, value, "WRITE")
 
-    def on_value_input_canceled(self, event: ValueInput.Canceled) -> None:
+    async def _submit_vector_edit(self, reg: Reg, lanes) -> None:
+        values = [self._parse_lane(reg.value_type, str(l.value)) for l in lanes]
+        if any(v is None for v in values):
+            # keep focus + values so the user can fix them
+            return
+        row = self.table.cursor_row
+        await self._close_vector_inputs()
+        self.table.focus()
+        self._write_vec_row(row, reg, values)
+
+    async def on_value_input_canceled(self, event: ValueInput.Canceled) -> None:
+        if self.value_inputs.query("ValueInput.lane"):
+            await self._close_vector_inputs()
         self.value_input.value = ""
         self.table.focus()
 
     @staticmethod
-    def _parse_value(reg: Reg, text: str) -> Union[int, list, None]:
-        """Parse the input text for ``reg``: int, or per-lane list (vec).
+    def _parse_lane(vt, text: str) -> int | None:
+        """Parse one vector lane: decimal or 0x-prefixed hex.
 
-        Accepts decimal or 0x-prefixed hex.  Vector registers take
-        comma-separated lanes; a single value repeats over all lanes.
-        Returns ``None`` if the text does not fit the register.
+        Returns ``None`` if the text does not fit the lane (sint lanes
+        may be negative).
         """
-        vt = reg.value_type
+        try:
+            v = int(text.strip(), 0)
+        except ValueError:
+            return None
+        if vt.kind is ValueKind.sint:
+            return (
+                v if -(1 << (vt.width - 1)) <= v < (1 << (vt.width - 1))
+                else None
+            )
+        return v if 0 <= v < (1 << vt.width) else None
 
-        def one(s: str) -> int | None:
-            try:
-                v = int(s.strip(), 0)
-            except ValueError:
-                return None
-            return v if 0 <= v < (1 << vt.width) else None
+    @staticmethod
+    def _parse_value(reg: Reg, text: str) -> int | None:
+        """Parse the input text for a scalar ``reg``.
 
-        if vt.vec_len:
-            vals = [one(s) for s in text.split(",")]
-            if any(v is None for v in vals):
-                return None
-            if len(vals) == 1:
-                return vals * vt.vec_len
-            if len(vals) != vt.vec_len:
-                return None
-            return vals
-        return one(text)
+        Accepts decimal or 0x-prefixed hex.  Returns ``None`` if the
+        text does not fit the register (sint regs may be negative).
+        """
+        return SkmapUiApp._parse_lane(reg.value_type, text)
+
+    def _write_vec_row(self, row: int, reg: Reg, values: list[int]) -> None:
+        """Write every vector lane to the device, async (see
+        ``_write_row``)."""
+        key = self._row_keys[row]
+        self._run_regio(
+            self._write_vec_row_async(key, reg, values), name=f"write {reg.name}"
+        )
 
     def _clear_row(self, row: int, reg: Reg) -> None:
         value = (
@@ -1067,12 +1158,39 @@ class SkmapUiApp(App):
             if op == "CLEAR":
                 await self._regio(reg.write_zero())
             elif isinstance(value, list):
-                await self._regio(reg.write_list_uint(value))
+                if reg.value_type.kind is ValueKind.sint:
+                    await self._regio(reg.write_list_sint(value))
+                else:
+                    await self._regio(reg.write_list_uint(value))
             else:
                 await self._regio(reg.write_uint(value))
         except Exception as err:  # noqa: BLE001
             logging.warning(
                 "%s to %s @ %s failed: %s", op, reg.name, hex(reg.addr), err
+            )
+            return
+        # read the value back from the device (updates the cache too)
+        await self._read_row_async(key, reg)
+
+    async def _write_vec_row_async(
+        self, key: str, reg: Reg, values: list[int]
+    ) -> None:
+        """Write one lane at a time: ``write_idx_uint`` / ``write_idx_sint``
+        (chosen by the value kind), then read the register back."""
+        # hold the write until an in-flight refresh has finished
+        await self._wait_refresh_idle()
+        writer = (
+            reg.write_idx_sint
+            if reg.value_type.kind is ValueKind.sint
+            else reg.write_idx_uint
+        )
+        try:
+            async with self._regio_lock:
+                for idx, value in enumerate(values):
+                    await writer(idx, value)
+        except Exception as err:  # noqa: BLE001
+            logging.warning(
+                "write to %s @ %s failed: %s", reg.name, hex(reg.addr), err
             )
             return
         # read the value back from the device (updates the cache too)

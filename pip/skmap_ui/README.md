@@ -41,14 +41,27 @@ and the assert check runs automatically.
 ### Editing register values
 
 Pressing `enter` on a register-map row edits its value in the input bar
-between the workspace and the log:
+between the workspace and the log.  The input is **prefilled with the
+current value** (hex for `bits` kinds, decimal otherwise) so it can be
+edited in place; input accepts decimal or `0x`-hex:
 
 | row's `Acc` | `enter` does |
 |------|--------|
-| `rw` / `wt` | focuses the input bar; type the new value (decimal or `0x`-hex, vector regs take comma-separated lanes or one value for all lanes) and `enter` writes it to the **device** via `Reg.write_uint` / `RegVec.write_list_uint`; `escape` cancels |
+| `rw` / `wt` | focuses the input bar and prefills the current value; `enter` writes it to the **device** via `Reg.write_uint`; `escape` cancels |
 | `rc` | **clears** the register immediately (writes zero to the device) |
 | `ro` | nothing (read-only; use `t` to read it from the device) |
 | `k` / `na` | nothing — the value is hardwired / has no access, so it is never read back |
+
+**Vector registers** open one input column per vector index instead of
+a single input line; each column is prefilled with its current lane
+value (`Reg.read_idx_value_cached`) and `enter` writes every lane to
+the device with `Reg.write_idx_uint` (or `Reg.write_idx_sint` for
+signed lanes — negative values accepted); `escape` cancels and
+restores the single input line.
+
+Value cells that are wider than the Value column **wrap over multiple
+lines** (auto-height table rows) instead of being clipped; a row is
+re-measured when its value changes length.
 
 Flag and external-mem rows cannot be edited from the input bar (use `t`
 to toggle a flag). Device errors are reported on stderr (Python
