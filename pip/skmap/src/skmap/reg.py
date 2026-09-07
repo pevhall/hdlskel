@@ -110,41 +110,39 @@ class Reg:
         _ = await self.read_bytes()
         return self.ass_check_cached(log_ass, log_f)
 
-    def ass_check_value_limit_min_cached(self, value : int) -> Ass:
+    def ass_check_value_limit_min(self, value : int) -> Ass:
         if self.min is None:
             return Ass.none
-        if value is None:
-            value = self.read_value_cached() #type:ignore
-            assert isinstance(value, int)
-        if value > self.min:
+        if value >= self.min:
             return Ass.none
-        if value == self.min:
-            return Ass.debug
+        # if value == self.min:
+        #     return Ass.debug
         if self.ass != Ass.none:
             return self.ass
         return Ass.error
 
-    def ass_check_value_limit_max_cached(self, value : int ) -> Ass:
+    def ass_check_value_limit_max(self, value : int ) -> Ass:
         if self.max is None:
             return Ass.none
-        if value is None:
-            value = self.read_value_cached() #type:ignore
-            assert isinstance(value, int)
-        if value < self.max:
+        if value <= self.max:
             return Ass.none
-        if value == self.max:
-            return Ass.debug
+        # if value == self.max:
+        #     return Ass.debug
         if self.ass != Ass.none:
             return self.ass
         return Ass.error
 
-    def ass_check_value_limit_cached(self, value : int) -> Ass:
-        return max(self.ass_check_value_limit_min_cached(value), self.ass_check_value_limit_max_cached(value))
+    def ass_check_value_limit(self, value : int) -> Ass:
+        return max(self.ass_check_value_limit_min(value), self.ass_check_value_limit_max(value))
+
+    def check_value_limit(self, value : int):
+        if (self.ass_check_value_limit(value) >= Ass.error):
+            raise ValueError(f"for reg {self.name} {value=} is not in range [{self.min} , {self.max}]")
 
     def ass_check_limit_cached(self) -> Ass:
         value = self.read_value_cached() #type:ignore
         assert isinstance(value, int)
-        return self.ass_check_value_limit_cached(value)
+        return self.ass_check_value_limit(value)
 
     def _str_num(self, value : int, base : Literal[2, 10, 16]) -> str:
         match (base):
@@ -160,13 +158,11 @@ class Reg:
         min_s = ''
         max_s = ''
         if self.min is not None:
-            min_color = self.ass_check_value_limit_min_cached(value_min).color;
+            min_color = self.ass_check_value_limit_min(value_min).color;
             min_s = f'{to_rich_str(self._str_num(self.min, base), min_color)} <= '
         if self.max is not None:
-            max_color = self.ass_check_value_limit_max_cached(value_max).color;
-            print(f'{self.max=}')
+            max_color = self.ass_check_value_limit_max(value_max).color;
             max_s = f' <= {to_rich_str(self._str_num(self.max, base), max_color)}'
-            print(f'{max_s=}')
         return f"({min_s}{to_rich_str('v', v_color)}{max_s}) "
 
     def read_rich_str_cached(self) -> str:
@@ -224,6 +220,7 @@ class Reg:
         await self.write_cache()
 
     def write_uint_cached(self, v : int):
+        self.check_value_limit(v)
         b = v.to_bytes(self.size, byteorder='little', signed=False)
         return self.write_bytes_cached(b)
 
@@ -232,6 +229,7 @@ class Reg:
         await self.write_cache()
 
     def write_sint_cached(self, v : int):
+        self.check_value_limit(v)
         b = v.to_bytes(self.size, byteorder='little', signed=True)
         return self.write_bytes_cached(b)
 
@@ -417,7 +415,7 @@ class RegVec(Reg):
         for idx in range(self.value_type.vec_len):
             v = self.read_idx_value_cached(idx)
             assert isinstance(v, int)
-            v_ass = self.ass_check_value_limit_cached(v)
+            v_ass = self.ass_check_value_limit(v)
             if ass < v_ass:
                 ass = v_ass
         return ass
@@ -442,7 +440,7 @@ class RegVec(Reg):
         if self.has_limit():
             value = self.read_idx_value_cached(idx)
             assert isinstance(value, int)
-            ass = self.ass_check_value_limit_cached(value)
+            ass = self.ass_check_value_limit(value)
         elif self.ass == Ass.none:
             return Ass.none
         else:

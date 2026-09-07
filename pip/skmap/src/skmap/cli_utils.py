@@ -84,7 +84,7 @@ def parse_args(parser : Optional[argparse.ArgumentParser] = None, return_parser 
         dest='verbose',
         action="count",
         default=0,
-        help="Increase logging verbosity (repeat up to -vvv)"
+        help="Increase logging verbosity (repeat up to -vv)"
     )
     if return_parser:
         return parser

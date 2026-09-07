@@ -1,5 +1,6 @@
 from enum import Enum, auto, IntEnum
 from typing import Optional
+from .basic import promote_to_sw_w
 
 SKMAP_VER_MAJOR = 1
 SKMAP_VER_MINOR = 1
@@ -108,6 +109,17 @@ class ValueType:
     @property
     def is_bool(self) -> bool:
         return self.kind == ValueKind.flag and self.width == 1
+
+    @property
+    def elem_size(self) -> int:
+        return promote_to_sw_w(self.width)>>3
+
+    @property
+    def total_size(self) -> int:
+        s = self.elem_size
+        if self.vec_len is not None:
+            s *= self.vec_len 
+        return s
 
     def __repr__(self) -> str:
         s = ''

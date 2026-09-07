@@ -132,6 +132,17 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     s += f'    def {reg.name}_inst(self) -> skmap.{inst_type}:\n'
     s += f'        return {reg_name}\n\n'
 
+    if isinstance(reg, RecipeVar):
+        if reg.max is not None:
+            s += f'    @property\n'
+            s += f'    def {reg.name}_max(self) -> int:\n'
+            s += f'        return {to_python_source(reg.max)}\n\n'
+        if reg.min is not None:
+            s += f'    @property\n'
+            s += f'    def {reg.name}_min(self) -> int:\n'
+            s += f'        return {to_python_source(reg.min)}\n\n'
+        
+
     match reg.acc:
         case Acc.k:
             s += f'    @property\n'
@@ -432,8 +443,8 @@ class {recipe.sw_module}(skmap.Module):
                     ass_str = f', ass=skmap.Ass.{varv.ass.to_str()}'
                 max_s = ''
                 min_s = ''
-                if varv.max != None: max_s = f', max={to_python_source(varv.max)}'
-                if varv.min != None: min_s = f', min={to_python_source(varv.min)}'
+                if varv.max is not None: max_s = f', max={to_python_source(varv.max)}'
+                if varv.min is not None: min_s = f', min={to_python_source(varv.min)}'
 
                 t_str = value_type_str(varv.t)
                 reg_type = 'RegVec' if varv.t.is_vec else 'Reg'

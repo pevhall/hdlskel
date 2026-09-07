@@ -136,8 +136,10 @@ async def test_skmap_module_test_acc_types(dut):
         # RW_LEN = module.regs_rw_value_type.vec_len 
         # RW_VAL_W = module.regs_rw_value_type.width 
         assert RW_LEN is not None
-        for ii in range(RW_LEN):
-            await module.regs_rw_write_idx(ii,100-70*ii)
+        await module.regs_rw_write_idx(0,module.regs_rw_max)
+        await module.regs_rw_write_idx(1,module.regs_rw_min)
+        for ii in range(2,RW_LEN):
+            await module.regs_rw_write_idx(ii,module.regs_rw_min+10*ii)
             # await module.regs_rw_write_idx(ii,(1<<RW_VAL_W)-1)
         # print(f'{module.regs_rw_read_cached()=}')
         # print(f'{await module.regs_rw_read()=}')
@@ -154,6 +156,10 @@ async def test_skmap_module_test_acc_types(dut):
     # print('update')
     await module.read_all()
     module.print_reg_map_cached()
+
+    list_reg = []
+    _ = module.check_assert_tree_cached(skmap.Ass.debug, list_reg)
+    skmap.print_table_reg_list(list_reg, title=f'Asserts')
 
     module.mem_rw_inst._regio.log_regio = True
     rw_data_bytes = await module.mem_rw_read(0, module.mem_rw_size)

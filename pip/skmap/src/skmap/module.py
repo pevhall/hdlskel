@@ -14,7 +14,7 @@ from .head import Head, SIZE_HEAD, SIZE_WORD, SYNC
 from .basic_types import Acc, Ass, ValueKind, ValueType, value_type_u8, value_type_x32, SKMAP_VER_STR, SKMAP_VER_MAJOR, SKMAP_VER_MINOR, SKMAP_VER_PATCH
 from .basic import ceil_log2, ceil_div, ceil_multiple, promote_to_sw_w, bytes_to_list_int, list_int_to_bytes, cast_uint_to_sint, to_rich_str
 from .reg import Reg, RegVec, RegK, RegVecK, RegFlags, RegFlagsK, RFlag
-from .external_mem import ExternalMem, ExternalMemCached
+from .external_mem import ExternalMem, ExternalMemCached, external_mem_cast_to_derived_if_possible
 from .reg_map_table import RegMapTable
 
 # class Fmt(Enum):
@@ -112,6 +112,8 @@ class Module(ABC):
         assert byte_idx_expected == self._byte_idx, f'head var len = {self._head.len_var=}, map var len {self._byte_idx/SIZE_WORD-self._base_addr_var/SIZE_WORD}'
 
         self._init_external_mem()
+        for ii in range(len(self._arr_external_mem)):
+            self._arr_external_mem[ii] = external_mem_cast_to_derived_if_possible(self._arr_external_mem[ii])
 
         self._init_finialise()
 
@@ -322,6 +324,7 @@ class Module(ABC):
     @abstractmethod
     def skmap_ver_str(cls) -> str:
         pass
+
 
     @abstractmethod
     def _init_reg_map_k(self) -> None:
