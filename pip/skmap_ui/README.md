@@ -33,7 +33,7 @@ currently displayed is **highlighted** (bold bright blue).
 | `a` | re-run `make_tree()` + `check_assert_tree_cached()` and append the triggered asserts to the log |
 | `l` | cycle the **assert level** (debug → info → warn → error → fatal): asserts below the level are no longer logged (see *Assert log*) |
 | `r` | cycle the **refresh period** (off → 1 → 5 → 30 s): every period the app calls `Module.read_all_tree()`, re-checks the asserts (appending any triggered ones to the log) and clears the `rc` registers (see *Assert log*) |
-| `x` | **clear triggered**: write zero to the `rc` registers (skmap's `Module.clear_reg_rc_tree()` + `Module.clear_assert_tree()`), then re-check |
+| `x` | **clear triggered**: clear all `rc` registers of the selected module (`Module.clear_reg_rc()`) and the triggered asserts of the whole tree (`Module.clear_assert_tree()`), then re-check |
 
 On start the top module is selected (its register map is shown right away)
 and the assert check runs automatically.
@@ -59,19 +59,51 @@ the device with `Reg.write_idx_uint` (or `Reg.write_idx_sint` for
 signed lanes — negative values accepted); `escape` cancels and
 restores the single input line.
 
+**Min / max limits**: a register can carry configured `min` / `max`
+limits (shown in the Value column as e.g. `(-2 <= v <= 100)`).  A
+value outside the limits is rejected **in the input bar** — the same
+condition skmap's `Reg.check_value_limit()` raises on, checked locally
+so the write is aborted before it reaches the device.  `t` on such a
+register picks a random value *within* the limits.
+
 Value cells that are wider than the Value column **wrap over multiple
 lines** (auto-height table rows) instead of being clipped; a row is
-re-measured when its value changes length.
+re-measured when its value changes length.  The Value column is
+left-aligned (a right-aligned value looks odd when it wraps).
 
-Flag and external-mem rows cannot be edited from the input bar (use `t`
-to toggle a flag). Device errors are reported on stderr (Python
-`logging`), never in the log view.
+Flag rows cannot be edited from the input bar (use `t` to toggle a
+flag).  Device errors are reported on stderr (Python `logging`), never
+in the log view.
 
 If a periodic refresh is in progress when a write is made (input bar
 `enter`, `t`, or an `rc` clear), the write is **held** and only goes
 to the device once the refresh has finished — a refresh reads the
 whole tree and then clears the `rc` registers, so a write landing in
 the middle of it would be observed (or wiped) by the refresh.
+
+### Editing an external mem (`ExternalMemVec`)
+
+An external mem whose value type is a vector is an
+`skmap.external_mem.ExternalMemVec`.  Selecting it in the tree opens a
+**vec view**: a header row (the border title shows the mem's addr,
+type, acc, name and description) plus **one row per vector index**, the
+value cells read with `ExternalMemVec.read_idx_rich_str_cached` and the
+whole mem read from the device on open.  Pressing `enter`:
+
+| row | `enter` does |
+|------|--------|
+| a lane row, `rw` / `wt` | prefills the input bar with the lane's value; `enter` writes it with `write_idx_uint` (or `write_idx_sint` for signed lanes) |
+| the header row, `rw` / `wt` | opens one input column per lane (all prefilled); `enter` writes every lane |
+| a lane row, `rc` | writes zero to that lane (`write_idx_uint(idx, 0)`) |
+| the header row, `rc` | writes zero to every lane |
+
+### Clearing `rc` registers (refresh / `x`)
+
+A refresh (and the `x` key) clears **all `rc` registers of the
+*selected* module** (`clear_reg_rc()`) — the register map only shows
+that module — and the **triggered asserts of the whole tree**
+(`clear_assert_tree()`, recursive) — the log checks the whole tree,
+so its asserts are cleared tree-wide.
 
 ## Assert log
 
@@ -105,7 +137,7 @@ The three options:
 | option | CLI | key | effect |
 |--------|-----|-----|--------|
 | assert level | `--asserts-level {debug,info,warn,error,fatal}` (default `debug`) | `l` | asserts below the level still count for the *worst* level, but are **not** listed in the log |
-| refresh period | `--refresh SECS` (default `0` = off) | `r` (cycles off/1/5/30) | every period the app 1. calls `Module.read_all_tree()` (all registers of the whole tree, including external mem caches, are **read from the device**), 2. re-checks the asserts — appending a block to the log if any are triggered — and updates the *Value* cells of the displayed table, and 3. clears the triggered `rc` registers via `Module.clear_reg_rc()` + `Module.clear_assert_tree()`, so the next refresh only logs **new** events. Register writes made while a refresh is in progress are **held** until it has finished (see *Editing register values*) |
+| refresh period | `--refresh SECS` (default `0` = off) | `r` (cycles off/1/5/30) | every period the app 1. calls `Module.read_all_tree()` (all registers of the whole tree, including external mem caches, are **read from the device**), 2. re-checks the asserts — appending a block to the log if any are triggered — and updates the *Value* cells of the displayed table, and 3. clears all `rc` registers of the *selected* module via `Module.clear_reg_rc()` and the triggered asserts of the *whole tree* via `Module.clear_assert_tree()`, so the next refresh only logs **new** events. Register writes made while a refresh is in progress are **held** until it has finished (see *Editing register values*) |
 | clear triggered | — | `x` | writes zero to the `rc` registers the same way as a refresh (without the device read), then re-checks |
 
 `make_tree()` is only re-run by `a` (it loads uninitialised kids); the

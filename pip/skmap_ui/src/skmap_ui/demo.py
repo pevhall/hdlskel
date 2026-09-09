@@ -38,7 +38,8 @@ from skmap.basic_types import (
     SKMAP_VER_MINOR,
     SKMAP_VER_PATCH,
     SKMAP_VER_STR,
-    value_type_u8,
+    ValueKind,
+    ValueType,
     value_type_x32,
 )
 from skmap.head import SYNC
@@ -127,7 +128,7 @@ _TOP_DATA = (
     _head_bytes("DEMO_TOP", 1, 0x1234, len_kids=2, len_sub=3, len_k=1, len_var=2)
     + _u32(_SYSCTRL_ADDR)
     + _u32(_PMU_ADDR)
-    + _mem_sub(_DMEM_ADDR, 1024, Acc.rw)
+    + _mem_sub(_DMEM_ADDR, 16, Acc.rw)
     + _u32(0xDEAD0001)  # K_ID
     + _u32(5)  # V_RESET (rw)
     + bytes([0b01])  # FLAGS (rw): f0 (warn) set, f1 (none) clear
@@ -231,8 +232,13 @@ class DemoTop(_DemoModule):
         )
 
     def _init_external_mem(self) -> None:
+        # 16 u8 lanes: ExternalMemVec, so selecting DMEM in the tree
+        # opens the vec view (one row per index, editable)
         self.arr_external_mem[0].details(
-            "DMEM", value_type_u8, Acc.rw, "demo data memory"
+            "DMEM",
+            ValueType(kind=ValueKind.uint, width=8, vec_len=16),
+            Acc.rw,
+            "demo data memory",
         )
 
 

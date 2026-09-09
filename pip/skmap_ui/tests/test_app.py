@@ -11,6 +11,7 @@ import re
 
 from skmap import Acc, Ass, Head, RFlag, Reg, RegVec, ValueKind, ValueType
 from skmap import register_Module
+from skmap.external_mem import ExternalMemVec
 from skmap_ui import SkmapUiApp
 # column indices of the register map table (see SkmapUiApp.on_mount)
 ADDR, T, ACC, NAME, VALUE, DESC = range(6)
@@ -21,6 +22,7 @@ from skmap_ui.demo import (
     _SYSCTRL_ADDR,
     _SYSCTRL_DATA,
     _head_bytes,
+    _mem_sub,
     _u32,
 )
 from rich.text import Text
@@ -337,7 +339,7 @@ def test_register_map_top():
 
             # external mem row
             assert _cell(app, 5, NAME) == "DMEM"
-            assert _cell(app, 5, VALUE).strip() == "(Mem size:1024 B)"
+            assert _cell(app, 5, VALUE).strip() == "(Mem size:16 B)"
 
             # row objects are real skmap instances
             assert isinstance(app._row_objs[app._row_keys[0]], Reg)
@@ -369,28 +371,46 @@ def test_register_map_kid():
 
 
 def test_external_mem_node():
+    """The demo's DMEM is an ExternalMemVec: selecting it in the tree
+    opens the vec view (header row + one row per index); enter on a
+    lane row prefills and edits that lane (write_idx_uint)."""
     async def run():
         top = make_demo()
         app = SkmapUiApp(top)
         async with app.run_test() as pilot:
             await _wait_asserts(app, pilot)
             mem = top.arr_external_mem[0]
+            assert isinstance(mem, ExternalMemVec)
             await _select_node(app, _find_node(app, mem), pilot)
 
-            assert app.table.row_count == 1
+            # header row + one row per vec index
+            assert app.table.row_count == 1 + mem.vec_len()
             assert _cell(app, 0, NAME) == "DMEM"
             assert _cell(app, 0, ACC) == "rw"
-            assert "DMEM" in app.table.border_title
+            # the header contains addr, type, acc, name and description
+            title = app.table.border_title
+            assert hex(mem.base_addr) in title
+            assert mem.value_type_str() in title
+            assert "rw" in title
+            assert "DMEM" in title
+            assert "demo data memory" in title
             assert app._row_module is None
+            assert _cell(app, 1, NAME) == "DMEM[0]"
+            assert _cell(app, 2, NAME) == "DMEM[1]"
 
-            app.table.move_cursor(row=0, column=0)
-            app.action_trigger_selected()
-            # the cell shows the first bytes read from the (fake) device
-            for _ in range(500):
-                if _cell(app, 0, VALUE).strip().startswith("(Mem "):
-                    break
-                await pilot.pause()
-            assert _cell(app, 0, VALUE).strip().startswith("(Mem ")
+            # the (empty) device reads back zero in the lanes
+            await _wait_cell(app, pilot, 1, VALUE, "0")
+
+            # enter on a lane row prefills the current value
+            app.table.move_cursor(row=1, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.value_input.value == "0"
+            app.value_input.value = "0x2a"
+            await pilot.press("enter")
+            await pilot.pause()
+            await _wait_cell(app, pilot, 1, VALUE, "42")
+            assert mem.read_idx_uint_cached(0) == 0x2A
 
     _run(run())
 
@@ -854,6 +874,7 @@ def make_edit_top():
     vt_big = ValueType(kind=ValueKind.bits, width=128)
     vt_u4 = ValueType(kind=ValueKind.uint, width=8, vec_len=4)
     vt_s2 = ValueType(kind=ValueKind.sint, width=8, vec_len=2)
+    vt_lmt = ValueType(kind=ValueKind.bits, width=32)
 
     class _EditTop(_DemoModule):
         mid = edit_mid
@@ -879,15 +900,23 @@ def make_edit_top():
             self._add_reg_var(
                 RegVec(self, "S2", vt_s2, acc=Acc.rw, desc="sint vec")
             )
+            self._add_reg_var(
+                Reg(
+                    self, "LMT", vt_lmt, acc=Acc.rw,
+                    desc="limited", max=100, min=2,
+                )
+            )
 
     register_Module(_EditTop)
 
     data = (
-        # 16 + 4 + 2 = 22 bytes of regs, word padded -> 6 words
-        _head_bytes(edit_mid, 1, 0, len_kids=0, len_sub=0, len_k=0, len_var=6)
+        # 16 + 4 + 2 + 4 = 26 bytes of regs, word padded -> 7 words
+        _head_bytes(edit_mid, 1, 0, len_kids=0, len_sub=0, len_k=0, len_var=7)
         + big.to_bytes(16, "little")
         + bytes([0xAA, 0xBB, 0xCC, 0xDD])
         + bytes([5, 0xAB])  # sint lanes: 5 and -85
+        + b"\x00" * 2  # LMT is word aligned
+        + (30).to_bytes(4, "little")  # LMT within [2, 100]
     )
     regio = MemRegio()
     regio.write_mem(0x70000000, data)
@@ -1006,6 +1035,241 @@ def test_value_cells_wrap_over_multiple_lines():
             # one line again: the auto-height row is re-measured
             app._update_row_value("r0", Text("0x0"))
             assert app.table.get_row_height("r0") == 1
+    _run(run())
+
+
+def test_edit_outside_min_max_aborted():
+    """A value outside a reg's configured min / max limits is caught
+    locally (the condition Reg.check_value_limit() would raise on) and
+    the write is aborted before it reaches the device; 't' picks random
+    values within the limits."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            lmt = top.arr_reg_var[3]
+            assert lmt.name == "LMT" and lmt.min == 2 and lmt.max == 100
+
+            app.table.focus()
+            app.table.move_cursor(row=3, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            # bits kind: prefilled in hex
+            assert app.value_input.value == "0x1e"
+
+            # 256 > max 100: rejected, the input stays open for a fix
+            app.value_input.value = "0x100"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.app.focused is app.value_input
+            assert app.value_input.value == "0x100"
+            assert lmt.read_uint_cached() == 30
+
+            # 1 < min 2: rejected as well
+            app.value_input.value = "1"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.app.focused is app.value_input
+            assert lmt.read_uint_cached() == 30
+
+            # in range: written (the cell shows the limit range prefix)
+            app.value_input.value = "100"
+            await pilot.press("enter")
+            await pilot.pause()
+            await _wait_cell(app, pilot, 3, VALUE, "(0x0002 <= v <= 0x0064) 0x0064")
+            assert lmt.read_uint_cached() == 100
+
+            # 't' picks random values within [2, 100]
+            for _ in range(5):
+                app.table.move_cursor(row=3, column=0)
+                await pilot.press("t")
+                await pilot.pause()
+                assert 2 <= lmt.read_uint_cached() <= 100
+    _run(run())
+
+
+# ---------------------------------------------------------------------------
+# ExternalMemVec views: header + lane rows, lane / all-lane edits, rc clear
+# ---------------------------------------------------------------------------
+
+_vecmem_top_counter = itertools.count()
+
+
+def make_vecmem_top():
+    """A module with two vec external mems (rw uint8 x4, rc sint8 x2)."""
+    n = next(_vecmem_top_counter)
+    vec_mid = f"VECMEM{n}"[:8]
+    vt_rw = ValueType(kind=ValueKind.uint, width=8, vec_len=4)
+    vt_rc = ValueType(kind=ValueKind.sint, width=8, vec_len=2)
+    rw_addr = 0x70001000
+    rc_addr = 0x70002000
+
+    class _VecMemTop(_DemoModule):
+        mid = vec_mid
+
+        @classmethod
+        def name(cls) -> str:
+            return "VECMEM"
+
+        @classmethod
+        def checksum(cls) -> int:
+            return n
+
+        def _init_reg_map_k(self) -> None:
+            pass
+
+        def _init_reg_map_var(self) -> None:
+            pass
+
+        def _init_external_mem(self) -> None:
+            assert self.len_external_mem == 2
+            self.external_mem_at(0).details(
+                "MEMV", vt_rw, Acc.rw, "vec mem rw"
+            )
+            self.external_mem_at(1).details(
+                "MRC", vt_rc, Acc.rc, "vec mem rc"
+            )
+
+    register_Module(_VecMemTop)
+
+    data = (
+        _head_bytes(vec_mid, 1, 0, len_kids=0, len_sub=6, len_k=0, len_var=0)
+        + _mem_sub(rw_addr, 4, Acc.rw)
+        + _mem_sub(rc_addr, 2, Acc.rc)
+    )
+    regio = MemRegio()
+    regio.write_mem(0x70000000, data)
+    regio.write_mem(rw_addr, bytes([0xAA, 0xBB, 0xCC, 0xDD]))
+    regio.write_mem(rc_addr, bytes([7, 0xF0]))  # sint lanes: 7 and -16
+    return _VecMemTop(regio, 0x70000000, Head(data), bytearray(data))
+
+
+def test_external_mem_vec_lane_edit():
+    """An ExternalMemVec is shown as a header row plus one row per vec
+    index (read_idx_rich_str_cached); enter on a lane row prefills and
+    edits that lane (write_idx_uint)."""
+    async def run():
+        top = make_vecmem_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            mem = top.arr_external_mem[0]
+            assert isinstance(mem, ExternalMemVec)
+            await _select_node(app, _find_node(app, mem), pilot)
+
+            # header row + 4 lane rows
+            assert len(app._row_keys) == 5
+            assert app._row_mem_idx == {"r1": 0, "r2": 1, "r3": 2, "r4": 3}
+            # uint8 lanes are shown in decimal
+            assert _cell(app, 1, NAME) == "MEMV[0]"
+            await _wait_cell(app, pilot, 1, VALUE, "170")
+            assert _cell(app, 2, VALUE).strip() == "187"
+            assert _cell(app, 3, VALUE).strip() == "204"
+            assert _cell(app, 4, VALUE).strip() == "221"
+
+            # edit one lane: enter prefills the current value
+            app.table.focus()
+            app.table.move_cursor(row=2, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.value_input.value == "187"
+            app.value_input.value = "0xF0"
+            await pilot.press("enter")
+            await pilot.pause()
+            await _wait_cell(app, pilot, 2, VALUE, "240")
+            assert mem.read_idx_uint_cached(1) == 0xF0
+
+    _run(run())
+
+
+def test_external_mem_vec_all_lanes_edit():
+    """enter on the header row of an ExternalMemVec view opens one input
+    per lane (all prefilled); submit writes every lane."""
+    async def run():
+        top = make_vecmem_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            mem = top.arr_external_mem[0]
+            await _select_node(app, _find_node(app, mem), pilot)
+
+            app.table.focus()
+            app.table.move_cursor(row=0, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            lanes = list(app.value_inputs.query("ValueInput.lane"))
+            assert [l.value for l in lanes] == ["170", "187", "204", "221"]
+            lanes[2].value = "1"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert len(app.value_inputs.query("ValueInput.lane")) == 0
+            await _wait_cell(app, pilot, 3, VALUE, "1")
+            assert _cell(app, 1, VALUE).strip() == "170"
+            assert mem.read_idx_uint_cached(2) == 1
+    _run(run())
+
+
+def test_external_mem_vec_rc_clear():
+    """enter on an rc ExternalMemVec lane row writes zero to the lane;
+    on the header row it clears every lane (write_idx_uint(idx, 0))."""
+    async def run():
+        top = make_vecmem_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            mem = top.arr_external_mem[1]
+            assert mem.acc == Acc.rc
+            await _select_node(app, _find_node(app, mem), pilot)
+
+            # header row + 2 lane rows; lane 1 is a -16 sint8
+            assert len(app._row_keys) == 3
+            await _wait_cell(app, pilot, 1, VALUE, "7")
+            await _wait_cell(app, pilot, 2, VALUE, "-16")
+
+            # enter on the lane row clears just that lane
+            app.table.focus()
+            app.table.move_cursor(row=2, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            await _wait_cell(app, pilot, 2, VALUE, "0")
+            assert _cell(app, 1, VALUE).strip() == "7"
+
+            # enter on the header row clears every lane
+            app.table.move_cursor(row=0, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            await _wait_cell(app, pilot, 1, VALUE, "0")
+            assert _cell(app, 2, VALUE).strip() == "0"
+            assert mem.read_idx_sint_cached(0) == 0
+            assert mem.read_idx_sint_cached(1) == 0
+    _run(run())
+
+
+def test_clear_triggered_clears_shown_module_rc():
+    """'x' (and the refresh) clear the rc registers of the *selected*
+    module (clear_reg_rc) and the triggered asserts of the whole tree
+    (clear_assert_tree)."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            # the PMU's V_EVENT rc reg is triggered (info, level >= debug)
+            pmu = top.kids_cached()[1]
+            v_event = pmu.arr_reg_var[0]
+            assert v_event.read_uint_cached() == 1
+
+            # show the PMU map, then clear triggered: V_EVENT (the rc reg
+            # of the selected module) is written zero ...
+            await _select_node(app, _find_node(app, pmu), pilot)
+            app.action_clear_triggered()
+            for _ in range(500):
+                if v_event.read_uint_cached() == 0:
+                    break
+                await pilot.pause()
+            assert v_event.read_uint_cached() == 0
     _run(run())
 
 
