@@ -88,7 +88,13 @@ regio reads/writes (never ``*_cached``), so the value really goes to
 cache is refreshed; ``k`` (hardwired) and ``na`` (no access) assets
 are never read back.  All three panes are resizable with the mouse:
 drag the divider between tree and table, or between the table and the
-log.
+log.  The ``v`` key toggles the display of ``uint`` / ``sint`` values
+between int (decimal) and bits (hex, like the ``bits`` kind) — the
+input prefill follows the display; the ``e`` key expands vector
+registers in the register map into one row per vector index (like the
+``ExternalMemVec`` view): ``enter`` on a lane row edits just that lane
+(``enter`` on an ``rc`` lane clears it).  The active options are shown
+in the table's border title.
 """
 
 from __future__ import annotations
@@ -278,6 +284,8 @@ class SkmapUiApp(App):
         ("l", "cycle_asserts_level", "Assert level"),
         ("r", "cycle_refresh", "Refresh"),
         ("x", "clear_triggered", "Clear triggered"),
+        ("v", "toggle_value_bits", "Value bits"),
+        ("e", "toggle_expand_vec", "Expand vec"),
         Binding("enter", "edit_selected_value", "Edit value", show=False),
     ]
 
@@ -327,12 +335,26 @@ class SkmapUiApp(App):
         # (memory churn).
         self._row_value_str: dict[str, str] = {}
         # ExternalMemVec view: row key -> vec index of the lane rows
-        # (the header row's key is _mem_view_header); _mem_edit is the
-        # (row key, lane index) the input line is currently editing
-        # (index None = the header row: every lane)
+        # (the header row's key is _mem_view_header)
         self._row_mem_idx: dict[str, int] = {}
         self._mem_view_header: str | None = None
-        self._mem_edit: tuple[str, int | None] | None = None
+        # (row key, lane index) the input line is currently editing
+        # (index None = every lane: the header row of a vec mem view);
+        # the row's obj is an ExternalMemVec or a Reg (a lane row of an
+        # expanded vector register)
+        self._edit_lane: tuple[str, int | None] | None = None
+        # vector register lane rows of the shown module map (row key ->
+        # vector index), filled while _expand_vec is on
+        self._row_reg_idx: dict[str, int] = {}
+        # the external mem currently shown in the table (None: a module
+        # map is shown)
+        self._row_mem: ExternalMem | None = None
+        # value display: False = int (decimal for uint / sint),
+        # True = bits (hex, like the bits kind) — the 'v' key
+        self._value_bits = False
+        # register map: expand vector registers into one row per vector
+        # index (like the ExternalMemVec view) — the 'e' key
+        self._expand_vec = False
 
     # ------------------------------------------------------------------
     # layout
@@ -348,7 +370,8 @@ class SkmapUiApp(App):
                 id="value-input",
                 placeholder=(
                     "enter: edit (rw/wt) / clear (rc) | l: assert level | "
-                    "r: refresh | x: clear triggered | a: check asserts"
+                    "r: refresh | x: clear triggered | a: check asserts | "
+                    "v: value bits | e: expand vec"
                 ),
             )
         yield RichLog(id="log", markup=True, min_width=0)
@@ -458,20 +481,102 @@ class SkmapUiApp(App):
     # register map table (mirrors RegMapTable.add_module)
     # ------------------------------------------------------------------
 
-    def _reg_rows(self, reg: Reg) -> list[tuple[tuple, RowObj]]:
-        rows: list[tuple[tuple, RowObj]] = [
+    def _view_options_suffix(self) -> str:
+        """Border title suffix with the active display options ('v' / 'e').
+
+        NB: parentheses, not brackets — the border title is rich markup
+        and a ``[bits]`` suffix would be parsed as (and swallowed by) a
+        style tag.
+        """
+        opts = []
+        if self._value_bits:
+            opts.append("bits")
+        if self._expand_vec:
+            opts.append("expand vec")
+        return f"  ({', '.join(opts)})" if opts else ""
+
+    def _reg_value_text(self, reg: Reg) -> Text:
+        """Rich value cell of a register's own row (a header row when
+        the register is expanded).
+
+        Follows the ``v`` display toggle: when on, ``uint`` / ``sint``
+        values are shown as bits (hex, like the ``bits`` kind — sint
+        lanes as their raw two's complement) instead of int.
+        """
+        kind = reg.value_type.kind
+        if self._value_bits and kind in (ValueKind.uint, ValueKind.sint):
+            if reg.value_type.is_vec:
+                values = reg.read_list_uint_cached()
+                return Text(
+                    "[ "
+                    + ", ".join(_hex(v, reg.value_type.width) for v in values)
+                    + " ]"
+                )
+            return Text(_hex(reg.read_uint_cached(), reg.value_type.width))
+        return Text.from_markup(reg.read_rich_str_cached())
+
+    def _reg_lane_value_text(self, reg: Reg, idx: int) -> Text:
+        """Rich value cell of one lane row of an expanded vector
+        register (see ``_reg_value_text``)."""
+        kind = reg.value_type.kind
+        if self._value_bits and kind in (ValueKind.uint, ValueKind.sint):
+            return Text(_hex(reg.read_idx_uint_cached(idx), reg.value_type.width))
+        return Text(str(reg.read_idx_value_cached(idx)))
+
+    def _mem_lane_value_text(self, mem: ExternalMemVec, idx: int) -> Text:
+        """Rich value cell of one ExternalMemVec lane (see
+        ``_reg_lane_value_text``)."""
+        kind = mem.value_type.kind
+        if self._value_bits and kind in (ValueKind.uint, ValueKind.sint):
+            return Text(_hex(mem.read_idx_uint_cached(idx), mem.value_type.width))
+        return Text(mem.read_idx_rich_str_cached(idx))
+
+    def _reg_rows(self, reg: Reg) -> list[tuple[tuple, RowObj, int | None]]:
+        """Table rows for a register: the register's own row, plus one
+        row per vector index while ``_expand_vec`` is on (like the
+        ExternalMemVec view), plus the flag sub-rows of a RegFlags.
+
+        Each row is (cells, obj, vector index or None).
+        """
+        rows: list[tuple[tuple, RowObj, int | None]] = [
             (
                 (
                     Text(hex(reg.addr), style="cyan"),
                     Text(reg.value_type_str(), style="blue"),
                     Text(str(reg.acc), style="blue"),
                     Text(reg.name, style="cyan"),
-                    Text.from_markup(reg.read_rich_str_cached()),
+                    self._reg_value_text(reg),
                     Text(reg.desc, style="blue"),
                 ),
                 reg,
+                None,
             )
         ]
+        if (
+            self._expand_vec
+            and isinstance(reg, RegVec)
+            and reg.value_type.kind
+            in (ValueKind.uint, ValueKind.sint, ValueKind.bits)
+        ):
+            # one row per vector index (like the ExternalMemVec view)
+            for idx in range(reg.value_type.vec_len):
+                rows.append(
+                    (
+                        (
+                            Text(
+                                hex(reg.addr + idx * reg.elem_offset),
+                                style="cyan",
+                            ),
+                            Text("", style="blue"),
+                            Text("", style="blue"),
+                            Text(f"{reg.name}[{idx}]", style="cyan"),
+                            self._reg_lane_value_text(reg, idx),
+                            Text("", style="blue"),
+                        ),
+                        reg,
+                        idx,
+                    )
+                )
         if isinstance(reg, RegFlags):
             for f in reg.flags:
                 rows.append(
@@ -485,11 +590,12 @@ class SkmapUiApp(App):
                             Text(f.desc, style="blue"),
                         ),
                         f,
+                        None,
                     )
                 )
         return rows
 
-    def _mem_row(self, mem: ExternalMem) -> tuple[tuple, ExternalMem]:
+    def _mem_row(self, mem: ExternalMem) -> tuple[tuple, ExternalMem, None]:
         return (
             (
                 Text(hex(mem.base_addr), style="cyan"),
@@ -500,19 +606,22 @@ class SkmapUiApp(App):
                 Text(mem.desc, style="blue"),
             ),
             mem,
+            None,
         )
 
     def _show_module(self, module: Module) -> None:
         self._row_module = module
+        self._row_mem = None
         self._row_keys = []
         self._row_objs = {}
         self._row_value_str = {}
         self._row_mem_idx = {}
+        self._row_reg_idx = {}
         self._mem_view_header = None
-        self._mem_edit = None
+        self._edit_lane = None
         self.table.clear(columns=False)
 
-        rows: list[tuple[tuple, RowObj]] = []
+        rows: list[tuple[tuple, RowObj, int | None]] = []
         for reg in module.arr_reg_k:
             rows.extend(self._reg_rows(reg))
         for reg in module.arr_reg_var:
@@ -520,7 +629,7 @@ class SkmapUiApp(App):
         for mem in module.arr_external_mem:
             rows.append(self._mem_row(mem))
 
-        for ii, (cells, obj) in enumerate(rows):
+        for ii, (cells, obj, idx) in enumerate(rows):
             key = f"r{ii}"
             # remember the shown value so refreshes can skip update_cell()
             # for unchanged values (keeps the table render cache warm)
@@ -532,23 +641,30 @@ class SkmapUiApp(App):
             self.table.add_row(*cells, key=key, height=None)
             self._row_keys.append(key)
             self._row_objs[key] = obj
+            if idx is not None:
+                # a lane row of an expanded vector register
+                self._row_reg_idx[key] = idx
         if rows:
             self.table.move_cursor(row=0, column=0)
-        self.table.border_title = module.info_line_str()
+        self.table.border_title = (
+            module.info_line_str() + self._view_options_suffix()
+        )
 
     def _show_mem(self, mem: ExternalMem) -> None:
         self._row_module = None
+        self._row_mem = mem
         self._row_keys = []
         self._row_objs = {}
         self._row_value_str = {}
         self._row_mem_idx = {}
+        self._row_reg_idx = {}
         self._mem_view_header = None
-        self._mem_edit = None
+        self._edit_lane = None
         self.table.clear(columns=False)
         if isinstance(mem, ExternalMemVec):
             self._show_mem_vec(mem)
             return
-        cells, obj = self._mem_row(mem)
+        cells, obj, _ = self._mem_row(mem)
         self._row_value_str = {"r0": cells[4].plain}
         self.table.add_row(*cells, key="r0", height=None)
         self._row_keys.append("r0")
@@ -556,6 +672,7 @@ class SkmapUiApp(App):
         self.table.move_cursor(row=0, column=0)
         self.table.border_title = (
             f"{hex(mem.base_addr)} {mem.name} ({mem.acc}, {mem.size} B)"
+            + self._view_options_suffix()
         )
 
     def _show_mem_vec(self, mem: ExternalMemVec) -> None:
@@ -565,7 +682,7 @@ class SkmapUiApp(App):
         ``read_idx_rich_str_cached()`` and written with
         ``write_idx_uint`` / ``write_idx_sint`` (see the docstring)."""
         self._mem_view_header = "r0"
-        cells, obj = self._mem_row(mem)
+        cells, obj, _ = self._mem_row(mem)
         self.table.add_row(*cells, key="r0", height=None)
         self._row_keys.append("r0")
         self._row_objs["r0"] = obj
@@ -577,7 +694,7 @@ class SkmapUiApp(App):
                 Text("", style="blue"),
                 Text("", style="blue"),
                 Text(f"{mem.name}[{idx}]", style="cyan"),
-                Text(mem.read_idx_rich_str_cached(idx)),
+                self._mem_lane_value_text(mem, idx),
                 Text("", style="blue"),
             )
             self.table.add_row(*lane_cells, key=key, height=None)
@@ -589,6 +706,7 @@ class SkmapUiApp(App):
         self.table.border_title = (
             f"{hex(mem.base_addr)} {mem.value_type_str()} {mem.acc} "
             f"{mem.name} — {mem.desc}"
+            + self._view_options_suffix()
         )
         # the lane cells start from the (possibly stale / empty) cache:
         # read the whole mem from the device and refresh them
@@ -606,9 +724,7 @@ class SkmapUiApp(App):
             return
         for key, idx in self._row_mem_idx.items():
             if self._row_objs.get(key) is mem:
-                self._update_row_value(
-                    key, Text(mem.read_idx_rich_str_cached(idx))
-                )
+                self._update_row_value(key, self._mem_lane_value_text(mem, idx))
 
     @staticmethod
     def _mem_lane_key(idx: int) -> str:
@@ -813,12 +929,31 @@ class SkmapUiApp(App):
             self.table._update_dimensions([key])  # noqa: SLF001
             self.table.refresh(layout=True)
 
+    def _update_reg_rows(self, reg: Reg) -> None:
+        """Update all the value cells of a register in the shown table:
+        its own row and, when expanded (``_expand_vec``), its lane
+        rows."""
+        for key, obj in self._row_objs.items():
+            if obj is reg and key in self._row_reg_idx:
+                self._update_row_value(
+                    key, self._reg_lane_value_text(reg, self._row_reg_idx[key])
+                )
+            elif obj is reg:
+                self._update_row_value(key, self._reg_value_text(reg))
+
     def _refresh_shown_values(self) -> None:
         """Update the value cells of the currently shown table (cached)."""
         for key, obj in self._row_objs.items():
             try:
                 if isinstance(obj, Reg):
-                    value = Text.from_markup(obj.read_rich_str_cached())
+                    # a lane row of an expanded vector register, else the
+                    # register's own row (header row when expanded)
+                    idx = self._row_reg_idx.get(key)
+                    value = (
+                        self._reg_lane_value_text(obj, idx)
+                        if idx is not None
+                        else self._reg_value_text(obj)
+                    )
                 elif isinstance(obj, RFlag):
                     value = Text.from_markup(obj._value_rich_str())
                 elif isinstance(obj, ExternalMemVec):
@@ -831,7 +966,7 @@ class SkmapUiApp(App):
                         data = obj.read_cached(0, min(8, obj.size))
                         value = Text(f"(Mem {data.hex(' ')})", style="dim")
                     else:
-                        value = Text(obj.read_idx_rich_str_cached(idx))
+                        value = self._mem_lane_value_text(obj, idx)
                 else:
                     data = obj.read_cached(0, min(8, obj.size))
                     value = Text(f"(Mem {data.hex(' ')})", style="dim")
@@ -858,6 +993,32 @@ class SkmapUiApp(App):
         self.refresh_period = refresh_intervals[(idx + 1) % len(refresh_intervals)]
         self._set_refresh_timer()
         self._update_log_title()
+
+    def action_toggle_value_bits(self) -> None:
+        """'v' key: toggle the display of ``uint`` / ``sint`` values
+        between int (decimal) and bits (hex, like the ``bits`` kind);
+        the input prefill follows the display."""
+        self._value_bits = not self._value_bits
+        self._reshow()
+
+    def action_toggle_expand_vec(self) -> None:
+        """'e' key: toggle expanding vector registers into one row per
+        vector index (like the ExternalMemVec view)."""
+        self._expand_vec = not self._expand_vec
+        self._reshow()
+
+    def _reshow(self) -> None:
+        """Rebuild the shown table with the current display options,
+        keeping the cursor on the same row (when it still exists)."""
+        cur_key = None
+        if 0 <= self.table.cursor_row < len(self._row_keys):
+            cur_key = self._row_keys[self.table.cursor_row]
+        if self._row_module is not None:
+            self._show_module(self._row_module)
+        elif self._row_mem is not None:
+            self._show_mem(self._row_mem)
+        if cur_key is not None and cur_key in self._row_objs:
+            self.table.move_cursor(row=self._row_keys.index(cur_key), column=0)
 
     def _set_refresh_timer(self) -> None:
         if self._refresh_timer is not None:
@@ -983,9 +1144,7 @@ class SkmapUiApp(App):
         if self._row_objs.get(key) is not obj:
             return  # the row was replaced meanwhile (module switched)
         if mem_idx is not None:
-            self._update_row_value(
-                key, Text(obj.read_idx_rich_str_cached(mem_idx))
-            )
+            self._update_row_value(key, self._mem_lane_value_text(obj, mem_idx))
         elif isinstance(obj, ExternalMem):
             data = obj.read_cached(0, n)
             self._update_row_value(
@@ -996,9 +1155,7 @@ class SkmapUiApp(App):
                 key, Text.from_markup(obj._value_rich_str())
             )
         else:
-            self._update_row_value(
-                key, Text.from_markup(obj.read_rich_str_cached())
-            )
+            self._update_reg_rows(obj)
 
     # ------------------------------------------------------------------
     # mouse-resizable panes
@@ -1096,6 +1253,22 @@ class SkmapUiApp(App):
             return
         if not isinstance(obj, Reg):
             return  # flag / plain external mem rows are not editable
+        lane_idx = self._row_reg_idx.get(key)
+        if lane_idx is not None:
+            # a lane row of an expanded vector register
+            if obj.acc in (Acc.rw, Acc.wt):
+                self._edit_lane = (key, lane_idx)
+                self.value_input.placeholder = (
+                    f"{obj.name}[{lane_idx}]: "
+                    f"{obj.value_type.width}-bit value (0x-hex or decimal)"
+                )
+                # prefill with the current lane value, editable in place
+                self.value_input.value = self._value_str(obj, lane_idx)
+                self.value_input.focus()
+            elif obj.acc == Acc.rc:
+                self._write_vec_row(key, obj, [(lane_idx, 0)], "CLEAR")
+            # k (hardwired), na (no access), ro: nothing to edit
+            return
         if obj.acc in (Acc.rw, Acc.wt):
             await self._open_value_input(row, obj)
         elif obj.acc == Acc.rc:
@@ -1109,10 +1282,10 @@ class SkmapUiApp(App):
         header row (edit / clear every lane), else one lane row."""
         if mem.acc in (Acc.rw, Acc.wt):
             if idx is None:
-                self._mem_edit = (key, None)
+                self._edit_lane = (key, None)
                 await self._open_vector_inputs(mem)
             else:
-                self._mem_edit = (key, idx)
+                self._edit_lane = (key, idx)
                 self.value_input.placeholder = (
                     f"{mem.name}[{idx}]: "
                     f"{mem.value_type.width}-bit value (0x-hex or decimal)"
@@ -1124,24 +1297,32 @@ class SkmapUiApp(App):
             self._clear_mem_lanes(key, mem, idx)
         # k (hardwired) / na (no access) / ro: nothing to edit
 
-    @staticmethod
     def _value_str(
-        reg: Union[Reg, ExternalMemVec], idx: int | None = None
+        self, reg: Union[Reg, ExternalMemVec], idx: int | None = None
     ) -> str:
         """Current value of ``reg`` / mem (or lane ``idx``) for the
         input line.
 
-        Hex for ``bits`` kinds, decimal otherwise — the same number
+        Hex for ``bits`` kinds (and for ``uint`` / ``sint`` while the
+        ``v`` bits display is on), decimal otherwise — the same number
         bases the table shows.  The input accepts both hex and decimal.
         """
+        kind = reg.value_type.kind
+        if kind is ValueKind.bits or (
+            kind in (ValueKind.uint, ValueKind.sint) and self._value_bits
+        ):
+            raw = (
+                reg.read_idx_uint_cached(idx)
+                if idx is not None
+                else reg.read_uint_cached()
+            )
+            return _hex(raw, reg.value_type.width)
         value = (
             reg.read_idx_value_cached(idx) if idx is not None
             else reg.read_value_cached()
         )
         if isinstance(value, str):
             return value
-        if reg.value_type.kind is ValueKind.bits:
-            return f"0x{value:x}"
         return str(value)
 
     async def _open_value_input(self, row: int, reg: Reg) -> None:
@@ -1188,21 +1369,23 @@ class SkmapUiApp(App):
         if row < 0 or row >= len(self._row_keys):
             return
         lanes = self.value_inputs.query("ValueInput.lane")
-        mem_edit = self._mem_edit
-        self._mem_edit = None
-        if mem_edit is not None:
-            # an ExternalMemVec edit: one lane, or the header row (all)
-            key, idx = mem_edit
-            mem = self._row_objs.get(key)
-            if not isinstance(mem, ExternalMemVec):
+        edit_lane = self._edit_lane
+        self._edit_lane = None
+        if edit_lane is not None:
+            # a lane edit: one lane of an ExternalMemVec view, one lane
+            # of an expanded vector register, or (index None) the header
+            # row of a vec mem view (every lane)
+            key, idx = edit_lane
+            obj = self._row_objs.get(key)
+            if not isinstance(obj, (Reg, ExternalMemVec)):
                 return
             if idx is None:
                 if not lanes:
                     return
-                values = [self._parse_lane(mem, str(l.value)) for l in lanes]
+                values = [self._parse_lane(obj, str(l.value)) for l in lanes]
                 if any(v is None for v in values):
                     # keep focus + values so the user can fix them
-                    self._mem_edit = mem_edit
+                    self._edit_lane = edit_lane
                     return
                 await self._close_vector_inputs()
                 self.table.focus()
@@ -1210,21 +1393,24 @@ class SkmapUiApp(App):
                     (self._mem_lane_key(i), i, v) for i, v in enumerate(values)
                 ]
                 self._run_regio(
-                    self._write_mem_lanes_async(mem, pairs),
-                    name=f"write {mem.name}",
+                    self._write_mem_lanes_async(obj, pairs),
+                    name=f"write {obj.name}",
                 )
             else:
-                value = self._parse_lane(mem, event.input.value)
+                value = self._parse_lane(obj, event.input.value)
                 if value is None:
                     # keep focus + value so the user can fix the input
-                    self._mem_edit = mem_edit
+                    self._edit_lane = edit_lane
                     return
                 self.table.focus()
                 event.input.value = ""
-                self._run_regio(
-                    self._write_mem_lanes_async(mem, [(key, idx, value)]),
-                    name=f"write {mem.name}[{idx}]",
-                )
+                if isinstance(obj, ExternalMemVec):
+                    self._run_regio(
+                        self._write_mem_lanes_async(obj, [(key, idx, value)]),
+                        name=f"write {obj.name}[{idx}]",
+                    )
+                else:
+                    self._write_vec_row(key, obj, [(idx, value)])
             return
         obj = self._row_objs[self._row_keys[row]]
         if not isinstance(obj, Reg) or obj.acc not in (Acc.rw, Acc.wt):
@@ -1251,12 +1437,12 @@ class SkmapUiApp(App):
         row = self.table.cursor_row
         await self._close_vector_inputs()
         self.table.focus()
-        self._write_vec_row(row, reg, values)
+        self._write_vec_row(self._row_keys[row], reg, list(enumerate(values)))
 
     async def on_value_input_canceled(self, event: ValueInput.Canceled) -> None:
         if self.value_inputs.query("ValueInput.lane"):
             await self._close_vector_inputs()
-        self._mem_edit = None
+        self._edit_lane = None
         self.value_input.value = ""
         self.table.focus()
 
@@ -1318,12 +1504,18 @@ class SkmapUiApp(App):
         """
         return SkmapUiApp._parse_lane(reg, text)
 
-    def _write_vec_row(self, row: int, reg: Reg, values: list[int]) -> None:
-        """Write every vector lane to the device, async (see
-        ``_write_row``)."""
-        key = self._row_keys[row]
+    def _write_vec_row(
+        self,
+        key: str,
+        reg: Reg,
+        pairs: list[tuple[int, int]],
+        op: str = "WRITE",
+    ) -> None:
+        """Write (idx, value) lanes of a vector register to the device,
+        async (see ``_write_vec_row_async``)."""
         self._run_regio(
-            self._write_vec_row_async(key, reg, values), name=f"write {reg.name}"
+            self._write_vec_row_async(key, reg, pairs, op),
+            name=f"{op.lower()} {reg.name}",
         )
 
     def _clear_row(self, row: int, reg: Reg) -> None:
@@ -1383,18 +1575,20 @@ class SkmapUiApp(App):
         await self._read_row_async(key, reg)
 
     async def _write_vec_row_async(
-        self, key: str, reg: Reg, values: list[int]
+        self, key: str, reg: Reg, pairs: list[tuple[int, int]], op: str = "WRITE"
     ) -> None:
-        """Write one lane at a time: ``write_idx_uint`` / ``write_idx_sint``
-        (chosen by the value kind), then read the register back."""
+        """Write the given (idx, value) lanes one at a time:
+        ``write_idx_uint`` / ``write_idx_sint`` (chosen by the value
+        kind), then read the register back (updates the register's own
+        row and every lane row)."""
         # hold the write until an in-flight refresh has finished
         await self._wait_refresh_idle()
         # abort values outside the reg's configured min / max limits
         # before the write (see _write_row_async)
-        if any(reg.ass_check_value_limit(v) >= Ass.error for v in values):
+        if any(reg.ass_check_value_limit(v) >= Ass.error for _idx, v in pairs):
             logging.warning(
-                "write to %s @ %s aborted: value outside [%s, %s]",
-                reg.name, hex(reg.addr), reg.min, reg.max,
+                "%s to %s @ %s aborted: value outside [%s, %s]",
+                op, reg.name, hex(reg.addr), reg.min, reg.max,
             )
             return
         writer = (
@@ -1404,11 +1598,11 @@ class SkmapUiApp(App):
         )
         try:
             async with self._regio_lock:
-                for idx, value in enumerate(values):
+                for idx, value in pairs:
                     await writer(idx, value)
         except Exception as err:  # noqa: BLE001
             logging.warning(
-                "write to %s @ %s failed: %s", reg.name, hex(reg.addr), err
+                "%s to %s @ %s failed: %s", op, reg.name, hex(reg.addr), err
             )
             return
         # read the value back from the device (updates the cache too)
@@ -1450,9 +1644,7 @@ class SkmapUiApp(App):
                 continue
             if self._row_objs.get(key) is not mem:
                 continue
-            self._update_row_value(
-                key, Text(mem.read_idx_rich_str_cached(idx))
-            )
+            self._update_row_value(key, self._mem_lane_value_text(mem, idx))
 
     def _clear_mem_lanes(
         self, key: str, mem: ExternalMemVec, idx: int | None
@@ -1499,9 +1691,7 @@ class SkmapUiApp(App):
                 continue
             if self._row_objs.get(key) is not mem:
                 continue
-            self._update_row_value(
-                key, Text(mem.read_idx_rich_str_cached(idx))
-            )
+            self._update_row_value(key, self._mem_lane_value_text(mem, idx))
 
     def action_trigger_selected(self) -> None:
         if self.table.row_count == 0 or self.table.cursor_row < 0:
@@ -1515,7 +1705,11 @@ class SkmapUiApp(App):
         elif isinstance(obj, ExternalMem):
             self._trigger_mem(row, obj)
         else:
-            self._trigger_reg(row, obj)
+            lane_idx = self._row_reg_idx.get(self._row_keys[row])
+            if lane_idx is not None:
+                self._trigger_reg_lane(row, obj, lane_idx)
+            else:
+                self._trigger_reg(row, obj)
 
     def _trigger_reg(self, row: int, reg: Reg) -> None:
         """'t' on a register row (device I/O, see module docstring)."""
@@ -1540,6 +1734,28 @@ class SkmapUiApp(App):
             return  # k (hardwired) / na (no access): nothing to do
         else:
             # ro / rc: read from the device (updates the cache too)
+            self._run_regio(
+                self._read_row_async(key, reg), name=f"read {reg.name}"
+            )
+
+    def _trigger_reg_lane(self, row: int, reg: Reg, idx: int) -> None:
+        """'t' on a lane row of an expanded vector register: writable
+        lanes are *written* (a random value within the reg's min / max
+        limits, just that lane); ro / rc lanes *read* the register
+        (the header row and every lane row are updated)."""
+        key = self._row_keys[row]
+        if reg.acc in (Acc.rw, Acc.wt):
+            value = self._random_limit_value(reg)
+            if value is None:
+                logging.warning(
+                    "trigger of %s[%d] @ %s skipped: no value fits its min / max limits",
+                    reg.name, idx, hex(reg.addr),
+                )
+                return
+            self._write_vec_row(key, reg, [(idx, value)])
+        elif reg.acc in (Acc.k, Acc.na):
+            return  # k (hardwired) / na (no access): nothing to do
+        else:
             self._run_regio(
                 self._read_row_async(key, reg), name=f"read {reg.name}"
             )

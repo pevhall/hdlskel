@@ -707,8 +707,8 @@ def test_enter_edits_rw_value():
             assert "CTRL" in app.value_input.placeholder
 
             # the input line is prefilled with the current value (hex
-            # for x32 bits registers)
-            assert app.value_input.value == "0x0"
+            # for x32 bits registers, zero-padded to the byte width)
+            assert app.value_input.value == "0x0000"
             app.value_input.value = "0x2f"
             await pilot.press("enter")
             await pilot.pause()
@@ -933,13 +933,13 @@ def test_scalar_edit_prefills_current_value():
             await _wait_asserts(app, pilot)
             await _select_node(app, _find_node(app, top), pilot)
 
-            # BIG (bits, row 0): prefilled in hex
+            # BIG (bits, row 0): prefilled in hex (like the table shows)
             app.table.focus()
             app.table.move_cursor(row=0, column=0)
             await pilot.press("enter")
             await pilot.pause()
             assert app.value_input.value == (
-                "0xdeadbeefcafebabe1234567890abcdef"
+                "0xDEADBEEFCAFEBABE1234567890ABCDEF"
             )
 
             # V4 is a vector: enter opens one input per index instead
@@ -1056,8 +1056,8 @@ def test_edit_outside_min_max_aborted():
             app.table.move_cursor(row=3, column=0)
             await pilot.press("enter")
             await pilot.pause()
-            # bits kind: prefilled in hex
-            assert app.value_input.value == "0x1e"
+            # bits kind: prefilled in hex (like the table shows)
+            assert app.value_input.value == "0x001E"
 
             # 256 > max 100: rejected, the input stays open for a fix
             app.value_input.value = "0x100"
@@ -1087,6 +1087,165 @@ def test_edit_outside_min_max_aborted():
                 await pilot.press("t")
                 await pilot.pause()
                 assert 2 <= lmt.read_uint_cached() <= 100
+    _run(run())
+
+
+# ---------------------------------------------------------------------------
+# display options: v (uint / sint shown as bits / hex), e (expand vec regs)
+# ---------------------------------------------------------------------------
+
+
+def test_value_bits_toggle():
+    """'v' toggles the uint / sint value display between int (decimal)
+    and bits (hex, like the bits kind — sint lanes as their raw two's
+    complement); the input prefill follows the display."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            # default: int (decimal)
+            await _wait_cell(app, pilot, 1, VALUE, "[ 170, 187, 204, 221 ]")
+            await _wait_cell(app, pilot, 2, VALUE, "[ 5, -85 ]")
+            # bits: hex (S2 lane 1 = -85 is shown as 0xAB)
+            await pilot.press("v")
+            await pilot.pause()
+            await _wait_cell(app, pilot, 1, VALUE, "[ 0xAA, 0xBB, 0xCC, 0xDD ]")
+            await _wait_cell(app, pilot, 2, VALUE, "[ 0x5, 0xAB ]")
+            # the active option shows in the border title
+            assert "bits" in app.table.border_title
+            # toggle back to int
+            await pilot.press("v")
+            await pilot.pause()
+            await _wait_cell(app, pilot, 1, VALUE, "[ 170, 187, 204, 221 ]")
+            await _wait_cell(app, pilot, 2, VALUE, "[ 5, -85 ]")
+            assert "bits" not in app.table.border_title
+            # the vector input prefill follows the display mode
+            app.table.focus()
+            app.table.move_cursor(row=2, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            lanes = list(app.value_inputs.query("ValueInput.lane"))
+            assert [l.value for l in lanes] == ["5", "-85"]
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.press("v")
+            await pilot.pause()
+            app.table.move_cursor(row=2, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            lanes = list(app.value_inputs.query("ValueInput.lane"))
+            assert [l.value for l in lanes] == ["0x5", "0xAB"]
+            await pilot.press("escape")
+            await pilot.pause()
+    _run(run())
+
+
+def test_expand_vec_toggle():
+    """'e' expands vector registers into one row per vector index
+    (like the ExternalMemVec view: the register's own row becomes the
+    header row) and collapses them again."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            # 4 registers -> 4 rows
+            assert len(app._row_keys) == 4
+            assert app._row_reg_idx == {}
+            await pilot.press("e")
+            await pilot.pause()
+            # V4: header + 4 lanes (rows 1-5), S2: header + 2 lanes
+            # (rows 6-8) -> 10 rows
+            assert len(app._row_keys) == 10
+            assert app._row_reg_idx == {
+                "r2": 0, "r3": 1, "r4": 2, "r5": 3, "r7": 0, "r8": 1,
+            }
+            # lane rows: lane address + name[idx] + the lane value
+            assert _cell(app, 2, ADDR) == "0x70000020"
+            assert _cell(app, 2, NAME) == "V4[0]"
+            await _wait_cell(app, pilot, 2, VALUE, "170")
+            await _wait_cell(app, pilot, 3, VALUE, "187")
+            assert _cell(app, 6, NAME) == "S2"  # S2 header row
+            assert _cell(app, 7, NAME) == "S2[0]"
+            assert _cell(app, 7, ADDR) == "0x70000024"
+            await _wait_cell(app, pilot, 7, VALUE, "5")
+            await _wait_cell(app, pilot, 8, VALUE, "-85")
+            # the header rows keep the full value
+            await _wait_cell(app, pilot, 1, VALUE, "[ 170, 187, 204, 221 ]")
+            assert "expand vec" in app.table.border_title
+            # toggle back: one row per register again
+            await pilot.press("e")
+            await pilot.pause()
+            assert len(app._row_keys) == 4
+            assert _cell(app, 1, NAME) == "V4"
+            assert app._row_reg_idx == {}
+    _run(run())
+
+
+def test_expand_vec_lane_edit():
+    """enter on a lane row of an expanded vector register prefills and
+    edits just that lane (write_idx_uint); the header row and the other
+    lanes are updated by the read-back, the untouched lanes keep their
+    values."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            await pilot.press("e")
+            await pilot.pause()
+            v4 = top.arr_reg_var[1]
+            assert v4.name == "V4"
+            # edit lane 2 of V4 (row 4)
+            app.table.focus()
+            app.table.move_cursor(row=4, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.value_input.value == "204"
+            app.value_input.value = "0xF0"
+            await pilot.press("enter")
+            await pilot.pause()
+            await _wait_cell(app, pilot, 4, VALUE, "240")
+            assert v4.read_idx_uint_cached(2) == 0xF0
+            assert v4.read_idx_uint_cached(0) == 0xAA  # untouched
+            assert v4.read_idx_uint_cached(3) == 0xDD  # untouched
+            # the header row reflects the new lane
+            await _wait_cell(app, pilot, 1, VALUE, "[ 170, 187, 240, 221 ]")
+    _run(run())
+
+
+def test_expand_vec_bits_display():
+    """the display options compose: expanded lanes honor the 'v' bits
+    display (hex, sint lanes as raw two's complement)."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            await pilot.press("e")
+            await pilot.pause()
+            await pilot.press("v")
+            await pilot.pause()
+            assert len(app._row_keys) == 10
+            await _wait_cell(app, pilot, 2, VALUE, "0xAA")
+            await _wait_cell(app, pilot, 5, VALUE, "0xDD")
+            await _wait_cell(app, pilot, 7, VALUE, "0x5")
+            await _wait_cell(app, pilot, 8, VALUE, "0xAB")
+            # header rows in bits mode too
+            await _wait_cell(app, pilot, 1, VALUE, "[ 0xAA, 0xBB, 0xCC, 0xDD ]")
+            # the lane input prefill follows the bits display
+            app.table.focus()
+            app.table.move_cursor(row=4, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.value_input.value == "0xCC"
+            await pilot.press("escape")
+            await pilot.pause()
     _run(run())
 
 

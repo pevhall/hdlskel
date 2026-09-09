@@ -12,7 +12,7 @@ Pass a real `skmap.Module` (e.g. built with `make_module`) and the app shows:
 | view | content |
 |------|---------|
 | **left tree** | the module tree — top module (as the tree root), kids + external memories, laid out like `Module.print_tree_cached` |
-| **right table** | the register map of the selected module — `Addr | T | Acc | Name | Value | Description` (mirrors `Module.print_reg_map_cached` / `RegMapTable`), flags expanded as sub-rows |
+| **right table** | the register map of the selected module — `Addr | T | Acc | Name | Value | Description` (mirrors `Module.print_reg_map_cached` / `RegMapTable`), flags expanded as sub-rows; vector registers can be expanded into one row per vector index (`e`) |
 | **bottom log** | an **event log** of the triggered register assets (asserts): every check that finds triggered asserts appends a **timestamped table** block (like `print_table_reg_list(list_reg, title='Asserts')`) — the log grows over time |
 
 Uses skmap's native vocabulary: `Acc` codes `na/k/ro/rc/rw/wt` in the *Acc*
@@ -34,6 +34,8 @@ currently displayed is **highlighted** (bold bright blue).
 | `l` | cycle the **assert level** (debug → info → warn → error → fatal): asserts below the level are no longer logged (see *Assert log*) |
 | `r` | cycle the **refresh period** (off → 1 → 5 → 30 s): every period the app calls `Module.read_all_tree()`, re-checks the asserts (appending any triggered ones to the log) and clears the `rc` registers (see *Assert log*) |
 | `x` | **clear triggered**: clear all `rc` registers of the selected module (`Module.clear_reg_rc()`) and the triggered asserts of the whole tree (`Module.clear_assert_tree()`), then re-check |
+| `v` | toggle the display of `uint` / `sint` values between **int** (decimal, the default) and **bits** (hex, like the `bits` kind — `sint` values as their raw two's complement); the input prefill follows the display (see *Display options*) |
+| `e` | toggle **expanding vector registers** in the register map into one row per vector index (like the `ExternalMemVec` view, see *Display options*) |
 
 On start the top module is selected (its register map is shown right away)
 and the assert check runs automatically.
@@ -57,7 +59,12 @@ a single input line; each column is prefilled with its current lane
 value (`Reg.read_idx_value_cached`) and `enter` writes every lane to
 the device with `Reg.write_idx_uint` (or `Reg.write_idx_sint` for
 signed lanes — negative values accepted); `escape` cancels and
-restores the single input line.
+restores the single input line.  With the `e` option on, a vector
+register is shown expanded (see *Display options*): `enter` on the
+register's own (header) row still opens all lane inputs, while `enter`
+on a **lane row** prefills and edits just that lane
+(`write_idx_uint(idx, value)` / `write_idx_sint(idx, value)`), and
+`enter` on an `rc` lane row clears just that lane.
 
 **Min / max limits**: a register can carry configured `min` / `max`
 limits (shown in the Value column as e.g. `(-2 <= v <= 100)`).  A
@@ -80,6 +87,28 @@ If a periodic refresh is in progress when a write is made (input bar
 to the device once the refresh has finished — a refresh reads the
 whole tree and then clears the `rc` registers, so a write landing in
 the middle of it would be observed (or wiped) by the refresh.
+
+### Display options (`v` / `e`)
+
+Two table display options are toggled with keys (the active options
+are shown in the table's border title, e.g.
+`0x70000000 EDITTOP {…}  (bits, expand vec)`):
+
+* **`v` — value display**: off (the default) shows `uint` / `sint`
+  values as **int** (decimal, `sint` signed); on shows them as
+  **bits** (hex, the same zero-padded hex the `bits` kind uses — `sint`
+  values as their raw two's complement, e.g. `-85` as `0xAB`).  `bits`
+  / `flag` / `char` kinds are unaffected.  The input prefill follows
+  the display; the input still accepts both hex and decimal.
+* **`e` — expand vector registers**: off (the default) shows a vector
+  register as one row (its value cell shows all lanes); on expands it
+  **the same way an `ExternalMemVec` view is shown** — the register's
+  own row becomes a header row (full value, all-lane editing) plus
+  **one row per vector index** (lane address, `name[idx]`, the lane's
+  value via `Reg.read_idx_value_cached` / `read_idx_uint_cached`).
+  `enter` on a lane row edits just that lane (`rw`/`wt`) or clears it
+  (`rc`, writes zero); `t` on a writable lane row writes a random
+  value (within the reg's min / max limits) to just that lane.
 
 ### Editing an external mem (`ExternalMemVec`)
 
@@ -131,6 +160,10 @@ re-logs an `rc` assert if it was re-triggered in the meantime, while
 
 The log view's border shows the current options, e.g.
 `asserts (level >= debug)  ·  refresh: 5 s` (or `refresh: off`).
+
+The log always shows values the way skmap renders them (int for
+`uint` / `sint`, hex for `bits`), independent of the table's `v`
+display option.
 
 The three options:
 
