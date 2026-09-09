@@ -22,7 +22,7 @@ MEM_RO_OFFSET = 0x2_0000;
 def assert_all_ones(vec):
     assert vec.value == (1<<len(vec))-1
 
-def loopback_ram(rqst, rply, data_offset, ro = False, cntrs = None):
+def loopback_ram(rqst, rply, data_offset,  mem : list[int], check : list[bool], cntrs = None, ro = False):
     rply.fail.value = 0
     if rqst.en.value == 0:
         rply.en.value = 0
@@ -37,12 +37,17 @@ def loopback_ram(rqst, rply, data_offset, ro = False, cntrs = None):
         rply.en.value = rd
         expected_data = a + data_offset
         if rd:
-            rply.data.value = expected_data
+
+            # print(f'mem[{a}] -> {mem[a]}')
+            rply.data.value = mem[a]
         else:
             rply.data.value = 0
         if wr:
             assert_all_ones(rqst.wren)
-            assert rqst.data.value == expected_data
+            mem[a] = rqst.data.value
+            # print(f'mem[{a}] <- {mem[a]}')
+            if check[0]:
+                assert rqst.data.value == expected_data
         if cntrs is not None:
             if rd:
                 cntrs.rd += 1
@@ -50,7 +55,11 @@ def loopback_ram(rqst, rply, data_offset, ro = False, cntrs = None):
                 cntrs.wr += 1
 
 
-async def reg_loopback(dut, rw_cntrs, ro_cntrs):
+async def reg_loopback(dut, rw_cntrs, ro_cntrs, check:list[bool]):
+    rw_mem = [0] * 2**len(dut.mem_rw_rqst_o.addr)
+    ro_mem = [0] * 2**len(dut.mem_ro_rqst_o.addr)
+    for ii in range(len(ro_mem)):
+        ro_mem [ii] = MEM_RO_OFFSET + ii
     while True:
         await RisingEdge(dut.clk_i)
         if dut.regs_wt_trigger_o.value != 0:
@@ -67,8 +76,8 @@ async def reg_loopback(dut, rw_cntrs, ro_cntrs):
             dut.error_flag3_i.value = 0
             dut.fatal_flag4_i.value = 0
 
-        loopback_ram(dut.mem_rw_rqst_o, dut.mem_rw_rply_i, MEM_RW_OFFSET, cntrs=rw_cntrs);
-        loopback_ram(dut.mem_ro_rqst_o, dut.mem_ro_rply_i, MEM_RO_OFFSET, ro = True, cntrs=ro_cntrs);
+        loopback_ram(dut.mem_rw_rqst_o, dut.mem_rw_rply_i, MEM_RW_OFFSET, cntrs=rw_cntrs, mem=rw_mem, check=check);
+        loopback_ram(dut.mem_ro_rqst_o, dut.mem_ro_rply_i, MEM_RO_OFFSET, ro = True, cntrs=ro_cntrs, mem=ro_mem, check=check);
 
 
 @cocotb.test()
@@ -117,7 +126,8 @@ async def test_skmap_module_test_acc_types(dut):
     ro_cntrs = RamCntrs()
 
     cocotb.start_soon(Clock(dut.clk_i, 1, unit="ns").start())
-    cocotb.start_soon(reg_loopback(dut, rw_cntrs, ro_cntrs))
+    check = [True]
+    cocotb.start_soon(reg_loopback(dut, rw_cntrs, ro_cntrs, check))
 
     ramface_ctrl = tbskel.ramface.make_RamfaceCtrlBytes_default_ports(dut)
     print(f'{dut.RAMFACE_LATENCY.value=}')
@@ -162,6 +172,10 @@ async def test_skmap_module_test_acc_types(dut):
     skmap.print_table_reg_list(list_reg, title=f'Asserts')
 
     module.mem_rw_inst._regio.log_regio = True
+    rw_data = [0] * (dut.MEM_RW_LEN.value)
+    for ii in range(len(rw_data)):
+        rw_data[ii] = ii + MEM_RW_OFFSET
+    await module.mem_rw_write(0, skmap.basic.list_int_to_bytes(rw_data, 4))
     rw_data_bytes = await module.mem_rw_read(0, module.mem_rw_size)
     rw_data = skmap.basic.bytes_to_list_int(rw_data_bytes, 4)
     print(f'rw_data = {[hex(a) for a in rw_data]}\n')
@@ -180,6 +194,8 @@ async def test_skmap_module_test_acc_types(dut):
 
     print(f'rw ops = (rd {rw_cntrs.rd}, wr {rw_cntrs.wr})')
     print(f'ro ops = (rd {ro_cntrs.rd}, wr {ro_cntrs.wr})')
+
+    check[0] = False
 
     # await module.mem_ro_read(0, module.mem_ro_size)
 
