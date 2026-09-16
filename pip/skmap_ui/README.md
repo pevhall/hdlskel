@@ -34,7 +34,7 @@ currently displayed is **highlighted** (bold bright blue).
 | `l` | cycle the **assert level** (debug → info → warn → error → fatal): asserts below the level are no longer logged (see *Assert log*) |
 | `r` | cycle the **refresh period** (off → 1 → 5 → 30 s): every period the app calls `Module.read_all_tree()`, re-checks the asserts (appending any triggered ones to the log) and clears the `rc` registers (see *Assert log*) |
 | `x` | **clear triggered**: clear all `rc` registers of the selected module (`Module.clear_reg_rc()`) and the triggered asserts of the whole tree (`Module.clear_assert_tree()`), then re-check |
-| `v` | toggle the display of `uint` / `sint` values between **int** (decimal, the default) and **bits** (hex, like the `bits` kind — `sint` values as their raw two's complement); the input prefill follows the display (see *Display options*) |
+| `v` | toggle the display of `uint` / `sint` values between **int** (decimal, the default) and **bits** (hex, like the `bits` kind — `sint` values sign-extended to the type's byte width); the input prefill follows the display (see *Display options*) |
 | `e` | toggle **expanding vector registers** in the register map into one row per vector index (like the `ExternalMemVec` view, see *Display options*) |
 
 On start the top module is selected (its register map is shown right away)
@@ -97,7 +97,10 @@ are shown in the table's border title, e.g.
 * **`v` — value display**: off (the default) shows `uint` / `sint`
   values as **int** (decimal, `sint` signed); on shows them as
   **bits** (hex, the same zero-padded hex the `bits` kind uses — `sint`
-  values as their raw two's complement, e.g. `-85` as `0xAB`).  `bits`
+  values sign-extended to the type's byte width — the same digit count
+  as skmap's `Reg._str_num(v, 16)`, dependent on `value_type.width`,
+  e.g. an 8-bit `-85` as `0xAB`, a 12-bit `-40` as `0xFFD8` (not
+  `0xFD8`), a 4-bit `-1` as `0xFF` (not `0xF`)).  `bits`
   / `flag` / `char` kinds are unaffected.  The input prefill follows
   the display; the input still accepts both hex and decimal.
 * **`e` — expand vector registers**: off (the default) shows a vector

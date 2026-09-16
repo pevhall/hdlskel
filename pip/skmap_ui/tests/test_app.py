@@ -1249,6 +1249,96 @@ def test_expand_vec_bits_display():
     _run(run())
 
 
+_sintw_counter = itertools.count()
+
+
+def make_sintw_top():
+    """A module with sint registers whose width is not a byte multiple
+    (4-bit vector lanes, 12-bit scalar) for the sign-extension tests."""
+    n = next(_sintw_counter)
+    sintw_mid = f"SINTW{n}"[:8]
+    vt_s4 = ValueType(kind=ValueKind.sint, width=4, vec_len=4)
+    vt_s12 = ValueType(kind=ValueKind.sint, width=12)
+
+    class _SintWTop(_DemoModule):
+        mid = sintw_mid
+
+        @classmethod
+        def name(cls) -> str:
+            return "SINTW"
+
+        @classmethod
+        def checksum(cls) -> int:
+            return n
+
+        def _init_reg_map_k(self) -> None:
+            pass
+
+        def _init_reg_map_var(self) -> None:
+            self._add_reg_var(
+                RegVec(self, "S4", vt_s4, acc=Acc.rw, desc="sint4 vec")
+            )
+            self._add_reg_var(
+                Reg(self, "S12", vt_s12, acc=Acc.rw, desc="sint12")
+            )
+
+    register_Module(_SintWTop)
+
+    data = (
+        # S4: 4 x 1 byte lanes (-1, 5, -2, 3) + S12: 4-byte word (-40)
+        # = 8 bytes = 2 words
+        _head_bytes(sintw_mid, 1, 0, len_kids=0, len_sub=0, len_k=0, len_var=2)
+        + bytes([0xF, 5, 0xE, 3])
+        + ((-40) & ((1 << 12) - 1)).to_bytes(4, "little")  # -40 as 12-bit
+    )
+    regio = MemRegio()
+    regio.write_mem(0x70000000, data)
+    return _SintWTop(regio, 0x70000000, Head(data), bytearray(data))
+
+
+def test_bits_display_sign_extends_sint():
+    """sint values in the bits display are sign-extended to the type's
+    byte width (Reg._str_num digit count, dependent on
+    value_type.width): a 12-bit -40 shows as 0xFFD8 (not 0xFD8), a
+    4-bit -1 as 0xFF (not 0xF); positive values and the int display
+    are unaffected; the input prefill follows."""
+    async def run():
+        top = make_sintw_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            s4 = top.arr_reg_var[0]
+            s12 = top.arr_reg_var[1]
+            assert s4.read_idx_sint_cached(0) == -1
+            assert s12.read_sint_cached() == -40
+            await pilot.press("e")
+            await pilot.pause()
+            # int mode: signed decimal (row 0 = S4 header row)
+            await _wait_cell(app, pilot, 0, VALUE, "[ -1, 5, -2, 3 ]")
+            await _wait_cell(app, pilot, 5, VALUE, "-40")
+            await pilot.press("v")
+            await pilot.pause()
+            # bits mode: sign-extended to the byte width
+            await _wait_cell(app, pilot, 0, VALUE, "[ 0xFF, 0x5, 0xFE, 0x3 ]")
+            await _wait_cell(app, pilot, 5, VALUE, "0xFFD8")
+            # the lane prefill follows the sign-extended display
+            app.table.focus()
+            app.table.move_cursor(row=2, column=0)  # S4[1] = 5
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.value_input.value == "0x5"
+            await pilot.press("escape")
+            await pilot.pause()
+            app.table.move_cursor(row=5, column=0)  # S12 header
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.value_input.value == "0xFFD8"
+            await pilot.press("escape")
+            await pilot.pause()
+    _run(run())
+
+
 # ---------------------------------------------------------------------------
 # ExternalMemVec views: header + lane rows, lane / all-lane edits, rc clear
 # ---------------------------------------------------------------------------

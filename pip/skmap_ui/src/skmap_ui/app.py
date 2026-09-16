@@ -89,8 +89,10 @@ cache is refreshed; ``k`` (hardwired) and ``na`` (no access) assets
 are never read back.  All three panes are resizable with the mouse:
 drag the divider between tree and table, or between the table and the
 log.  The ``v`` key toggles the display of ``uint`` / ``sint`` values
-between int (decimal) and bits (hex, like the ``bits`` kind) — the
-input prefill follows the display; the ``e`` key expands vector
+between int (decimal) and bits (hex, like the ``bits`` kind — ``sint``
+values sign-extended to the type's byte width, e.g. a 12-bit -40 as
+``0xFFD8``) — the input prefill follows the display; the ``e`` key
+expands vector
 registers in the register map into one row per vector index (like the
 ``ExternalMemVec`` view): ``enter`` on a lane row edits just that lane
 (``enter`` on an ``rc`` lane clears it).  The active options are shown
@@ -164,6 +166,24 @@ def _timestamp() -> str:
 def _hex(value: int, width: int) -> str:
     """Hex string with as many digits as the value width has bytes."""
     return f"0x{value:0{-(-width // 8)}X}"
+
+
+def _bits_str(value: int, width: int, kind: ValueKind) -> str:
+    """Hex string for the bits display of a ``width``-bit value.
+
+    ``sint`` values are *sign-extended* to the type's byte width (the
+    same digit count as ``_hex`` / skmap's ``Reg._str_num(v, 16)`` —
+    e.g. a 12-bit -40 shows as ``0xFFD8``, not ``0xFD8``); ``uint`` /
+    ``bits`` values are zero-extended.
+    """
+    if kind is not ValueKind.sint:
+        return _hex(value, width)
+    byte_width = -(-width // 8)
+    mask = (1 << width) - 1
+    v = value & mask
+    if v & (1 << (width - 1)):
+        v |= (1 << (byte_width * 8)) - (1 << width)
+    return f"0x{v:0{byte_width}X}"
 
 
 def _assert_value_str(obj: Union[Reg, RFlag]) -> str:
@@ -501,7 +521,7 @@ class SkmapUiApp(App):
 
         Follows the ``v`` display toggle: when on, ``uint`` / ``sint``
         values are shown as bits (hex, like the ``bits`` kind — sint
-        lanes as their raw two's complement) instead of int.
+        values sign-extended to the type's byte width) instead of int.
         """
         kind = reg.value_type.kind
         if self._value_bits and kind in (ValueKind.uint, ValueKind.sint):
@@ -509,10 +529,12 @@ class SkmapUiApp(App):
                 values = reg.read_list_uint_cached()
                 return Text(
                     "[ "
-                    + ", ".join(_hex(v, reg.value_type.width) for v in values)
+                    + ", ".join(
+                        _bits_str(v, reg.value_type.width, kind) for v in values
+                    )
                     + " ]"
                 )
-            return Text(_hex(reg.read_uint_cached(), reg.value_type.width))
+            return Text(_bits_str(reg.read_uint_cached(), reg.value_type.width, kind))
         return Text.from_markup(reg.read_rich_str_cached())
 
     def _reg_lane_value_text(self, reg: Reg, idx: int) -> Text:
@@ -520,7 +542,7 @@ class SkmapUiApp(App):
         register (see ``_reg_value_text``)."""
         kind = reg.value_type.kind
         if self._value_bits and kind in (ValueKind.uint, ValueKind.sint):
-            return Text(_hex(reg.read_idx_uint_cached(idx), reg.value_type.width))
+            return Text(_bits_str(reg.read_idx_uint_cached(idx), reg.value_type.width, kind))
         return Text(str(reg.read_idx_value_cached(idx)))
 
     def _mem_lane_value_text(self, mem: ExternalMemVec, idx: int) -> Text:
@@ -528,7 +550,7 @@ class SkmapUiApp(App):
         ``_reg_lane_value_text``)."""
         kind = mem.value_type.kind
         if self._value_bits and kind in (ValueKind.uint, ValueKind.sint):
-            return Text(_hex(mem.read_idx_uint_cached(idx), mem.value_type.width))
+            return Text(_bits_str(mem.read_idx_uint_cached(idx), mem.value_type.width, kind))
         return Text(mem.read_idx_rich_str_cached(idx))
 
     def _reg_rows(self, reg: Reg) -> list[tuple[tuple, RowObj, int | None]]:
@@ -1316,7 +1338,7 @@ class SkmapUiApp(App):
                 if idx is not None
                 else reg.read_uint_cached()
             )
-            return _hex(raw, reg.value_type.width)
+            return _bits_str(raw, reg.value_type.width, kind)
         value = (
             reg.read_idx_value_cached(idx) if idx is not None
             else reg.read_value_cached()
