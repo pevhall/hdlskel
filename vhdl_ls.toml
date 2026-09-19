@@ -7,8 +7,9 @@ preferred_case = "lower"
 # Wildcards and exclude patterns are supported
 hdlskel.files = [
     './fw/lib/vhdl/*.vhd',
-    './fw/lib/vhdl/*/*.vhd',
+    './fw/lib/vhdl/**/*.vhd',
+    './fw/tb/**/*.vhd',
 ]
-defaultlib.files = [
-    './fw/tb/*/*/*.vhd',
-]
+# defaultlib.files = [
+#     './fw/tb/**/*.vhd',
+# ]

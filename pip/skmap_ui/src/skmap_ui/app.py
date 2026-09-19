@@ -165,7 +165,7 @@ def _timestamp() -> str:
 
 def _hex(value: int, width: int) -> str:
     """Hex string with as many digits as the value width has bytes."""
-    return f"0x{value:0{-(-width // 8)}X}"
+    return f"0x{value:0{-(-width // 4)}X}"
 
 
 def _bits_str(value: int, width: int, kind: ValueKind) -> str:
@@ -178,12 +178,12 @@ def _bits_str(value: int, width: int, kind: ValueKind) -> str:
     """
     if kind is not ValueKind.sint:
         return _hex(value, width)
-    byte_width = -(-width // 8)
+    char_width = -(-width // 4)
     mask = (1 << width) - 1
     v = value & mask
     if v & (1 << (width - 1)):
-        v |= (1 << (byte_width * 8)) - (1 << width)
-    return f"0x{v:0{byte_width}X}"
+        v |= (1 << (char_width * 4)) - (1 << width)
+    return f"0x{v:0{char_width}X}"
 
 
 def _assert_value_str(obj: Union[Reg, RFlag]) -> str:

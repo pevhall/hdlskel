@@ -2,7 +2,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Union
 
-from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeK, RecipeVar, RecipeReg, ResolvableFunction
+from .code_generator_parse_resolvable import ResolvableFunctionOperation, ResolvableT, ResolvableFunctionBuiltIn
+from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeIpkg, RecipeK, RecipeVar, RecipeReg
 # from basic import promote_to_sw_w, ceil_div
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR
 from . import code_generator_sw_common as common
@@ -16,6 +17,26 @@ def name_to_reg_k(name : str) -> str:
 def name_to_reg_var(name : str) -> str:
     return "m_var_"+name
 
+def to_cpp_source(node: ResolvableT) -> str:
+    """Render a ResolvableT tree back out as a Python source-code expression string."""
+    # if isinstance(node, bool):
+    #     return str(int(node))
+    if isinstance(node, int):
+        return str(node)
+    if isinstance(node, str):   # plain-string leaf (e.g. name_to_k[name] = name)
+        return node
+    if isinstance(node, RecipeIpkg):
+        return f'{node.name}()'
+    if isinstance(node, RecipeK):
+        return f'{node.name}()'
+    if isinstance(node, ResolvableFunctionOperation):
+        return f'({to_cpp_source(node.lhs)} {node.op} {to_cpp_source(node.rhs)})'
+    if isinstance(node, ResolvableFunctionBuiltIn):
+        args = ', '.join(to_cpp_source(p) for p in node.params)
+        return f'recipe_functions::{node.func.name}({args})'
+    if hasattr(node, 'name'):  # RecipeK / RecipeIpkg leaf
+        return node.name #type:ignore
+    raise TypeError(f'Cannot render {node!r} {type(node)=} to cpp source')
 
 def resolve_k_value(v : RecipeK) -> str:
     return f'{v.name}()'
@@ -57,6 +78,7 @@ def value_ret_type_str(t : Union[ValueType, ValueTypeUnresolved], ignore_vec = F
             rt = f'const {rt} &'
     return rt
 
+SW = common.Sw.cpp
 
 def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     assert reg.t.width is not None
@@ -64,9 +86,10 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     t_str      = value_ret_type_str(reg.t)
     t_str_wr   = value_ret_type_str(reg.t, wr=True)
     t_elem_str = value_ret_type_str(reg.t, ignore_vec=True)
-    func_read_cached = read_value_function_str(reg.t, cached=True)
-    func_read        = read_value_function_str(reg.t, cached=False)
-    func_write      = write_value_function_str(reg.t)
+    func_read_cached = read_value_function_str (reg.t, cached=True,  sw=SW)
+    func_read        = read_value_function_str (reg.t, cached=False, sw=SW)
+    func_write_cached= write_value_function_str(reg.t, cached=True,  sw=SW)
+    func_write       = write_value_function_str(reg.t, cached=False, sw=SW)
     kind_f_s = _value_kind_function_str(reg.t.kind)
     func_read_idx_cached = f'read_idx_{kind_f_s}_cached'
     func_read_idx = f'read_idx_{kind_f_s}'
@@ -99,6 +122,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
         case Acc.rw:
             s += f'    {t_str} {reg.name}_cached() const {{ return {reg_name}->{func_read_cached}(); }}\n'
             s += f'    {t_str} {reg.name}_read() {{ return {reg_name}->{func_read}(); }}\n'
+            s += f'    void {reg.name}_write_cached( {t_str_wr} value ) {{ return {reg_name}->{func_write_cached}(value); }}\n'
             s += f'    void {reg.name}_write( {t_str_wr} value ) {{ return {reg_name}->{func_write}(value); }}\n'
             if reg.t.is_vec:
                 s += f'    {t_elem_str} {reg.name}_cached_idx ( uint idx ) const {{ return {reg_name}->{func_read_idx_cached}(idx); }}\n'
@@ -108,6 +132,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
             s += f'    {t_str} {reg.name}_cached() const {{ return {reg_name}->{func_read_cached}(); }}\n'
             s += f'    {t_str} {reg.name}_read() {{ return {reg_name}->{func_read}(); }}\n'
             if not reg.t.is_vec:
+                s += f'    void {reg.name}_write_cached( {t_str_wr} value ) {{ {reg_name}->{func_write_cached}(value); }}\n'
                 s += f'    void {reg.name}_trigger( {t_str_wr} value ) {{ {reg_name}->{func_write}(value); }}\n'
             if reg.t.is_vec:
                 s += f'    {t_elem_str} {reg.name}_cached_idx const ( uint idx ) {{ return {reg_name}->{func_read_idx_cached}(idx); }}\n'
@@ -133,15 +158,17 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
             t_str_c = 'const & std::vector<bool>'
             func_read_cached = 'read_vec_bool_cached'
             func_read        = 'read_vec_bool'
+            func_write_cached= 'write_vec_bool_cached'
             func_write       = 'write_vec_bool'
 
-            s += f'    size_t {f.name}_size() const {{ return {resolvable_str(f.vec_len)}; }}\n'
+            s += f'    size_t {f.name}_size() const {{ return {to_cpp_source(f.vec_len)}; }}\n'
 
         else:
             t_str = 'bool'
             t_str_c = t_str
             func_read_cached = 'read_bool_cached'
             func_read        = 'read_bool'
+            func_write_cached= 'write_bool_cached'
             func_write       = 'write_bool'
         match reg.acc:
             case Acc.k:
@@ -153,10 +180,12 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
             case Acc.rw:
                 s += f'    {t_str} {f.name}_cached() const {{ return {f_name}->{func_read_cached}(); }}\n'
                 s += f'    {t_str} {f.name}_read() {{ return {f_name}->{func_read}(); }}\n'
+                s += f'    void {f.name}_write_cached( {t_str_c} value ) {{ {f_name}->{func_write_cached}(value); }}\n'
                 s += f'    void {f.name}_write( {t_str_c} value ) {{ {f_name}->{func_write}(value); }}\n'
             case Acc.wt:
                 s += f'    {t_str} {f.name}_cached() const {{return {f_name}->{func_read_cached}(); }}\n'
                 s += f'    {t_str} {f.name}_read() {{ return {f_name}->{func_read}(); }}\n'
+                s += f'    void {f.name}_write_cached( {t_str_c} value ) {{ {f_name}->{func_write_cached}(value); }}\n'
                 s += f'    void {f.name}_trigger( {t_str_c} value ) {{ {f_name}->{func_write}(value); }}\n'
             case _:
                 assert False
@@ -165,10 +194,17 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
 
         if reg.acc == Acc.rc:
             reg_name = reg_to_inst_str(reg)
-            func_write      = write_value_function_str(reg.t)
+            func_write        = write_value_function_str(reg.t, cached=True , sw=SW)
+            func_write_cached = write_value_function_str(reg.t, cached=False, sw=SW)
             s += f'    void {f.name}_clear() {{ {reg_name}->write_zero(); }}\n'
 
     return s
+
+def all_reg_value_functions_str(reg : RecipeReg) -> str:
+    if reg.t.kind == ValueKind.flag:
+        return all_reg_value_functions_str_is_flag(reg)
+    else:
+        return all_reg_value_functions_str_not_flag(reg)
 
 # def recipe_to_reg_type_k(kv : RecipeK):
 #     reg_class = 'RegVec' if kv.t.is_vec else 'Reg'
@@ -300,6 +336,7 @@ void {recipe.sw_module}::init_reg_map_k() {{
         for kv in recipe.k:
             name_k = name_to_reg_k(kv.name)
             if kv.t.kind == ValueKind.flag:
+                assert kv.flags is not None
                 for f in kv.flags:
                     bit = resolvable_member_function(f.bit)
                     if f.vec_len is None:
@@ -343,15 +380,21 @@ void {recipe.sw_module}::init_reg_map_k() {{
         cpp_f.write(f"}}\n")
         cpp_f.write(f"}}\n")
 
-common.all_reg_value_functions_str_is_flag = all_reg_value_functions_str_is_flag
-common.all_reg_value_functions_str_not_flag = all_reg_value_functions_str_not_flag
-all_reg_value_functions_str = common.all_reg_value_functions_str
-common.name_to_reg_k = name_to_reg_k
-common.name_to_reg_var = name_to_reg_var
-common.resolve_k_ipkg_value = resolve_k_value
-reg_to_inst_str = common.reg_to_inst_str
-resolvable_str = common.resolvable_str
-resolvable_member_function = common.resolvable_member_function
+def reg_to_inst_str(reg : RecipeReg) -> str:
+    if isinstance(reg, Union[RecipeK, RecipeIpkg]):
+        return name_to_reg_k(reg.name)
+    assert isinstance(reg, RecipeVar)
+    return name_to_reg_var(reg.name)
+
+# common.all_reg_value_functions_str_is_flag = all_reg_value_functions_str_is_flag
+# common.all_reg_value_functions_str_not_flag = all_reg_value_functions_str_not_flag
+# all_reg_value_functions_str = common.all_reg_value_functions_str
+# common.name_to_reg_k = name_to_reg_k
+# common.name_to_reg_var = name_to_reg_var
+# common.resolve_k_ipkg_value = resolve_k_value
+# reg_to_inst_str = common.reg_to_inst_str
+# resolvable_str = common.resolvable_str
+# resolvable_member_function = common.resolvable_member_function
 _value_kind_function_str = common._value_kind_function_str
 read_value_function_str  = common.read_value_function_str
 write_value_function_str  = common.write_value_function_str

@@ -11,7 +11,7 @@ use work.vec_pkg.all;
 
 package skmap_map_acc_pkg is
 
-  constant SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG : integer;
+  constant SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT : integer;
 
   procedure skmap_map_acc_k (
     k_vec_int_io : inout integer_vector; 
@@ -19,7 +19,7 @@ package skmap_map_acc_pkg is
     val_i : in integer;
     w_i : in natural;
     signed_i : in boolean;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_k (
@@ -28,49 +28,49 @@ package skmap_map_acc_pkg is
     val_i : in integer_vector;
     w_i : in natural;
     signed_i : in boolean;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_k (
     k_vec_int_io : inout integer_vector; 
     byte_idx_io : inout natural;
     val_i : in boolean;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_k (
     k_vec_int_io : inout integer_vector; 
     byte_idx_io : inout natural;
     val_i : in boolean_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_k (
     k_vec_int_io : inout integer_vector; 
     byte_idx_io : inout natural;
     val_i : in std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_k (
     k_vec_int_io : inout integer_vector; 
     byte_idx_io : inout natural;
     val_i : in vec_slv_t;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_ro(
     signal regs_rd_data_io : inout vec_slv32_t; 
     byte_idx_io : inout natural;
     val_i : in std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_ro(
     signal regs_rd_data_io : inout vec_slv32_t; 
     byte_idx_io : inout natural;
     val_i : in vec_slv_t;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_rw_var(
@@ -78,28 +78,28 @@ package skmap_map_acc_pkg is
     regs_wr_data_i  : in    vec_slv32_t; 
     byte_idx_io : inout natural;
     val_io      : inout std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
   procedure skmap_map_acc_rw(
     signal regs_rd_data_io : inout vec_slv32_t; 
     regs_wr_data_i  : in    vec_slv32_t; 
     byte_idx_io : inout natural;
     signal val_io : inout std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
   procedure skmap_map_acc_rw_var(
     signal regs_rd_data_io : inout vec_slv32_t; 
     regs_wr_data_i  : in    vec_slv32_t; 
     byte_idx_io : inout natural;
     val_io : inout vec_slv_t;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
   procedure skmap_map_acc_rw(
     signal regs_rd_data_io : inout vec_slv32_t; 
     regs_wr_data_i  : in    vec_slv32_t; 
     byte_idx_io : inout natural;
     signal val_io : inout vec_slv_t;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_wt_var(
@@ -109,7 +109,7 @@ package skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     val_io      : inout std_ulogic_vector;
     val_trig_o  : out   std_ulogic;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_wt_var(
@@ -119,7 +119,7 @@ package skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     val_io      : inout vec_slv_t;
     val_trig_o  : out   std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_wt(
@@ -129,7 +129,7 @@ package skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     signal val_io : inout std_ulogic_vector;
     signal val_trig_o  : out   std_ulogic;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_wt(
@@ -139,7 +139,7 @@ package skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     signal val_io      : inout vec_slv_t;
     signal val_trig_o  : out   std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_rc_flags(
@@ -147,7 +147,7 @@ package skmap_map_acc_pkg is
     regs_wr_wren_i  : in    vec_slv4_t; 
     byte_idx_io     : inout natural;
     flags_set_i     : in std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_rc_var(
@@ -156,7 +156,7 @@ package skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     val_i   : in std_ulogic_vector;
     val_clear_o : out std_ulogic;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_rc(
@@ -165,7 +165,7 @@ package skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     val_i   : in std_ulogic_vector;
     signal val_clear_o : out std_ulogic;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   procedure skmap_map_acc_rc(
@@ -174,29 +174,29 @@ package skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     val_i   : in vec_slv_t;
     signal val_clear_o : out std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   );
 
   function skmap_map_acc_BYTE_ALIGN(
     constant VAL_W : natural;
-    constant BYTE_ALIGN : integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) return natural;
 
   procedure skmap_map_acc_byte_inc(
     byte_idx_io : inout natural;
     constant VAL_W : natural;
-    constant BYTE_ALIGN : integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG;
+    constant BYTE_ALIGN : integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT;
     constant VEC_LEN : natural := 1
   );
 
 end package;
 
 package body skmap_map_acc_pkg is
-  constant SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG : integer := 0;
+  constant SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT : integer := 1;
 
   function skmap_map_acc_BYTE_ALIGN(
     constant VAL_W : natural;
-    constant BYTE_ALIGN : integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) return natural is
     variable val_sw_size : natural := promote_to_sw_w(VAL_W)/8;
   begin
@@ -209,7 +209,7 @@ package body skmap_map_acc_pkg is
     val_i : in integer;
     w_i : in natural;
     signed_i : in boolean;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
     constant BYTE_ALIGN_INTL : natural := skmap_map_acc_BYTE_ALIGN(w_i, BYTE_ALIGN);
     variable bit_start : natural;
@@ -240,7 +240,7 @@ package body skmap_map_acc_pkg is
     val_i : in integer_vector;
     w_i : in natural;
     signed_i : in boolean;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
   begin
     for idx in val_i'range loop
@@ -252,7 +252,7 @@ package body skmap_map_acc_pkg is
     k_vec_int_io : inout integer_vector; 
     byte_idx_io : inout natural;
     val_i : in boolean;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
   begin
     skmap_map_acc_k (
@@ -269,31 +269,45 @@ package body skmap_map_acc_pkg is
     k_vec_int_io : inout integer_vector; 
     byte_idx_io : inout natural;
     val_i : in boolean_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
     constant BYTE_ALIGN_INTL : natural := skmap_map_acc_BYTE_ALIGN(val_i'length, BYTE_ALIGN);
     variable b : natural;
     variable reg_idx : natural;
     variable val : integer;
+    variable at_end : boolean := FALSE;
   begin
     byte_idx_io := ceil_multiple(byte_idx_io, BYTE_ALIGN_INTL);
     reg_idx := byte_idx_io / 4;
     b := (byte_idx_io rem 4) * 8;
     val := k_vec_int_io(reg_idx);
     for ii in val_i'range loop
+      assert not at_end
+      report "k_vec_int_io is too small"
+      severity FAILURE;
       if b = 0 then
         val := k_vec_int_io(reg_idx);
       end if;
-      val := val + to_int(val_i(ii))*2**b;
+      if b /= 31 then
+        val := val + to_int(val_i(ii))*2**b;
+      else
+        val := val + (-2147483648); -- -2**31 Max negetive int32 value
+      end if;
       inc(b);
       if b = 32 then
         k_vec_int_io(reg_idx) := val;
         b := 0;
         inc(reg_idx);
-        val := k_vec_int_io(reg_idx);
+        if ii = val_i'high + 1 then
+          at_end := True;
+        else
+          val := k_vec_int_io(reg_idx);
+        end if;
       end if;
     end loop;
-    k_vec_int_io(reg_idx) := val;
+    if not at_end then
+      k_vec_int_io(reg_idx) := val;
+    end if;
     inc(byte_idx_io, ceil_div(val_i'length, 8));
     byte_idx_io := ceil_multiple(byte_idx_io, BYTE_ALIGN_INTL);
   end procedure;
@@ -302,7 +316,7 @@ package body skmap_map_acc_pkg is
     k_vec_int_io : inout integer_vector; 
     byte_idx_io : inout natural;
     val_i : in std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
   begin
     skmap_map_acc_k (
@@ -317,7 +331,7 @@ package body skmap_map_acc_pkg is
     k_vec_int_io : inout integer_vector; 
     byte_idx_io : inout natural;
     val_i : in vec_slv_t;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
   begin
     for ii in val_i'range loop
@@ -333,7 +347,7 @@ package body skmap_map_acc_pkg is
   procedure skmap_map_acc_byte_inc(
     byte_idx_io : inout natural;
     constant VAL_W : natural;
-    constant BYTE_ALIGN : integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG;
+    constant BYTE_ALIGN : integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT;
     constant VEC_LEN : natural := 1
   ) is
     constant BYTE_ALIGN_INTL : natural := skmap_map_acc_BYTE_ALIGN(VAL_W, BYTE_ALIGN);
@@ -349,7 +363,7 @@ package body skmap_map_acc_pkg is
     signal regs_rd_data_io : inout vec_slv32_t; 
     byte_idx_io : inout natural;
     val_i : in std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
 
     constant BYTE_ALIGN_INTL : natural := skmap_map_acc_BYTE_ALIGN(val_i'length, BYTE_ALIGN);
@@ -397,7 +411,7 @@ package body skmap_map_acc_pkg is
     signal regs_rd_data_io : inout vec_slv32_t; 
     byte_idx_io : inout natural;
     val_i : in vec_slv_t;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
   begin
     for idx in val_i'range loop
@@ -410,7 +424,7 @@ package body skmap_map_acc_pkg is
     regs_wr_data_i         : in    vec_slv32_t; 
     byte_idx_io            : inout natural;
     val_io                 : inout std_ulogic_vector;
-    constant BYTE_ALIGN    : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN    : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
 
     variable empty : vec_slv4_t(0 to -1);
@@ -434,7 +448,7 @@ package body skmap_map_acc_pkg is
     regs_wr_data_i  : in    vec_slv32_t; 
     byte_idx_io            : inout natural;
     signal val_io          : inout std_ulogic_vector;
-    constant BYTE_ALIGN    : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN    : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
     variable val_v : std_ulogic_vector(val_io'range);
   begin
@@ -453,7 +467,7 @@ package body skmap_map_acc_pkg is
     regs_wr_data_i         : in    vec_slv32_t; 
     byte_idx_io            : inout natural;
     val_io                 : inout vec_slv_t;
-    constant BYTE_ALIGN    : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN    : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
   begin
     for idx in val_io'range loop
@@ -472,7 +486,7 @@ package body skmap_map_acc_pkg is
     regs_wr_data_i         : in    vec_slv32_t; 
     byte_idx_io            : inout natural;
     signal val_io          : inout vec_slv_t;
-    constant BYTE_ALIGN    : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN    : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
     constant ELEM_W : natural := get_elem_w(val_io); 
     variable val_v : vec_slv_t(val_io'range)(ELEM_W-1 downto 0);
@@ -494,7 +508,7 @@ package body skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     val_io      : inout std_ulogic_vector;
     val_trig_o  : out   std_ulogic;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
     constant BYTE_ALIGN_INTL : natural := skmap_map_acc_BYTE_ALIGN(val_io'length, BYTE_ALIGN);
     variable val_dt : std_ulogic_vector(val_io'length-1 downto 0);
@@ -544,7 +558,7 @@ package body skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     val_i   : in std_ulogic_vector;
     signal val_clear_o : out std_ulogic;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
     variable val_clear_v : std_ulogic;
   begin
@@ -566,7 +580,7 @@ package body skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     val_i   : in vec_slv_t;
     signal val_clear_o : out std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
     variable val_clear_v : std_ulogic_vector(val_i'range);
   begin
@@ -590,7 +604,7 @@ package body skmap_map_acc_pkg is
     regs_wr_wren_i  : in    vec_slv4_t; 
     byte_idx_io     : inout natural;
     flags_set_i     : in    std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
     constant BYTE_ALIGN_INTL : natural := skmap_map_acc_BYTE_ALIGN(flags_set_i'length, BYTE_ALIGN);
     variable val_dt : std_ulogic_vector(flags_set_i'length-1 downto 0) := rng_dt(flags_set_i);
@@ -638,7 +652,7 @@ package body skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     val_i   : in std_ulogic_vector;
     val_clear_o   : out std_ulogic;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
     constant BYTE_ALIGN_INTL : natural := skmap_map_acc_BYTE_ALIGN(val_i'length, BYTE_ALIGN);
     variable reg_idx, byte_high : integer;
@@ -668,7 +682,7 @@ package body skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     val_io      : inout vec_slv_t;
     val_trig_o  : out   std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
   begin
     for ii in val_io'range loop
@@ -691,7 +705,7 @@ package body skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     signal val_io : inout std_ulogic_vector;
     signal val_trig_o  : out   std_ulogic;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
     variable val : std_ulogic_vector(val_io'range);
     variable val_trig : std_ulogic;
@@ -716,7 +730,7 @@ package body skmap_map_acc_pkg is
     byte_idx_io : inout natural;
     signal val_io : inout vec_slv_t;
     signal val_trig_o  : out   std_ulogic_vector;
-    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_TO_REG
+    constant BYTE_ALIGN : in integer := SKMAP_MAP_ACC_BYTE_ALIGN_DEFAULT
   ) is
     variable val : vec_slv_t(val_io'range)(get_elem_w(val_io)-1 downto 0);
     variable val_trig : std_ulogic_vector(val_io'high downto val_io'low);

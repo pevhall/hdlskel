@@ -29,7 +29,7 @@ class FwInitMode(Enum):
     k_int = auto()
 
     @property
-    def is_k(self) -> bool:
+    def not_zero(self) -> bool:
         return {
             FwInitMode.zero:      False,
             FwInitMode.k:         True,

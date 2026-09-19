@@ -455,7 +455,7 @@ class RegVec(Reg):
         return self.ass_check_cached_idx(idx, log_ass, log_f)
 
     def read_rich_str_cached(self) -> str:
-        use_hex = False
+        base = 10
         match self.value_type.kind:
             case ValueKind.uint:
                 value = self.read_list_uint_cached()
@@ -463,7 +463,7 @@ class RegVec(Reg):
                 value = self.read_list_sint_cached()
             case ValueKind.bits:
                 value = self.read_list_uint_cached()
-                use_hex = True
+                base = 16
             case ValueKind.flag:
                 assert self.value_type.is_bool
                 value = self.read_list_bool_cached()
@@ -477,7 +477,6 @@ class RegVec(Reg):
             s += to_rich_str(f'{self.ass}', ass_checked.color)+": "
         if self.has_limit():
             ass = max(ass, self.ass_check_limit_cached())
-            base = 16 if use_hex else 10
             value_min = min(value)
             value_max = max(value)
             assert isinstance(value_min, int)
@@ -486,9 +485,8 @@ class RegVec(Reg):
         s += "[ "
         for idx, v in enumerate(value):
             ass = self.ass_check_cached_idx(idx)
-            if use_hex:
-                assert isinstance(v, int)
-                v_str = hex(v)
+            if isinstance(v, int):
+                v_str = self._str_num(v, base)
             else:
                 v_str= str(v)
             s +=to_rich_str(v_str, ass.color)
