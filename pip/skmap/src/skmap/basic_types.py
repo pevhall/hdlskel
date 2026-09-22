@@ -103,6 +103,10 @@ class ValueType:
         self.vec_len = vec_len
 
     @property
+    def elem_w(self) -> int:
+        return self.width
+
+    @property
     def is_vec(self) -> bool:
         return self.vec_len is not None
 

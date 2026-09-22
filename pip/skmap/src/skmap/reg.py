@@ -24,6 +24,14 @@ class Reg:
         self.max    = max
         self.min    = min
 
+    @property
+    def is_flag(self) -> bool:
+        return False
+
+    @property
+    def is_reg(self) -> bool:
+       return True
+
     def has_ass(self) -> bool:
         return self.ass != Ass.none or self.has_limit()
 
@@ -516,6 +524,14 @@ class RFlag:
         self.ass  = ass
         self.desc = desc
         self.vec_len = vec_len
+
+    @property
+    def is_flag(self) -> bool:
+        return True
+
+    @property
+    def is_reg(self) -> bool:
+       return False
 
     def assign(self, reg_flags : 'RegFlags'):
         self.reg_flags = reg_flags

@@ -361,7 +361,7 @@ class Module(ABC):
                 + to_rich_str(mem.name, 'cyan') + to_rich_str(f" {mem.acc} {mem.size} B", 'blue') )
         for ii, kid in enumerate(self._kids):
             if kid is None:
-                tree.add(f'📕 {to_rich_str(hex(self._kid_addrs[ii]),'green')}'
+                tree.add(f"📕 {to_rich_str(hex(self._kid_addrs[ii]),'green')}"
                     + to_rich_str('Uninitalised module', 'red'))
             else:
                 kid._print_tree_cached_branch(tree)

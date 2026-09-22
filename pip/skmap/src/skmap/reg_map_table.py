@@ -51,14 +51,16 @@ def print_table_reg_list(l : list[Union[RFlag, Reg]], title, prepend_regs = True
     table = RegMapTable(title=title)
     reg_prev = None
     for v in l:
-        if isinstance(v, RFlag):
+        # if isinstance(v, RFlag):
+        if v.is_flag:
             reg = v.reg_flags
             if prepend_regs and reg is not reg_prev:
                 table.add_reg( reg, expand_flags=False)
                 reg_prev = reg
             table.add_flag( v)
         else:
-            assert isinstance(v, Reg)
+            # assert isinstance(v, Reg)
+            assert v.is_reg
             table.add_reg(v)
     table.print()
 

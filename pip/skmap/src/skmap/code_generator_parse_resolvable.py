@@ -57,7 +57,7 @@ class ResolvableFunctionBuiltIn:
         self.func = func
         self.params = params
     def __repr__(self) -> str:
-        return f'${self.func.name}({', '.join([str(p) for p in self.params])})' #type: ignore
+        return f"${self.func.name}({', '.join([str(p) for p in self.params])})" #type: ignore
 
 def make_resolvable_function(lhs : ResolvableT, op : BultiInOperation, rhs : ResolvableT) -> ResolvableT:
     if isinstance(rhs, int):

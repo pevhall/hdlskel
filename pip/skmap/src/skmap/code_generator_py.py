@@ -2,7 +2,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Union
 
-from .code_generator_parse_resolvable import ResolvableFunctionOperation, ResolvableT, ResolvableFunctionBuiltIn
+from .code_generator_parse_resolvable import ResolvableFunctionOperation, ResolvableT, ResolvableFunctionBuiltIn, BultiInOperation
 from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeIpkg, RecipeK, RecipeVar, RecipeReg, RecipeMem
 # from basic import promote_to_sw_w, ceil_div
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR, SKMAP_VER_MAJOR, SKMAP_VER_MINOR, SKMAP_VER_PATCH
@@ -28,6 +28,15 @@ def reg_to_inst_str(reg : RecipeReg) -> str:
     assert isinstance(reg, RecipeVar)
     return name_to_reg_var(reg.name)
 
+def op_to_py_source(op : BultiInOperation) -> str:
+    return {
+        BultiInOperation.add : "+",
+        BultiInOperation.sub : "-",
+        BultiInOperation.mult: "*",
+        BultiInOperation.div: "//",
+        BultiInOperation.power: "**",
+        }[op]
+
 def to_python_source(node: ResolvableT) -> str:
     """Render a ResolvableT tree back out as a Python source-code expression string."""
     # if isinstance(node, bool):
@@ -41,7 +50,7 @@ def to_python_source(node: ResolvableT) -> str:
     if isinstance(node, RecipeK):
         return f'self.{node.name}'
     if isinstance(node, ResolvableFunctionOperation):
-        return f'({to_python_source(node.lhs)} {node.op} {to_python_source(node.rhs)})'
+        return f'({to_python_source(node.lhs)} {op_to_py_source(node.op)} {to_python_source(node.rhs)})'
     if isinstance(node, ResolvableFunctionBuiltIn):
         args = ', '.join(to_python_source(p) for p in node.params)
         return f'skmap.recipe_functions.{node.func.name}({args})'
@@ -431,7 +440,8 @@ class {recipe.sw_module}(skmap.Module):
             if varv.flags is not None:
                 for f in varv.flags:
                     vec_len_param = '' if f.vec_len is None else f' vec_len={to_python_source(f.vec_len)},'
-                    py_f.write(f"        {name_to_reg_var(f.name)} = skmap.RFlag(name='{f.name}', bit={f.bit}, ass=skmap.Ass.{f.ass.to_str()},{vec_len_param} desc='{f.desc}')\n")
+                    bit = to_python_source(f.bit)
+                    py_f.write(f"        {name_to_reg_var(f.name)} = skmap.RFlag(name='{f.name}', bit={bit}, ass=skmap.Ass.{f.ass.to_str()},{vec_len_param} desc='{f.desc}')\n")
                 py_f.write("        flags = [")
                 for f in varv.flags: py_f.write(f" {name_to_reg_var(f.name)}, ")
                 py_f.write("]\n")

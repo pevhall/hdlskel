@@ -1,6 +1,8 @@
 
 import asyncio
 from typing import Optional
+from pathlib import Path
+
 import regio
 import regio.cli_utils
 
@@ -64,6 +66,12 @@ if __name__ == '__main__':
             help="Transfer size in bytes"
         )
 
+        parser.add_argument(
+            "--rd-file",
+            type=Path,
+            help="Write file"
+        )
+
         write_group = parser.add_mutually_exclusive_group()
 
         write_group.add_argument(
@@ -77,20 +85,30 @@ if __name__ == '__main__':
             type=lambda s: bytes.fromhex(s),
             help="Write bytes as hex string (e.g. DEADBEEF)"
         )
+        write_group.add_argument(
+            "--wr-file",
+            type=Path,
+            help="Write file"
+        )
 
         args = parser.parse_args()
 
         # Auto-calculate size if not explicitly provided.
         if args.size is None:
-            if args.write_int is not None:
+            if args.wr_int is not None:
                 # Smallest number of bytes needed to represent the integer.
-                args.size = max(1, (args.write_int.bit_length() + 7) // 8)
-            elif args.write_bytes is not None:
-                args.size = len(args.write_bytes)
+                args.size = max(1, (args.wr_int.bit_length() + 7) // 8)
+            elif args.wr_bytes is not None:
+                args.size = len(args.wr_bytes)
+            elif args.wr_file is not None:
+                args.size = args.wr_file.stat().st_size
 
-        if args.wr_bytes is None and args.wr_int is not None:
-            args.wr_bytes = args.wr_int.to_bytes(args.size, byteorder='little', signed=True)
-
+        if args.wr_bytes is None:
+            if args.wr_int is not None:
+                args.wr_bytes = args.wr_int.to_bytes(args.size, byteorder='little', signed=True)
+            elif args.wr_file is not None:
+                with open(args.wr_file, "rb") as wr_f:
+                    args.wr_bytes = wr_f.read()
         return args
 
     def main():
@@ -98,6 +116,9 @@ if __name__ == '__main__':
         print(args)
 
         rd_bytes = asyncio.run( single_op(args) )
+        if args.rd_file is not None:
+            with open(args.rd_file, "wb") as rd_f:
+                rd_f.write(rd_bytes)
         print(f'rd_bytes = {[hex(a) for a in rd_bytes]}')
 
     main()
