@@ -5,7 +5,7 @@
 # ├──────────╢                    ID                     │
 # │  Word 1  ║                                           │
 # ├──────────╫──────────┬──────────┬─────────────────────┤
-# │  Word 2  ║ Version  │  Sync    │       Checksum      │
+# │  Word 2  ║   Sync   │ Ver Flags│       Checksum      │
 # ├──────────╫──────────┼──────────┼──────────┬──────────┤
 # │  Word 3  ║ Len_Kids │ Len_Sub  │  Len_K   │  Len_Var │
 # └──────────╨──────────┴──────────┴──────────┴──────────┘
@@ -44,7 +44,7 @@ class Head:
         ii = SIZE_ID;
         self.sync      = data[ii]; ii += 1
         self.version   = data[ii]; ii += 1
-        assert self.version < 16
+        # assert self.version < 16
         self.checksum  = int.from_bytes(data[ii:ii+SIZE_CHECKSUM], byteorder='little')
         ii += SIZE_CHECKSUM
         self.len_kids  = data[ii]; ii += 1

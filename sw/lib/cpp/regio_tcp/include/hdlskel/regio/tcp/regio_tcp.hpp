@@ -10,7 +10,7 @@ namespace hdlskel::regio::tcp {
 
 static constexpr uint8_t RQST_SYNC = 0x9A;
 static constexpr uint8_t RPLY_SYNC = 0x9B;
-static constexpr uint16_t PORT_DEFAULT = 0x9A9B;
+static constexpr uint16_t PORT_DEFAULT = 0x9AB0;
 
 static constexpr size_t rqst_head_size = 1+1+2+4;
 

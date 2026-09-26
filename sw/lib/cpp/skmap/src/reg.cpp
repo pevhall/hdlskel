@@ -68,6 +68,10 @@ sint_t Reg::read_sint_cached() const {
     return sint_sign_extend_w(value, elem_w());
 }
 
+bool Reg::read_bool_cached() const {
+    return read_uint_cached() != 0;
+}
+
 uint_t Reg::read_uint() {
     if( not cache_only() ) { update_cache(); }
     return read_uint_cached();
@@ -76,6 +80,11 @@ uint_t Reg::read_uint() {
 sint_t Reg::read_sint() {
     if( not cache_only() ) { update_cache(); }
     return read_sint_cached();
+}
+
+bool Reg::read_bool() {
+    if( not cache_only() ) { update_cache(); }
+    return read_bool_cached();
 }
 
 void Reg::write_uint_cached(uint_t value) { 
@@ -90,12 +99,19 @@ void Reg::write_sint_cached(sint_t value) {
     }
     memcpy_to_cache(&value);
 }
+void Reg::write_bool_cached(bool v) {
+    write_uint_cached(static_cast<uint_t>(v));
+}
 void Reg::write_uint(uint_t value) { 
     write_uint_cached(value);
     if( not cache_only() ) { write_cache(); }
 }
 void Reg::write_sint(sint_t value) { 
     write_sint_cached(value);
+    if( not cache_only() ) { write_cache(); }
+}
+void Reg::write_bool(bool v) {
+    write_bool_cached(v);
     if( not cache_only() ) { write_cache(); }
 }
 void Reg::write_zero() {
@@ -166,7 +182,7 @@ std::vector<uint_t> RegVec::read_vec_uint_cached() const {
     for(auto & v : vec) {
         v = 0;
         std::memcpy(&v, &data[v_off], elem_size());
-        v_off += elem_size();
+        v_off += elem_off();
     }
     return vec;
 }
@@ -183,7 +199,7 @@ std::vector<sint_t> RegVec::read_vec_sint_cached() const {
     for(auto & v : vec) {
         v = 0;
         std::memcpy(&v, &data[v_off], elem_size());
-        v_off += elem_size();
+        v_off += elem_off();
         v = sint_sign_extend_w(v, elem_w());
     }
     return vec;
@@ -200,7 +216,7 @@ std::vector<bool> RegVec::read_vec_bool_cached() const {
     addr_t b_idx = 0;
     for(addr_t ii = 0; ii < vec_len(); ii++) {
         vec[ii] = (static_cast<uint8_t>(data[b_idx])) != 0;
-        b_idx += elem_size();
+        b_idx += elem_off();
     }
     return vec;
 }
@@ -216,7 +232,11 @@ std::string RegVec::read_str_cached() const {
     }
     std::span<const std::byte> data = cache_data();
     std::string str(vec_len(), '\0');
-    memcpy(&str[0], &data[0], vec_len());
+    addr_t v_off = 0;
+    for(char & c : str) {
+        c = static_cast<char>(data[v_off]);
+        v_off += elem_off();
+    }
     return str;
 }
 
@@ -225,58 +245,58 @@ std::string RegVec::read_str() {
     return read_str_cached();
 }
 
-void RegVec::write_vec_uint_cache(const  std::vector<uint_t> & vec) {
+void RegVec::write_vec_uint_cached(const  std::vector<uint_t> & vec) {
     std::span<std::byte> data = cache_data();
     addr_t ii = 0;
     for(const uint_t v : vec) {
-        std::memcpy(&data[ii++], &v, elem_size());
-        ii += elem_size();
+        std::memcpy(&data[ii], &v, elem_size());
+        ii += elem_off();
     }
 }
 
-void RegVec::write_vec_sint_cache(const  std::vector<sint_t> & vec) {
+void RegVec::write_vec_sint_cached(const  std::vector<sint_t> & vec) {
     std::span<std::byte> data = cache_data();
     addr_t ii = 0;
     for(const sint_t v : vec) {
         // v = sint_sign_extend_w(v, elem_w());
         std::memcpy(&data[ii], &v, elem_size());
-        ii += elem_size();
+        ii += elem_off();
     }
 }
 
-void RegVec::write_vec_bool_cache(const  std::vector<bool> & vec) {
+void RegVec::write_vec_bool_cached(const  std::vector<bool> & vec) {
     std::span<std::byte> data = cache_data();
     addr_t ii = 0;
     for(const bool v : vec) {
         uint_t v_int = static_cast<int>(v);
         std::memcpy(&data[ii], &v_int, elem_size());
-        ii += elem_size();
+        ii += elem_off();
     }
 }
 void RegVec::write_vec_uint(const  std::vector<uint_t> & vec) {
-    write_vec_uint_cache(vec);
+    write_vec_uint_cached(vec);
     write_cache();
 }
 void RegVec::write_vec_sint(const  std::vector<sint_t> & vec) {
-    write_vec_sint_cache(vec);
+    write_vec_sint_cached(vec);
     write_cache();
 }
 void RegVec::write_vec_bool(const std::vector<bool> & vec) {
-    write_vec_bool_cache(vec);
+    write_vec_bool_cached(vec);
     write_cache();
 }
 
 void RegVec::memcpy_idx_from_cache(void * dest, addr_t idx) const {
     std::span<const std::byte> data = cache_data();
-    std::memcpy(dest, &data[idx*elem_size()], elem_size());
+    std::memcpy(dest, &data[idx*elem_off()], elem_size());
 }
 
 void RegVec::memcpy_idx_to_cache(const void * src, addr_t idx) {
     std::span<std::byte> data = cache_data();
-    std::memcpy(&data[idx*elem_size()], src, elem_size());
+    std::memcpy(&data[idx*elem_off()], src, elem_size());
 }
 void RegVec::update_idx_cache(addr_t idx) {
-    addr_t addr = m_addr_off + idx*elem_size();
+    addr_t addr = m_addr_off + idx*elem_off();
     module()->update_cache(addr, elem_size());
 }
 
@@ -303,7 +323,7 @@ sint_t RegVec::read_idx_sint(addr_t idx) {
 }
 
 void RegVec::write_idx_cache(addr_t idx) {
-    addr_t addr = m_addr_off + idx*elem_size();
+    addr_t addr = m_addr_off + idx*elem_off();
     module()->write_cache(addr, elem_size());
 }
 void RegVec::write_idx_uint_cached(addr_t idx, uint_t val) {
@@ -394,7 +414,7 @@ bool RFlag::read_bool() {
     update_reg_cache();
     return read_bool_cached();
 }
-void RFlag::write_bool_cache(bool v) {
+void RFlag::write_bool_cached(bool v) {
     write_bool_at_cache(m_bit, v);
 }
 Ass RFlag::ass_check_cached() const {
@@ -411,7 +431,7 @@ std::string RFlag::str_value_cached() const {
 bool RFlagVec::read_idx_bool_cached(addr_t idx) const {
     return read_bool_at_cached(m_bit + idx);
 }
-void RFlagVec::write_idx_bool_cache(addr_t idx, bool v) {
+void RFlagVec::write_idx_bool_cached(addr_t idx, bool v) {
     return write_bool_at_cache(m_bit + idx, v);
 }
 std::vector<bool> RFlagVec::read_vec_bool_cached() const {
@@ -427,8 +447,12 @@ std::vector<bool> RFlagVec::read_vec_bool() {
 }
 void RFlagVec::write_vec_bool_cached(const std::vector<bool> & vec) {
     for(addr_t ii = 0; ii < m_vec_size; ii++) {
-        write_idx_bool_cache(ii, vec[ii]);
+        write_idx_bool_cached(ii, vec[ii]);
     }
+}
+void RFlagVec::write_vec_bool(const std::vector<bool> & vec) {
+    write_vec_bool_cached(vec);
+    write_reg_cache();
 }
 Ass RFlagVec::ass_check_cached() const {
     std::vector<bool> vec = read_vec_bool_cached();

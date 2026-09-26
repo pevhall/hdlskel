@@ -4,6 +4,7 @@
 #include "hdlskel/skmap/basic_types.hpp"
 #include "hdlskel/skmap/head.hpp"
 #include "hdlskel/skmap/reg.hpp"
+#include "hdlskel/skmap/external_mem.hpp"
 #include <cassert>
 #include <memory>
 #include <vector>
@@ -82,6 +83,8 @@ public:
     bool cache_only() const { return m_cache_only; }
     bool cache_only(bool cache_only) { return m_cache_only = cache_only; }
     addr_t align_byte(addr_t val_size);
+    size_t len_external_mem() const { return m_arr_external_mem.size(); }
+    std::shared_ptr<ExternalMem> external_mem_at(size_t idx) { return m_arr_external_mem[idx]; }
 
 private:
     void align_byte_idx(addr_t size);
@@ -96,6 +99,7 @@ private:
     std::vector<std::byte> m_cache;
     std::vector<std::shared_ptr<Reg>> m_vec_k;
     std::vector<std::shared_ptr<Reg>> m_vec_var;
+    std::vector<std::shared_ptr<ExternalMem>> m_arr_external_mem;
 
     friend ModuleFactory;
 };

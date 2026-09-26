@@ -7,28 +7,24 @@
 #include <cstdint>
 #include <string>
 
-
 //            ╓──────────┬──────────┬──────────┬──────────┐
 //            ║  Byte 0  │  Byte 1  │  Byte 2  │  Byte 3  │
 // ╒══════════╬══════════╧══════════╧══════════╧══════════╡
 // │  Word 0  ║                                           │
-// ├──────────╢                    ID          ┌──────────┤
-// │  Word 1  ║                                │   Sync   │
-// ├──────────╫──────────┬──────────┬──────────┴──────────┤
-// │  Word 2  ║ Version  │  Flags   │       Checksum      │
+// ├──────────╢                    ID                     │
+// │  Word 1  ║                                           │
+// ├──────────╫──────────┬──────────┬─────────────────────┤
+// │  Word 2  ║   Sync   │ Ver Flags│       Checksum      │
 // ├──────────╫──────────┼──────────┼──────────┬──────────┤
 // │  Word 3  ║ Len_Kids │ Len_Sub  │  Len_K   │  Len_Var │
 // └──────────╨──────────┴──────────┴──────────┴──────────┘
 
 namespace hdlskel::skmap {
 
-
-
 struct __attribute__((packed)) Head {
     id_t id;
     uint8_t sync;
-    version_t version;
-    uint8_t flags;
+    uint8_t _version_flags;
     checksum_t checksum;
     uint8_t len_kids;
     uint8_t len_sub;
@@ -37,6 +33,14 @@ struct __attribute__((packed)) Head {
 
     bool valid_sync() const {
         return sync == hdlskel::skmap::sync;
+    }
+    uint8_t version() const {
+        static uint8_t VERSION_MASK = (1<<VERSION_BITS)-1;
+        return _version_flags & (VERSION_MASK);
+    }
+    uint8_t flags() const {
+        static uint8_t FLAGS_MASK = (1<<FLAGS_BITS)-1;
+        return (_version_flags<<VERSION_BITS) & (FLAGS_MASK);
     }
     size_t module_len() const {
         return head_len 

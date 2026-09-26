@@ -1,7 +1,7 @@
 #include "hdlskel/skmap/module.hpp"
 #include "hdlskel/regio/tcp/regio_tcp.hpp"
 #include "hdlskel/regio/tcp/regio_tcp_client.hpp"
-#include "hdlskel/skmap/autogen/recipe_test_bench_module.hpp"
+#include "hdlskel/skmap/autogen_test/recipe_test_bench_module.hpp"
 
 #include <CLI/CLI.hpp>
 

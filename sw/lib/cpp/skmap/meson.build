@@ -7,10 +7,13 @@ hdlskel_skmap_lib = library(
   , './src/head.cpp'
   , './src/reg.cpp'
   , './src/module.cpp'
+  , './src/external_mem.cpp'
   , './include/hdlskel/skmap/basic_types.hpp'
   , './include/hdlskel/skmap/head.hpp'
   , './include/hdlskel/skmap/reg.hpp'
   , './include/hdlskel/skmap/module.hpp'
+  , './include/hdlskel/skmap/external_mem.hpp'
+  , './include/hdlskel/skmap/recipe_functions.hpp'
   ],
   include_directories: hdlskel_skmap_inc,
   # dependencies: [hdlskel_regio_dep],

@@ -18,7 +18,7 @@ const std::string ver_str = std::to_string(ver_major)+"."+std::to_string(ver_min
 constexpr uint8_t sync = 0xD8;
 
 constexpr size_t word_size = 4;
-constexpr size_t id_size = 7;
+constexpr size_t id_size = 8;
 constexpr size_t head_len  = 4;
 constexpr size_t head_size = head_len*word_size;
 
@@ -27,6 +27,9 @@ using addr_t = uint32_t;
 using idx_t = addr_t;
 using checksum_t = uint16_t;
 using version_t = uint8_t;
+
+constexpr static int VERSION_BITS  = 4;
+constexpr static int FLAGS_BITS  = 4;
 
 inline addr_t ceil_div(addr_t n, addr_t d) {
     return (n + d - 1) / d;
@@ -48,7 +51,6 @@ enum class Acc {
     rw,
     wt,
 };
-std::ostream& operator<<(std::ostream& os, Acc v);
 
 enum class Ass {
     none = -1,
@@ -76,6 +78,7 @@ std::string str(ValueKind v);
 
 using uint_t = uint64_t;
 using sint_t = int64_t;
+using uint = uint32_t;
 
 class ValueType {
 public:

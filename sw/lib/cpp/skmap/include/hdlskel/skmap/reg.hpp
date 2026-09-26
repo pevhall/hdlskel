@@ -35,12 +35,16 @@ public:
     void write_cache();
     uint_t read_uint_cached() const;
     sint_t read_sint_cached() const;
+    bool read_bool_cached() const;
     uint_t read_uint();
     sint_t read_sint();
+    bool read_bool();
     void write_uint_cached(uint_t value);
     void write_sint_cached(sint_t value);
+    void write_bool_cached(bool v);
     void write_uint(uint_t value);
     void write_sint(sint_t value);
+    void write_bool(bool v);
     void write_zero();
     std::vector<bool> read_vec_bool_cached() const;
     std::vector<bool> read_vec_bool();
@@ -90,11 +94,11 @@ public:
     std::string         read_str_cached() const;
     std::string         read_str();
 
-    void write_vec_uint_cache(const  std::vector<uint_t> & vec);
+    void write_vec_uint_cached(const  std::vector<uint_t> & vec);
     void write_vec_uint(const  std::vector<uint_t> & vec);
-    void write_vec_sint_cache(const  std::vector<sint_t> & vec);
+    void write_vec_sint_cached(const  std::vector<sint_t> & vec);
     void write_vec_sint(const  std::vector<sint_t> & vec);
-    void write_vec_bool_cache(const  std::vector<bool> & vec);
+    void write_vec_bool_cached(const  std::vector<bool> & vec);
     void write_vec_bool(const std::vector<bool> & vec);
  
     void update_idx_cache(addr_t idx);
@@ -108,6 +112,9 @@ public:
     void write_idx_uint(addr_t idx, uint_t val);
     void write_idx_sint_cached(addr_t idx, sint_t val);
     void write_idx_sint(addr_t idx, sint_t val);
+
+    // stride between vector elements in bytes (aligned to the module byte alignment)
+    addr_t elem_off() const { return m_value_type.sw_elem_offset(); }
 
     bool is_flags() const override { return false; }
     bool is_vec  () const override { return true ; }
@@ -127,7 +134,7 @@ public:
     void write_reg_cache();
     bool read_bool_cached() const;
     bool read_bool();
-    void write_bool_cache(bool v);
+    void write_bool_cached(bool v);
     void write_bool(bool v);
     virtual Ass ass_check_cached() const;
     virtual std::string str_value_cached() const;
@@ -165,10 +172,11 @@ public:
     void update_reg_cache() { RFlag::update_reg_cache(); }
     void write_reg_cache()  { RFlag::write_reg_cache(); }
     bool read_idx_bool_cached(addr_t idx) const;
-    void write_idx_bool_cache(addr_t idx, bool v);
+    void write_idx_bool_cached(addr_t idx, bool v);
     std::vector<bool> read_vec_bool_cached() const;
     std::vector<bool> read_vec_bool();
     void write_vec_bool_cached(const std::vector<bool> & vec);
+    void write_vec_bool(const std::vector<bool> & vec);
     Ass ass_check_cached() const override;
     std::string str_value_cached() const override;
 

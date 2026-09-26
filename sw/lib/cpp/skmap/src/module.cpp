@@ -16,7 +16,7 @@ namespace hdlskel::skmap {
 // std::shared_ptr<ModuleFactorv> ModuleFactory::instance = std::make_shared<ModuleFactory>();
 
 bool ModuleFactory::instance_register_module(std::shared_ptr<const Module> module){
-    std::cout << __FILE__ << ":" << __LINE__ << ": Registering moduole " << module->name() << "\n";
+    std::cout << __FILE__ << ":" << __LINE__ << ": Registering module " << module->name() << "\n";
     if (not m_lookup.contains(module->id()) ) {
         std::map<version_t, std::shared_ptr<const Module>> lookup_version;
         m_lookup[module->id()] = std::move(lookup_version);
@@ -37,7 +37,7 @@ std::shared_ptr<Module> ModuleFactory::instance_get_module(id_t id, version_t ve
 
     if (not m_lookup.contains(id) ) {
         if (allow_unkowen) {
-            std::cerr << "Could not find registered module with id. Return ModuleUnknown";
+            std::cerr << "Could not find registered module with id. Return ModuleUnknown\n";
             return module_unkowen.make_empty();
         } else {
             throw std::runtime_error("Could not find registered module with id");
@@ -45,8 +45,9 @@ std::shared_ptr<Module> ModuleFactory::instance_get_module(id_t id, version_t ve
     }
     auto & lookup_version = m_lookup[id];
     if (not lookup_version.contains(version) ) {
+        std::cerr << "Could not find register module with  version "<<+version<<"\n";
         if (allow_unkowen) {
-            std::cerr << "Could not find registered module with version. Return ModuleUnknown";
+            std::cerr << "Could not find registered module with version. Return ModuleUnknown\n";
             return module_unkowen.make_empty();
         } else {
             throw std::runtime_error("Could not find registered module with version");
@@ -180,12 +181,13 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
     std::vector<std::byte> data(head_size);
     regio->read(base_addr, data);
     Head head = unpack_head(data);
-    std::cout << "head: "<<head.to_str()<<"\n";
+    std::cout << __FILE__ << ":" << __LINE__ << ": head: "<<head.to_str()<<"\n";
+    assert(head.flags() == 0); // Flags are not currently supported
     data.resize(head.module_size());
     std::span<std::byte> data_span(data);
-    regio->read(head_size, data_span.subspan(head_size, data.size()-head_size));
+    regio->read(base_addr + head_size, data_span.subspan(head_size, data.size()-head_size));
 
-    auto module = ModuleFactory::get_module(head.id, head.version, allow_unkowen);
+    auto module = ModuleFactory::get_module(head.id, head.version(), allow_unkowen);
     module->m_byte_align = 1;
     module->m_byte_idx = head_size;
 
@@ -194,6 +196,7 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
     enum class SubID : uint8_t {
         PAD = 0x0,
         BYTE_ALIGN = 0x1A,
+        EXTERNAL_MEM = 0x3B,
     };
 
     addr_t var_byte_align = 1;
@@ -209,6 +212,17 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
                 std::cout << "Sub Head: Byte Align "<<var_byte_align<<"\n";
                 module->m_byte_idx += word_size;
                 break;
+            case static_cast<uint8_t>(SubID::EXTERNAL_MEM): {
+                Acc acc = static_cast<Acc>(data[module->m_byte_idx + 1]);
+                addr_t ext_base_addr;
+                addr_t ext_size;
+                std::memcpy(&ext_base_addr, &data[module->m_byte_idx + 4], sizeof(addr_t));
+                std::memcpy(&ext_size, &data[module->m_byte_idx + 8], sizeof(addr_t));
+                std::cout << "Sub Head: EXTERNAL_MEM base="<<ext_base_addr<<" size="<<ext_size<<" acc="<<acc<<"\n";
+                module->m_arr_external_mem.push_back(std::make_shared<ExternalMem>(regio, ext_base_addr, ext_size, acc));
+                module->m_byte_idx += 3 * word_size;
+                break;
+            }
             default:
                 std::ostringstream oss;
                 oss << "Unkowen sub_id 0x" << std::hex<< +sub_id << std::dec;
