@@ -27,6 +27,7 @@ public:
 
     // Set the details of this mem from a generated module.
     void details(const std::string & name, ValueType value_type, Acc acc, const std::string & desc);
+    bool has_details() const { return m_value_type.has_value(); }
 
     std::string name() const;
     ValueType value_type() const;

@@ -6,7 +6,9 @@ hdlskel_skmap_autogen_lib = library(
   'hdlskel_skmap_autogen',
   [
     'include/hdlskel/skmap/autogen_test/recipe_test_bench_module.hpp',
-    'src/recipe_test_bench_module.cpp'
+    'src/recipe_test_bench_module.cpp',
+    'include/hdlskel/skmap/autogen_test/test_skmap_tree_module.hpp',
+    'src/test_skmap_tree_module.cpp'
   ],
   include_directories: [hdlskel_skmap_autogen_inc, hdlskel_skmap_inc],
   # dependencies: [hdlskel_regio_dep],

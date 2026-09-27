@@ -16,7 +16,7 @@ namespace hdlskel::skmap {
 // std::shared_ptr<ModuleFactorv> ModuleFactory::instance = std::make_shared<ModuleFactory>();
 
 bool ModuleFactory::instance_register_module(std::shared_ptr<const Module> module){
-    std::cout << __FILE__ << ":" << __LINE__ << ": Registering module " << module->name() << "\n";
+    // std::cout << __FILE__ << ":" << __LINE__ << ": Registering module " << module->name() << "\n";
     if (not m_lookup.contains(module->id()) ) {
         std::map<version_t, std::shared_ptr<const Module>> lookup_version;
         m_lookup[module->id()] = std::move(lookup_version);
@@ -31,9 +31,9 @@ bool ModuleFactory::instance_register_module(std::shared_ptr<const Module> modul
 
 std::shared_ptr<Module> ModuleFactory::instance_get_module(id_t id, version_t version, bool allow_unkowen){
     static ModuleUnknown module_unkowen;
-    std::cout << __FILE__ << ":" << __LINE__ << ": m_lookup = { ";
-    for(const auto & k : m_lookup) { std::cout <<id_to_str(k.first)<<", "; }
-    std::cout <<"}"<< std::endl;
+    // std::cout << __FILE__ << ":" << __LINE__ << ": m_lookup = { ";
+    // for(const auto & k : m_lookup) { std::cout <<id_to_str(k.first)<<", "; }
+    // std::cout <<"}"<< std::endl;
 
     if (not m_lookup.contains(id) ) {
         if (allow_unkowen) {
@@ -90,6 +90,9 @@ void Module::add_reg_k  (std::shared_ptr<Reg> reg) {
 void Module::add_reg_var(std::shared_ptr<Reg> reg) {
     add_reg(reg);
     m_vec_var.push_back(reg);
+    if (reg->has_ass()) {
+        m_arr_reg_var_ass.push_back(reg);
+    }
 }
 std::span<std::byte> Module::cache_data(addr_t addr_off, addr_t size) {
     return std::span(m_cache).subspan(addr_off, size);
@@ -97,7 +100,7 @@ std::span<std::byte> Module::cache_data(addr_t addr_off, addr_t size) {
 
 void Module::update_cache() {
     Head h = head();
-    update_cache(m_base_addr + h.module_var_addr_offset(), h.module_var_size());
+    update_cache(h.module_var_addr_offset(), h.module_var_size());
 }
 
 void Module::update_cache(addr_t addr_off, addr_t update_size) {
@@ -107,7 +110,7 @@ void Module::update_cache(addr_t addr_off, addr_t update_size) {
 
 void Module::write_cache() {
     Head h = head();
-    write_cache(m_base_addr + h.module_var_addr_offset(), h.module_var_size());
+    write_cache(h.module_var_addr_offset(), h.module_var_size());
 }
 
 void Module::write_cache(addr_t addr_off, addr_t update_size) {
@@ -164,6 +167,20 @@ void Module::print_reg_map() {
         const std::shared_ptr<const Reg> & reg = m_vec_var[ii];
         add_row_reg(reg, ii != 0);
     }
+    for (const auto & mem : m_arr_external_mem) {
+        std::string type_str;
+        if (mem->has_details()) {
+            type_str = mem->value_type().str();
+        }
+        table.add_row({
+            str_addr(mem->base_addr()),
+            mem->name(),
+            str(mem->acc()),
+            type_str,
+            "(Mem size: " + std::to_string(mem->size()) + " B)",
+            mem->desc()
+        });
+    }
 
     table.column(0).format().width(10);
     table.column(1).format().width(18);
@@ -177,11 +194,205 @@ void Module::print_reg_map() {
     // tabular::render(table.str() + '\n', stdout);
 }
 
+void print_table_reg_list(const std::vector<RegOrFlag> & list, const std::string & title) {
+    std::cout << title << "\n";
+    tabulate::Table table;
+    table.format()
+    .border_left("│")
+    .border_right("│")
+    .border_top("─")
+    .border_bottom("─")
+    .corner_top_left("┼")
+    .corner_top_right("┼")
+    .corner_bottom_left("┼")
+    .corner_bottom_right("┼");
+
+    table.add_row({"Addr(0x)", "T", "Bit", "Name", "Value", "Description"});
+    const Reg * reg_prev = nullptr;
+    for (const auto & v : list) {
+        if (const auto * f_sp = std::get_if<std::shared_ptr<RFlag>>(&v)) {
+            const std::shared_ptr<RFlag> & f = *f_sp;
+            const Reg * reg = f->reg_flags();
+            if (reg != reg_prev) {
+                table.add_row({str_addr(reg->addr()), reg->value_type().str(), str(reg->acc()), reg->name(), reg->str_value_cached(), reg->desc()});
+                reg_prev = reg;
+            }
+            table.add_row({"-", "b", std::to_string(f->bit()), f->name(), f->str_value_cached(), f->desc()});
+        } else {
+            const std::shared_ptr<Reg> & reg = std::get<std::shared_ptr<Reg>>(v);
+            table.add_row({str_addr(reg->addr()), reg->value_type().str(), str(reg->acc()), reg->name(), reg->str_value_cached(), reg->desc()});
+            reg_prev = nullptr;
+        }
+    }
+
+    table.column(0).format().width(10);
+    table.column(1).format().width(18);
+    table.column(2).format().width(5);
+    table.column(3).format().width(12);
+    table.column(4).format().width(20);
+    table.column(5).format().width(26);
+    table.column(4).format().font_align(tabulate::FontAlign::right);
+    std::cout << table << "\n";
+}
+
+// --- Tree of modules ---
+
+std::shared_ptr<Module> Module::kid_at(size_t ii) {
+    assert(ii < m_kid_addrs.size());
+    if (m_kids[ii] == nullptr) {
+        m_kids[ii] = make_module(m_regio, m_kid_addrs[ii]);
+    }
+    return m_kids[ii];
+}
+
+std::vector<std::shared_ptr<Module>> & Module::kids() {
+    for (size_t ii = 0; ii < m_kid_addrs.size(); ii++) {
+        kid_at(ii);
+    }
+    return m_kids;
+}
+
+void Module::make_tree() {
+    for (auto & k : kids()) {
+        k->make_tree();
+    }
+}
+
+void Module::read_all(bool read_external_mem_cache, bool skip_self) {
+    if (!skip_self) {
+        update_cache();
+    }
+    if (read_external_mem_cache) {
+        for (auto & mem : m_arr_external_mem) {
+            mem->read(0, mem->size());
+        }
+    }
+}
+
+void Module::read_all_tree(bool read_external_mem_cache, bool skip_self) {
+    read_all(read_external_mem_cache, skip_self);
+    for (auto & k : kids()) {
+        k->read_all_tree(read_external_mem_cache);
+    }
+}
+
+// --- Asserts ---
+
+Ass Module::check_assert_cached(Ass log_ass, std::vector<RegOrFlag> * log_f) const {
+    Ass ass = Ass::none;
+    for (const auto & reg : m_arr_reg_var_ass) {
+        std::vector<std::shared_ptr<RFlag>> flag_log;
+        Ass r_ass = reg->ass_check_cached(log_ass, &flag_log);
+        if (log_f) {
+            if (reg->is_flags()) {
+                for (auto & f : flag_log) {
+                    log_f->push_back(f);
+                }
+            } else if (log_ass != Ass::none && r_ass >= log_ass) {
+                log_f->push_back(reg);
+            }
+        }
+        if (r_ass > ass) {
+            ass = r_ass;
+        }
+    }
+    return ass;
+}
+
+Ass Module::check_assert_tree_cached(Ass log_ass, std::vector<RegOrFlag> * log_f) const {
+    Ass ass = check_assert_cached(log_ass, log_f);
+    for (const auto & kid : m_kids) {
+        assert(kid != nullptr); // tree must be created first
+        Ass kid_ass = kid->check_assert_tree_cached(log_ass, log_f);
+        if (kid_ass > ass) {
+            ass = kid_ass;
+        }
+    }
+    return ass;
+}
+
+void Module::clear_reg_rc() {
+    for (const auto & reg : m_vec_var) {
+        if (reg->acc() == Acc::rc) {
+            reg->write_zero();
+        }
+    }
+}
+
+void Module::clear_reg_rc_tree() {
+    clear_reg_rc();
+    for (auto & k : kids()) {
+        k->clear_reg_rc_tree();
+    }
+}
+
+// --- Printing ---
+
+std::string Module::info_line_str() const {
+    return str_addr(m_base_addr) + " " + name() + " " + head().to_str();
+}
+
+void Module::_print_tree_cached_walk(std::ostream & os, const std::string & prefix) const {
+    // Gather the lines that belong under this module: external mems first,
+    // then each kid (with its own subtree). We do two passes so we know which
+    // entries are last and can use ┗ vs ┣ box-drawing connectors.
+    struct Entry {
+        std::string text;
+        bool is_kid;            // kids can have their own subtree
+        const Module * kid;     // null for mems / uninitalised
+    };
+    std::vector<Entry> entries;
+    for (const auto & mem : m_arr_external_mem) {
+        Entry e;
+        e.text   = str_addr(mem->base_addr()) + " " + mem->name() + " " +
+                   str(mem->acc()) + " " + std::to_string(mem->size()) + " B";
+        e.is_kid = false;
+        e.kid    = nullptr;
+        entries.push_back(e);
+    }
+    for (size_t ii = 0; ii < m_kid_addrs.size(); ii++) {
+        Entry e;
+        e.is_kid = true;
+        e.kid    = m_kids[ii].get();
+        if (m_kids[ii] == nullptr) {
+            e.text = str_addr(m_kid_addrs[ii]) + " Uninitialised module";
+        } else {
+            e.text = info_line_of(m_kids[ii].get());
+        }
+        entries.push_back(e);
+    }
+    for (size_t ii = 0; ii < entries.size(); ii++) {
+        bool last = (ii + 1 == entries.size());
+        const std::string & conn = last ? "┗" : "┣";
+        const std::string & cont = last ? " " : "┃";
+        os << prefix << conn << "━ " << entries[ii].text << "\n";
+        if (entries[ii].kid != nullptr) {
+            entries[ii].kid->_print_tree_cached_walk(os, prefix + cont + "  ");
+        }
+    }
+}
+
+std::string Module::info_line_of(const Module * m) const {
+    // Non-static helper so we can call info_line_str() on another module.
+    std::string s;
+    s += str_addr(m->base_addr());
+    s += " ";
+    s += m->name();
+    s += " ";
+    s += m->head().to_str();
+    return s;
+}
+
+void Module::print_tree_cached() const {
+    std::cout << info_line_str() << "\n";
+    _print_tree_cached_walk(std::cout, "");
+}
+
 std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio, addr_t base_addr, bool allow_unkowen) {
     std::vector<std::byte> data(head_size);
     regio->read(base_addr, data);
     Head head = unpack_head(data);
-    std::cout << __FILE__ << ":" << __LINE__ << ": head: "<<head.to_str()<<"\n";
+    // std::cout << __FILE__ << ":" << __LINE__ << ": head: "<<head.to_str()<<"\n";
     assert(head.flags() == 0); // Flags are not currently supported
     data.resize(head.module_size());
     std::span<std::byte> data_span(data);
@@ -209,7 +420,7 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
                 break;
             case static_cast<uint8_t>(SubID::BYTE_ALIGN):
                 var_byte_align = static_cast<addr_t>(data[module->m_byte_idx+1]);
-                std::cout << "Sub Head: Byte Align "<<var_byte_align<<"\n";
+                // std::cout << "Sub Head: Byte Align "<<var_byte_align<<"\n";
                 module->m_byte_idx += word_size;
                 break;
             case static_cast<uint8_t>(SubID::EXTERNAL_MEM): {
@@ -218,7 +429,7 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
                 addr_t ext_size;
                 std::memcpy(&ext_base_addr, &data[module->m_byte_idx + 4], sizeof(addr_t));
                 std::memcpy(&ext_size, &data[module->m_byte_idx + 8], sizeof(addr_t));
-                std::cout << "Sub Head: EXTERNAL_MEM base="<<ext_base_addr<<" size="<<ext_size<<" acc="<<acc<<"\n";
+                // std::cout << "Sub Head: EXTERNAL_MEM base="<<ext_base_addr<<" size="<<ext_size<<" acc="<<acc<<"\n";
                 module->m_arr_external_mem.push_back(std::make_shared<ExternalMem>(regio, ext_base_addr, ext_size, acc));
                 module->m_byte_idx += 3 * word_size;
                 break;
@@ -231,13 +442,22 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
     } 
     //
     // auto module = std::make_shared<ModuleUnknown>();
-    module->init_first(regio, base_addr, std::move(data));
 
-    // for (uint ii = 0; ii < head.len_kids; ii++) {}
+    // Read the kid addresses from the cache (they come right after the sub heads)
+    module->m_kid_addrs.reserve(head.len_kids);
+    for (uint8_t ii = 0; ii < head.len_kids; ii++) {
+        addr_t kid_addr = 0;
+        std::memcpy(&kid_addr, &data[module->m_byte_idx + ii*word_size], sizeof(addr_t));
+        assert(kid_addr != 0); // addr 0 should never be a kid
+        module->m_kid_addrs.push_back(kid_addr);
+    }
+    module->m_kids.resize(head.len_kids, nullptr);
+
+    module->init_first(regio, base_addr, std::move(data));
     module->m_byte_idx += head.len_kids*word_size;
 
     addr_t byte_idx_expected = module->m_byte_idx + head.len_k*word_size;
-    std::cout <<"Initalsing map_k\n";
+    // std::cout <<"Initalsing map_k\n";
     module->init_reg_map_k();
     module->align_byte_idx(word_size);
     if( module->m_byte_idx != byte_idx_expected ) {
@@ -249,7 +469,7 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
 
     module->m_byte_align = var_byte_align;
     byte_idx_expected = module->m_byte_idx + head.len_var*word_size;
-    std::cout <<"Initalsing map_var\n";
+    // std::cout <<"Initalsing map_var\n";
     module->init_reg_map_var();
     module->align_byte_idx(word_size);
     if( module->m_byte_idx != byte_idx_expected ) {

@@ -5,18 +5,26 @@
 #include <memory>
 #include <vector>
 #include <span>
+#include <variant>
+#include <optional>
 
 namespace hdlskel::skmap {
 
 class Module;
+class Reg;
 class RegFlags;
 class RFlag;
+
+// An entry in an assert log: either a Reg (min/max or reg level ass) or
+// an individual RFlag of a RegFlags reg.
+using RegOrFlag = std::variant<std::shared_ptr<Reg>, std::shared_ptr<RFlag>>;
 
 
 class Reg {
 public:
     virtual ~Reg() = default;
-    Reg(const std::string& name, Acc acc, ValueType value_type, const std::string & desc);
+    Reg(const std::string& name, Acc acc, ValueType value_type, const std::string & desc,
+        Ass ass = Ass::none, std::optional<sint_t> max = std::nullopt, std::optional<sint_t> min = std::nullopt);
     virtual void initalise(Module* module, addr_t addr);
     addr_t elem_size() const {return m_value_type.sw_elem_size();}
     addr_t elem_w() const {return m_value_type.elem_width();}
@@ -46,6 +54,25 @@ public:
     void write_sint(sint_t value);
     void write_bool(bool v);
     void write_zero();
+
+    // Asserts and limits (mirrors Reg in pip/skmap/src/skmap/reg.py).
+    // ass_check_cached computes the assert status of this reg from the cache:
+    //   * if the reg has min/max limits, the value is checked against them
+    //   * else if the reg has an ass level, a non-zero value raises that ass
+    // If log_flags is given and this is a RegFlags, the failing flags are
+    // appended to it. Plain regs never append anything (the Module decides
+    // whether to log the reg itself).
+    virtual Ass ass_check_cached(Ass log_ass, std::vector<std::shared_ptr<RFlag>> * log_flags) const;
+    virtual Ass ass_check_limit_cached() const;
+    Ass ass_check_value_limit_min(sint_t value) const;
+    Ass ass_check_value_limit_max(sint_t value) const;
+    Ass ass_check_value_limit(sint_t value) const;
+    void check_value_limit(sint_t value) const;
+    virtual bool has_ass() const { return m_ass != Ass::none || has_limit(); }
+    bool has_limit() const;
+    Ass ass() const { return m_ass; }
+    std::optional<sint_t> max() const { return m_max; }
+    std::optional<sint_t> min() const { return m_min; }
     std::vector<bool> read_vec_bool_cached() const;
     std::vector<bool> read_vec_bool();
 
@@ -68,14 +95,18 @@ private:
 
 protected:
     addr_t m_addr_off;
+    Ass m_ass;
+    std::optional<sint_t> m_max;
+    std::optional<sint_t> m_min;
 };
 
 class RegVec : public Reg {
 
 public:
     virtual ~RegVec() = default;
-    RegVec(const std::string& name, Acc acc, ValueType value_type, const std::string & desc)
-    :   Reg(name, acc, value_type,  desc)
+    RegVec(const std::string& name, Acc acc, ValueType value_type, const std::string & desc,
+        Ass ass = Ass::none, std::optional<sint_t> max = std::nullopt, std::optional<sint_t> min = std::nullopt)
+    :   Reg(name, acc, value_type,  desc, ass, max, min)
     {
         if(not value_type.is_vec()) { throw std::runtime_error("Value type must be vector");}
     }
@@ -119,6 +150,8 @@ public:
     bool is_flags() const override { return false; }
     bool is_vec  () const override { return true ; }
     std::string str_value_cached() const override;
+    Ass ass_check_cached(Ass log_ass, std::vector<std::shared_ptr<RFlag>> * log_flags) const override;
+    Ass ass_check_limit_cached() const override;
 
 private:
     void memcpy_idx_from_cache(void * dest, addr_t idx) const;
@@ -143,12 +176,15 @@ public:
     uint bit() const {return m_bit;}
     Ass ass() const {return m_ass;}
     std::string desc() const {return m_desc;}
+    const RegFlags * reg_flags() const { return m_reg_flags; }
 
     virtual std::string value_type_str() const { return "b"; }
 
 protected:
     bool read_bool_at_cached(uint bit) const;
     void write_bool_at_cache(uint bit, bool v);
+    // Common flag assert logic: no ass -> none, value clear -> passed, else ass
+    Ass ass_check_value(bool value) const;
 private:
     void assign(RegFlags * reg_flags) { m_reg_flags = reg_flags; }
 
@@ -200,13 +236,14 @@ public:
     size_t flags_size() const { return m_flags.size(); }
     std::shared_ptr<RFlag> flag_at(size_t idx) { return m_flags[idx]; }
     std::shared_ptr<const RFlag> flag_at(size_t idx) const { return m_flags[idx]; }
-
+    const std::vector<std::shared_ptr<RFlag>> & flags() const { return m_flags; }
 
     bool is_flags() const override { return true ; }
     bool is_vec  () const override { return false; }
     std::string str_value_cached() const override;
+    bool has_ass() const override;
 
-    Ass ass_check_cached() const;
+    Ass ass_check_cached(Ass log_ass, std::vector<std::shared_ptr<RFlag>> * log_flags) const override;
     Ass ass_check();
 
 private:
@@ -218,11 +255,13 @@ inline void push_back_flag(std::vector<std::shared_ptr<RFlag>> & flags, std::sha
     flags.push_back(f);
 }
 
-inline std::shared_ptr<Reg> make_reg(const std::string & name, Acc acc, ValueType value_type, const std::string & desc) {
-    return std::make_shared<Reg>(name, acc, value_type, desc);
+inline std::shared_ptr<Reg> make_reg(const std::string & name, Acc acc, ValueType value_type, const std::string & desc,
+    Ass ass = Ass::none, std::optional<sint_t> max = std::nullopt, std::optional<sint_t> min = std::nullopt) {
+    return std::make_shared<Reg>(name, acc, value_type, desc, ass, max, min);
 }
-inline std::shared_ptr<RegVec> make_reg_vec(const std::string & name, Acc acc, ValueType value_type, const std::string & desc) {
-    return std::make_shared<RegVec>(name, acc, value_type, desc);
+inline std::shared_ptr<RegVec> make_reg_vec(const std::string & name, Acc acc, ValueType value_type, const std::string & desc,
+    Ass ass = Ass::none, std::optional<sint_t> max = std::nullopt, std::optional<sint_t> min = std::nullopt) {
+    return std::make_shared<RegVec>(name, acc, value_type, desc, ass, max, min);
 }
 inline std::shared_ptr<Reg> make_reg_k(const std::string & name, ValueType value_type, const std::string & desc) {
     return make_reg(name, Acc::k, value_type, desc);

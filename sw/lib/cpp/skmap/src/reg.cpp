@@ -18,11 +18,15 @@ inline sint_t sint_sign_extend_w(sint_t value, int w) {
 
 namespace hdlskel::skmap {
 
-Reg::Reg(const std::string & name, Acc acc, ValueType value_type, const std::string & desc)
+Reg::Reg(const std::string & name, Acc acc, ValueType value_type, const std::string & desc,
+    Ass ass, std::optional<sint_t> max, std::optional<sint_t> min)
     : m_value_type(value_type) 
     , m_acc(acc) 
     , m_name(name) 
     , m_desc(desc) 
+    , m_ass(ass)
+    , m_max(max)
+    , m_min(min)
 { }
 
 void Reg::initalise(Module* module, addr_t addr_off) {
@@ -91,12 +95,14 @@ void Reg::write_uint_cached(uint_t value) {
     if ( size() > sizeof(uint_t) ) {
         std::runtime_error("uint_t not large enough to fit register");
     }
+    check_value_limit(static_cast<sint_t>(value));
     memcpy_to_cache(&value);
 }
 void Reg::write_sint_cached(sint_t value) { 
     if ( size() > sizeof(sint_t) ) {
         std::runtime_error("sint_t not large enough to fit register");
     }
+    check_value_limit(value);
     memcpy_to_cache(&value);
 }
 void Reg::write_bool_cached(bool v) {
@@ -115,8 +121,9 @@ void Reg::write_bool(bool v) {
     if( not cache_only() ) { write_cache(); }
 }
 void Reg::write_zero() {
+    check_value_limit(0);
     std::vector<std::byte> z(size(), std::byte{0});
-    memcpy_to_cache(&z);
+    memcpy_to_cache(z.data());
 }
 std::vector<bool> Reg::read_vec_bool_cached() const {
     std::span<const std::byte> data = cache_data();
@@ -139,29 +146,138 @@ std::vector<bool> Reg::read_vec_bool() {
     return read_vec_bool_cached();
 }
 
+// --- Asserts and limits (mirrors Reg in pip/skmap/src/skmap/reg.py) ---
+
+Ass Reg::ass_check_value_limit_min(sint_t value) const {
+    if (!m_min.has_value()) {
+        return Ass::none;
+    }
+    if (value >= *m_min) {
+        return Ass::none;
+    }
+    if (m_ass != Ass::none) {
+        return m_ass;
+    }
+    return Ass::error;
+}
+
+Ass Reg::ass_check_value_limit_max(sint_t value) const {
+    if (!m_max.has_value()) {
+        return Ass::none;
+    }
+    if (value <= *m_max) {
+        return Ass::none;
+    }
+    if (m_ass != Ass::none) {
+        return m_ass;
+    }
+    return Ass::error;
+}
+
+Ass Reg::ass_check_value_limit(sint_t value) const {
+    Ass ass_min = ass_check_value_limit_min(value);
+    Ass ass_max = ass_check_value_limit_max(value);
+    return (ass_min > ass_max) ? ass_min : ass_max;
+}
+
+void Reg::check_value_limit(sint_t value) const {
+    if (ass_check_value_limit(value) >= Ass::error) {
+        std::ostringstream oss;
+        oss << "for reg " << m_name << " value " << value
+            << " is not in range [";
+        oss << (m_min.has_value() ? std::to_string(*m_min) : std::string("-inf"));
+        oss << " , ";
+        oss << (m_max.has_value() ? std::to_string(*m_max) : std::string("+inf"));
+        oss << "]";
+        throw std::runtime_error(oss.str());
+    }
+}
+
+bool Reg::has_limit() const {
+    return m_value_type.kind() != ValueKind::char_ && m_value_type.kind() != ValueKind::flag_
+        && (m_min.has_value() || m_max.has_value());
+}
+
+Ass Reg::ass_check_limit_cached() const {
+    sint_t value = (m_value_type.kind() == ValueKind::sint_)
+        ? read_sint_cached()
+        : static_cast<sint_t>(read_uint_cached());
+    return ass_check_value_limit(value);
+}
+
+Ass Reg::ass_check_cached(Ass log_ass, std::vector<std::shared_ptr<RFlag>> * log_flags) const {
+    (void)log_ass;
+    (void)log_flags;
+    if (has_limit()) {
+        return ass_check_limit_cached();
+    }
+    if (m_ass == Ass::none) {
+        return Ass::none;
+    }
+    bool value = read_bool_cached();
+    return value ? m_ass : Ass::passed;
+}
+
 std::string Reg::str_value_cached() const {
+    // Mirrors Reg.read_rich_str_cached in pip/skmap/src/skmap/reg.py (minus colour):
+    //   [ass: ][(min <= v <= max) ]value
     std::stringstream ss;
+    sint_t value_int = 0;
+    bool have_int = false;
+    std::string value_str;
+    int base = 10;
     switch(m_value_type.kind()) {
         case ValueKind::uint_: {
-            ss << read_uint_cached();
+            value_int = static_cast<sint_t>(read_uint_cached());
+            have_int = true;
             break;
         }
         case ValueKind::sint_: {
-            ss << read_sint_cached();
+            value_int = read_sint_cached();
+            have_int = true;
             break;
         }
-        case ValueKind::char_: { 
+        case ValueKind::char_: {
             assert(false);
             return "ERROR";
         }
         case ValueKind::bits_: {
-            ss << "0x"<< std::hex << read_uint_cached();
+            value_int = static_cast<sint_t>(read_uint_cached());
+            have_int = true;
+            base = 16;
             break;
         }
         case ValueKind::flag_: {
-            ss << (read_uint_cached() != 0 ? "true" : "false");
+            value_str = (read_uint_cached() != 0) ? "true" : "false";
             break;
         };
+    }
+
+    Ass ass = Ass::none;
+    if (m_ass != Ass::none) {
+        ass = ass_check_cached(Ass::none, nullptr);
+        ss << str(m_ass) << ": ";
+    }
+    if (has_limit()) {
+        Ass limit_ass = ass_check_limit_cached();
+        if (limit_ass > ass) { ass = limit_ass; }
+        // (min <= v <= max)
+        ss << "(";
+        if (m_min.has_value()) { ss << *m_min << " <= "; }
+        ss << "v";
+        if (m_max.has_value()) { ss << " <= " << *m_max; }
+        ss << ") ";
+    }
+
+    if (!value_str.empty()) {
+        ss << value_str;
+    } else {
+        assert(have_int);
+        if (base == 16) {
+            ss << "0x" << std::hex << value_int;
+        } else {
+            ss << value_int;
+        }
     }
     return ss.str();
 }
@@ -312,9 +428,9 @@ uint_t RegVec::read_idx_uint(addr_t idx) {
 }
 
 sint_t RegVec::read_idx_sint_cached(addr_t idx) const {
-    sint_t val = 0;
+    uint_t val = 0;
     memcpy_idx_from_cache(&val, idx);
-    return val;
+    return sint_sign_extend_w(val, elem_w());
 }
 
 sint_t RegVec::read_idx_sint(addr_t idx) {
@@ -342,40 +458,107 @@ void RegVec::write_idx_sint(addr_t idx, sint_t val) {
     write_cache();
 }
 std::string RegVec::str_value_cached() const {
+    // Mirrors RegVec.read_rich_str_cached in pip/skmap/src/skmap/reg.py (minus colour):
+    //   [ass: ][(min <= v <= max) ][ v0, v1, ... ]
     if (m_value_type.kind() == ValueKind::char_ ) {
         return read_str_cached();
     }
     std::stringstream ss;
-    ss << "[";
+
+    Ass ass = Ass::none;
+    if (m_ass != Ass::none) {
+        ass = ass_check_cached(Ass::none, nullptr);
+        ss << str(m_ass) << ": ";
+    }
+    if (has_limit()) {
+        Ass limit_ass = ass_check_limit_cached();
+        if (limit_ass > ass) { ass = limit_ass; }
+        // Range uses the min/max of the actual vector values (like py).
+        bool first = true;
+        sint_t value_min = 0, value_max = 0;
+        for (addr_t idx = 0; idx < vec_len(); idx++) {
+            sint_t v = (m_value_type.kind() == ValueKind::sint_)
+                ? read_idx_sint_cached(idx)
+                : static_cast<sint_t>(read_idx_uint_cached(idx));
+            if (first) { value_min = value_max = v; first = false; }
+            else { if (v < value_min) value_min = v; if (v > value_max) value_max = v; }
+        }
+        (void)value_min; (void)value_max;
+        ss << "(";
+        if (m_min.has_value()) { ss << *m_min << " <= "; }
+        ss << "v";
+        if (m_max.has_value()) { ss << " <= " << *m_max; }
+        ss << ") ";
+    }
+
+    int base = 10;
+    ss << "[ ";
     switch(m_value_type.kind()) {
         case ValueKind::uint_: {
             const auto vec = read_vec_uint_cached();
-            for (auto v : vec) { ss << " " << v; }
+            for (size_t ii = 0; ii < vec.size(); ii++) {
+                if (ii) { ss << ", "; }
+                ss << vec[ii];
+            }
             break;
         }
         case ValueKind::sint_: {
             const auto vec = read_vec_sint_cached();
-            for (auto v : vec) { ss << " " << v; }
+            for (size_t ii = 0; ii < vec.size(); ii++) {
+                if (ii) { ss << ", "; }
+                ss << vec[ii];
+            }
             break;
         }
         case ValueKind::bits_: {
             const auto vec = read_vec_uint_cached();
-            ss << std::hex;
-            for (auto v : vec) { ss << " " << v; }
-            ss << std::dec;
+            for (size_t ii = 0; ii < vec.size(); ii++) {
+                if (ii) { ss << ", "; }
+                ss << "0x" << std::hex << vec[ii];
+            }
             break;
         }
         case ValueKind::flag_: {
             const auto vec = read_vec_bool_cached();
-            for (auto v : vec) { ss << " " << v; }
+            for (size_t ii = 0; ii < vec.size(); ii++) {
+                if (ii) { ss << ", "; }
+                ss << (vec[ii] ? "true" : "false");
+            }
             break;
         };
         case ValueKind::char_: {
             ss << __FILE__ << ":" << __LINE__ << ": ERROR";
         }
     }
+    (void)base;
     ss << " ]";
     return ss.str();
+}
+
+Ass RegVec::ass_check_limit_cached() const {
+    Ass ass = Ass::none;
+    for (addr_t idx = 0; idx < vec_len(); idx++) {
+        sint_t v = (m_value_type.kind() == ValueKind::sint_)
+            ? read_idx_sint_cached(idx)
+            : static_cast<sint_t>(read_idx_uint_cached(idx));
+        Ass v_ass = ass_check_value_limit(v);
+        if (v_ass > ass) { ass = v_ass; }
+    }
+    return ass;
+}
+
+Ass RegVec::ass_check_cached(Ass log_ass, std::vector<std::shared_ptr<RFlag>> * log_flags) const {
+    (void)log_ass;
+    (void)log_flags;
+    if (has_limit()) {
+        return ass_check_limit_cached();
+    }
+    if (m_ass == Ass::none) {
+        return Ass::none;
+    }
+    bool value = false;
+    for (bool v : read_vec_bool_cached()) { value = value || v; }
+    return value ? m_ass : Ass::passed;
 }
 
 RFlag::RFlag(const std::string & name, uint bit, Ass ass, const std::string & desc)
@@ -417,15 +600,21 @@ bool RFlag::read_bool() {
 void RFlag::write_bool_cached(bool v) {
     write_bool_at_cache(m_bit, v);
 }
-Ass RFlag::ass_check_cached() const {
-    bool value = read_bool_cached();
-    if (value) { return Ass::passed; }
+Ass RFlag::ass_check_value(bool value) const {
+    if (m_ass == Ass::none) { return Ass::none; }
+    if (!value) { return Ass::passed; }
     return m_ass;
+}
+
+Ass RFlag::ass_check_cached() const {
+    return ass_check_value(read_bool_cached());
 }
 std::string RFlag::str_value_cached() const {
     std::ostringstream oss;
-    ::operator<<(oss, ass()) << ": ";
-    oss << (read_bool_cached() != 0 ? " true" : "false");
+    if (m_ass != Ass::none) {
+        ::operator<<(oss, m_ass) << ": ";
+    }
+    oss << (read_bool_cached() != 0 ? "true" : "false");
     return oss.str();
 }
 bool RFlagVec::read_idx_bool_cached(addr_t idx) const {
@@ -455,14 +644,16 @@ void RFlagVec::write_vec_bool(const std::vector<bool> & vec) {
     write_reg_cache();
 }
 Ass RFlagVec::ass_check_cached() const {
-    std::vector<bool> vec = read_vec_bool_cached();
-    for(bool v : vec) { if(v) { return m_ass; } };
-    return Ass::passed;
+    bool value = false;
+    for(bool v : read_vec_bool_cached()) { value = value || v; }
+    return ass_check_value(value);
 }
 
 std::string RFlagVec::str_value_cached() const {
     std::ostringstream oss;
-    ::operator<<(oss, ass()) << ": ";
+    if (m_ass != Ass::none) {
+        ::operator<<(oss, m_ass) << ": ";
+    }
     oss << "0b";
     for( bool v : read_vec_bool_cached() ) {
         oss << static_cast<int>(v);
@@ -470,10 +661,20 @@ std::string RFlagVec::str_value_cached() const {
     return oss.str();
 }
 
-Ass RegFlags::ass_check_cached() const {
+bool RegFlags::has_ass() const {
+    for( const auto & f : m_flags) {
+        if (f->ass() != Ass::none) { return true; }
+    }
+    return false;
+}
+
+Ass RegFlags::ass_check_cached(Ass log_ass, std::vector<std::shared_ptr<RFlag>> * log_flags) const {
     Ass ass = Ass::none;
     for( const auto & f : m_flags) {
         Ass f_ass = f->ass_check_cached();
+        if (log_flags && log_ass != Ass::none && f_ass >= log_ass) {
+            log_flags->push_back(f);
+        }
         if (f_ass > ass ) { ass = f_ass; }
     }
     return ass;
@@ -490,7 +691,7 @@ std::string RegFlags::str_value_cached() const {
 
 Ass RegFlags::ass_check() {
     update_cache();
-    return ass_check_cached();
+    return ass_check_cached(Ass::none, nullptr);
 }
 
 }

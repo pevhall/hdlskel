@@ -436,7 +436,13 @@ bool {recipe.sw_module}::registered = Module::register_module(std::make_shared<{
             else:
                 t_str = value_type_str(varv.t)
                 reg_make = 'make_reg_vec' if varv.t.is_vec else 'make_reg'
-                cpp_f.write(f'    {name_var} = {reg_make}("{varv.name}", Acc::{varv.acc}, {t_str}, "{varv.desc}");\n')
+                extra = ''
+                if varv.ass != Ass.none or varv.max is not None or varv.min is not None:
+                    ass_s = f'Ass::{varv.ass.to_str()}'
+                    max_s = to_cpp_source(varv.max) if varv.max is not None else 'std::nullopt'
+                    min_s = to_cpp_source(varv.min) if varv.min is not None else 'std::nullopt'
+                    extra = f', {ass_s}, {max_s}, {min_s}'
+                cpp_f.write(f'    {name_var} = {reg_make}("{varv.name}", Acc::{varv.acc}, {t_str}, "{varv.desc}"{extra});\n')
                 cpp_f.write(f"    add_reg_var({name_var});\n")
         cpp_f.write(f"}}\n")
 

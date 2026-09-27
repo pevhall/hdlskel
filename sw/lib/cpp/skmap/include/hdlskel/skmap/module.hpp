@@ -53,8 +53,60 @@ public:
     Head head() const {
         return unpack_head(std::span(m_cache).subspan(0, head_size));
     }
-    addr_t base_addr() { return m_base_addr; }
+    addr_t base_addr() const { return m_base_addr; }
     // friend std::shared_ptr<Module> make_module(std::shared_ptr<regio::Regio> regio, addr_t base_addr);
+
+    // --- Tree of modules (mirrors Module in pip/skmap/src/skmap/module.py) ---
+    size_t len_kids() const { return m_kid_addrs.size(); }
+    addr_t kid_addr_at(size_t ii) const { return m_kid_addrs[ii]; }
+    // Return the kid at idx, creating it from the regio if not yet made.
+    std::shared_ptr<Module> kid_at(size_t ii);
+    // Create all kids.
+    std::vector<std::shared_ptr<Module>> & kids();
+    const std::vector<std::shared_ptr<Module>> & kids_cached() const { return m_kids; }
+    template <class T>
+    std::vector<std::shared_ptr<T>> kids_with_class_cached() const {
+        std::vector<std::shared_ptr<T>> out;
+        for (const auto & k : m_kids) {
+            auto t = std::dynamic_pointer_cast<T>(k);
+            if (t) { out.push_back(t); }
+        }
+        return out;
+    }
+    template <class T>
+    std::shared_ptr<T> only_kid_with_class_cached() const {
+        auto k = kids_with_class_cached<T>();
+        assert(k.size() == 1);
+        return k[0];
+    }
+    // Recursively create all modules in the tree.
+    void make_tree();
+    // Read the var region (and optionally external mem caches) of this module.
+    void read_all(bool read_external_mem_cache, bool skip_self = false);
+    // read_all of this module and all its kids (recursively).
+    void read_all_tree(bool read_external_mem_cache, bool skip_self = false);
+
+    // --- Asserts ---
+    // Check the asserts of this module's var regs.
+    // If log_f is not null, regs/flags with ass >= log_ass are logged in it.
+    Ass check_assert_cached(Ass log_ass = Ass::none, std::vector<RegOrFlag> * log_f = nullptr) const;
+    // Same, but recursively over the whole tree (all kids must be created).
+    Ass check_assert_tree_cached(Ass log_ass = Ass::none, std::vector<RegOrFlag> * log_f = nullptr) const;
+    // Clear (write zero) all read-clear regs of this module / the whole tree.
+    void clear_reg_rc();
+    void clear_reg_rc_tree();
+    // Regs that have an ass level or min/max limits (checked by check_assert_*).
+    const std::vector<std::shared_ptr<Reg>> & arr_reg_var_ass() const { return m_arr_reg_var_ass; }
+
+    // --- Printing ---
+    std::string info_line_str() const;
+    void print_tree_cached() const;
+
+private:
+    // Print this module's mems and kids under `prefix` (box-drawing chars).
+    void _print_tree_cached_walk(std::ostream & os, const std::string & prefix) const;
+    // "<base_addr> <name> <head>" for another module (for tree lines).
+    std::string info_line_of(const Module * m) const;
 
 private:
     void init_first(std::shared_ptr<regio::Regio> regio, addr_t base_addr, std::vector<std::byte> && cached);
@@ -99,10 +151,17 @@ private:
     std::vector<std::byte> m_cache;
     std::vector<std::shared_ptr<Reg>> m_vec_k;
     std::vector<std::shared_ptr<Reg>> m_vec_var;
+    std::vector<std::shared_ptr<Reg>> m_arr_reg_var_ass;
     std::vector<std::shared_ptr<ExternalMem>> m_arr_external_mem;
+    std::vector<addr_t> m_kid_addrs;
+    std::vector<std::shared_ptr<Module>> m_kids;
 
     friend ModuleFactory;
 };
+
+// Print a table of regs/flags as logged by check_assert_* (mirrors
+// print_table_reg_list in pip/skmap/src/skmap/reg_map_table.py).
+void print_table_reg_list(const std::vector<RegOrFlag> & list, const std::string & title);
 
 class ModuleUnknown : public Module {
 public:

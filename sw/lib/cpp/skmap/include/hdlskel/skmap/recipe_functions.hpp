@@ -4,9 +4,10 @@
 
 namespace hdlskel::skmap::recipe_functions {
 
-// ceiling division (for positive divisor)
+// ceiling division (mirrors py: -(n // -d); for the positive values used in
+// recipes this is the usual ceiling division)
 inline int cdiv(int n, int d) {
-    return -((-n) / d);
+    return (n + d - 1) / d;
 }
 // ceiling log base 2 (of a positive value)
 inline int clog2(int x) {

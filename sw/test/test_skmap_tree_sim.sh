@@ -2,10 +2,13 @@
 # Run the TUI against a simulated version of the firmware.
 #
 #   1. start the cocotb testbench (run.py -s): it simulates
-#      test_skmap_tree_top with nvc and serves the module over
+#      test_skmap_tree_top with nvc and serves the module tree over
 #      regio TCP (default 127.0.0.1:39600 = 0x9AB0);
 #   2. wait until the simulation's server accepts connections;
-#   3. run the cpp app
+#   3. run the cpp app:
+#        -t : traverse the whole tree (all modules)
+#        -m : print the reg map
+#        -s : print the asserts
 #
 # The simulation runs in its own process group; when the app exits
 # the whole simulation (run.py + nvc) is killed.
@@ -14,7 +17,7 @@
 #   PORT=39600 bash test_skmap_tree_sim.sh
 set -euo pipefail
 
-TB_DIR="../../fw/tb/skmap/tb_py_skmap_module_recipe"
+TB_DIR="../../fw/tb/skmap/tb_py_skmap_tree"
 HOST="127.0.0.1"
 PORT="${PORT:-39600}"   # regio PORT_DEFAULT = 0x9AB0
 
@@ -56,6 +59,4 @@ fi
 echo "simulation server is up;"
 
 meson compile -C ../build -v
-../build/app/skmap/skmap -p $PORT
-
-
+../build/app/skmap/skmap -p $PORT -t -m -s
