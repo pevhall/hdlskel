@@ -1081,11 +1081,14 @@ def test_edit_outside_min_max_aborted():
             await _wait_cell(app, pilot, 3, VALUE, "(0x0002 <= v <= 0x0064) 0x0064")
             assert lmt.read_uint_cached() == 100
 
-            # 't' picks random values within [2, 100]
+            # trigger (no longer a key) picks random values within [2, 100]
             for _ in range(5):
                 app.table.move_cursor(row=3, column=0)
-                await pilot.press("t")
-                await pilot.pause()
+                app.action_trigger_selected()
+                for _ in range(50):
+                    if 2 <= lmt.read_uint_cached() <= 100:
+                        break
+                    await pilot.pause()
                 assert 2 <= lmt.read_uint_cached() <= 100
     _run(run())
 
@@ -1725,20 +1728,20 @@ def test_cycle_refresh_key():
             await _wait_asserts(app, pilot)
             assert app._refresh_timer is None
 
-            await pilot.press("r")
+            await pilot.press("u")
             await pilot.pause()
             assert app.refresh_period == 1.0
             assert app._refresh_timer is not None
 
-            await pilot.press("r")
+            await pilot.press("u")
             await pilot.pause()
             assert app.refresh_period == 5.0
 
-            await pilot.press("r")
+            await pilot.press("u")
             await pilot.pause()
             assert app.refresh_period == 30.0
 
-            await pilot.press("r")  # back to off
+            await pilot.press("u")  # back to off
             await pilot.pause()
             assert app.refresh_period is None
             assert app._refresh_timer is None
@@ -1837,3 +1840,102 @@ def test_cli_asserts_level_option():
     assert proc.returncode == 0, proc.stderr
     assert "1 triggered, worst: error" in proc.stdout
     assert "STATUS" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# keymap: row-cursor highlight, 'u' update, 'r' read all (no 't' trigger)
+# ---------------------------------------------------------------------------
+
+
+def test_table_highlights_whole_row():
+    """The register map table highlights the *whole row* of the
+    selected cell (cursor_type=\"row\"), not just the cell."""
+    async def run():
+        app = SkmapUiApp(make_demo())
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            assert app.table.cursor_type == "row"
+            await _select_node(app, _find_node(app, app.top_module), pilot)
+            app.table.focus()
+            app.table.move_cursor(row=1, column=3)  # V_RESET row, Name col
+            await pilot.pause()
+            assert app.table.cursor_row == 1
+            # the CSS rule that styles the row cursor must be loaded
+            # (with a background, so the whole row is tinted)
+            styles = app.table.get_component_styles("datatable--cursor")
+            assert styles.background is not None
+    _run(run())
+
+
+def test_read_all_key_reads_device_and_refreshes():
+    """'r' (read all): a one-shot read of all modules from the device
+    (read_all on every module) that updates the assert log and the
+    shown values — without clearing the triggered rc registers."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            sysctrl = top.kids_cached()[0]
+            status = sysctrl.arr_reg_var[0]
+            assert status.name == "STATUS" and status.acc == Acc.ro
+            pmu = top.kids_cached()[1]
+            v_event = pmu.arr_reg_var[0]
+            assert v_event.read_uint_cached() == 1  # triggered at start
+            n_blocks_before = _n_blocks(app._log_lines)
+
+            # show the SYSCTRL map (STATUS is its first row)
+            await _select_node(app, _find_node(app, sysctrl), pilot)
+
+            # change the (fake) device STATUS value, then 'r' (read all)
+            data = bytearray(_SYSCTRL_DATA)
+            data[20:24] = _u32(0x42)
+            top._regio.write_mem(_SYSCTRL_ADDR, bytes(data))
+            await pilot.press("r")
+            # the read reaches the cache: the shown value is refreshed
+            await _wait_cell(app, pilot, 0, VALUE, "error: 0x0042")
+            assert status.read_uint_cached() == 0x42
+            # the assert re-check appended a block (still triggered) and
+            # nothing was cleared (the rc register is still set)
+            await _wait_log(
+                app, pilot, lambda ls: _n_blocks(ls) > n_blocks_before
+            )
+            assert v_event.read_uint_cached() == 1  # rc NOT cleared by 'r'
+    _run(run())
+
+
+def test_keymap_no_trigger_key_and_u_is_update():
+    """The 't' trigger key is removed from the keymap; 'u' (not 'r')
+    cycles the update (refresh) period; 'r' is the one-shot read all."""
+    by_key = {}
+    for b in SkmapUiApp.BINDINGS:
+        if isinstance(b, tuple):
+            by_key[b[0]] = b[1]
+        else:
+            by_key[b.key] = b.action
+    keys = set(by_key)
+    assert "t" not in keys
+    assert "u" in keys and "r" in keys
+    assert by_key["u"] == "cycle_refresh"   # u: update (periodic refresh)
+    assert by_key["r"] == "read_all_modules"  # r: read all (one-shot)
+
+    async def run():
+        app = SkmapUiApp(make_demo())
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            # 'u' cycles the update period, 'r' does not
+            await pilot.press("u")
+            await pilot.pause()
+            assert app.refresh_period == 1.0
+            await pilot.press("u")
+            await pilot.pause()
+            await pilot.press("u")
+            await pilot.pause()
+            await pilot.press("u")  # back to off
+            await pilot.pause()
+            assert app.refresh_period is None
+            before = app.refresh_period
+            await pilot.press("r")  # read all: no change to the period
+            await pilot.pause()
+            assert app.refresh_period is before
+    _run(run())

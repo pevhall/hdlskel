@@ -41,17 +41,21 @@ type, access, name, value, description; ``k`` registers are shown
 Assert options: ``--asserts-level`` / the ``l`` key selects the
 ``Ass`` level at which asserts are logged (debug -> info -> warn
 -> error -> fatal; lower levels are still evaluated, just not
-logged).  ``--refresh SECS`` / the ``r`` key periodically re-reads
-all registers from the device (``read_all_tree()``), re-checks all
-asserts (logging the triggered ones, if any), updates the register
-map, then clears all ``rc`` registers of the *selected* module
-(``clear_reg_rc()`` — the register map only shows that module) and
-the triggered asserts of the *whole tree*
+logged).  ``--refresh SECS`` / the ``u`` (update) key periodically
+re-reads all registers from the device (``read_all_tree()``),
+re-checks all asserts (logging the triggered ones, if any), updates
+the register map, then clears all ``rc`` registers of the *selected*
+module (``clear_reg_rc()`` — the register map only shows that
+module) and the triggered asserts of the *whole tree*
 (``clear_assert_tree()`` — the log checks recursively) so the next
-refresh only logs new events (0 = off).  The ``x`` key does the same
-clear on demand and re-checks.  Register writes (``enter`` / ``t``)
-are **held** while a refresh is in progress and only go to the device
-once it has finished.  A value outside a register's configured
+refresh only logs new events (0 = off).  The ``r`` (read all) key
+does a one-shot read: it calls ``Module.read_all()`` on *every*
+module (registers + external mem caches, from the device), then
+re-checks the asserts (appending a block to the log if any are
+triggered) and updates the shown values — without clearing anything.
+The ``x`` key does the rc / assert clear on demand and re-checks.
+Register writes (``enter``) are **held** while a read-all / refresh
+is in progress and only go to the device once it has finished.  A value outside a register's configured
 min / max limits is caught locally (the same condition
 ``Reg.check_value_limit()`` raises on) and the write is aborted
 before it reaches the device.  Device I/O errors are reported on the
@@ -171,19 +175,16 @@ def _hex(value: int, width: int) -> str:
 def _bits_str(value: int, width: int, kind: ValueKind) -> str:
     """Hex string for the bits display of a ``width``-bit value.
 
-    ``sint`` values are *sign-extended* to the type's byte width (the
-    same digit count as ``_hex`` / skmap's ``Reg._str_num(v, 16)`` —
-    e.g. a 12-bit -40 shows as ``0xFFD8``, not ``0xFD8``); ``uint`` /
-    ``bits`` values are zero-extended.
+    Zero-padded to the type's byte width (the same format as skmap's
+    ``Reg._str_num(v, 16)``) and, for ``sint``, *sign-extended* to that
+    byte width — e.g. a 12-bit -40 shows as ``0xFFD8`` (not ``0xFD8``),
+    a 4-bit -1 as ``0xFF``, a 4-bit 5 as ``0x05``.
     """
-    if kind is not ValueKind.sint:
-        return _hex(value, width)
-    char_width = -(-width // 4)
-    mask = (1 << width) - 1
-    v = value & mask
-    if v & (1 << (width - 1)):
-        v |= (1 << (char_width * 4)) - (1 << width)
-    return f"0x{v:0{char_width}X}"
+    byte_width = -(-width // 8)
+    v = value & ((1 << (byte_width * 8)) - 1)
+    if kind is ValueKind.sint and v & (1 << (width - 1)):
+        v |= (1 << (byte_width * 8)) - (1 << width)
+    return f"0x{v:0{byte_width}X}"
 
 
 def _assert_value_str(obj: Union[Reg, RFlag]) -> str:
@@ -291,6 +292,14 @@ class SkmapUiApp(App):
     #workspace { height: 80%; }
     #modules { width: 35%; border: round $primary; }
     #registers { width: 1fr; border: round $accent; }
+    /* the cursor_type="row" cursor spans the whole row: a subtle
+       background tint + a bold cell so the selected row (not just
+       the selected cell) stands out */
+    #registers > .datatable--cursor {
+        background: $accent 25%;
+        color: $foreground;
+        text-style: bold;
+    }
     #value-inputs { height: 3; }
     #value-input { width: 100%; border: round $warning; }
     #value-inputs .lane { width: 1fr; border: round $warning; }
@@ -298,11 +307,11 @@ class SkmapUiApp(App):
     """
 
     BINDINGS = [
-        ("t", "trigger_selected", "Trigger"),
         ("a", "check_asserts", "Check asserts"),
         ("c", "clear_log", "Clear log"),
         ("l", "cycle_asserts_level", "Assert level"),
-        ("r", "cycle_refresh", "Refresh"),
+        ("r", "read_all_modules", "Read all"),
+        ("u", "cycle_refresh", "Update"),
         ("x", "clear_triggered", "Clear triggered"),
         ("v", "toggle_value_bits", "Value bits"),
         ("e", "toggle_expand_vec", "Expand vec"),
@@ -390,8 +399,8 @@ class SkmapUiApp(App):
                 id="value-input",
                 placeholder=(
                     "enter: edit (rw/wt) / clear (rc) | l: assert level | "
-                    "r: refresh | x: clear triggered | a: check asserts | "
-                    "v: value bits | e: expand vec"
+                    "u: update | r: read all | x: clear triggered | "
+                    "a: check asserts | v: value bits | e: expand vec"
                 ),
             )
         yield RichLog(id="log", markup=True, min_width=0)
@@ -408,6 +417,8 @@ class SkmapUiApp(App):
         self.footer = self.query_one(Footer)
 
         self.table.zebra_stripes = True
+        # highlight the whole row of the cursor cell (not just the cell)
+        self.table.cursor_type = "row"
         for key, label, width in (
             (COL_ADDR, "Addr", 12),
             (COL_T, "T", 8),
@@ -795,13 +806,31 @@ class SkmapUiApp(App):
         finally:
             self._asserts_checking = False
 
-    async def _recheck_asserts(self) -> None:
-        """Re-check asserts from cached values (no make_tree, no rebuild)."""
+    async def _recheck_asserts(self, rebuild: bool = False) -> None:
+        """Re-check asserts from cached values (no make_tree; with
+        ``rebuild`` the tree is rebuilt first, so newly loaded kids
+        are included too)."""
         if self._asserts_checking:
             return
         self._asserts_checking = True
         log_f: list[Union[RFlag, Reg]] = []
         try:
+            if rebuild:
+                try:
+                    await self.top_module.make_tree()
+                except Exception as err:  # noqa: BLE001
+                    logging.warning(
+                        "make_tree failed: %s — checking loaded modules only",
+                        err,
+                    )
+                self._build_tree()
+                self._force_lines()
+                if self._row_module is not None:
+                    node = self._node_for(self._row_module)
+                    if node is not None:
+                        self.tree_view.select_node(node)
+                else:
+                    self.tree_view.select_node(self.tree_view.root)
             if self._kids_loaded(self.top_module):
                 worst = self.top_module.check_assert_tree_cached(
                     self.asserts_level, log_f
@@ -1010,11 +1039,56 @@ class SkmapUiApp(App):
         )
 
     def action_cycle_refresh(self) -> None:
-        """'r' key: cycle the refresh period (off -> 1 -> 5 -> 30 s)."""
+        """'u' (update) key: cycle the refresh period (off -> 1 -> 5 -> 30 s)."""
         idx = refresh_intervals.index(self.refresh_period)
         self.refresh_period = refresh_intervals[(idx + 1) % len(refresh_intervals)]
         self._set_refresh_timer()
         self._update_log_title()
+
+    def action_read_all_modules(self) -> None:
+        """'r' (read all) key: a one-shot read of every module.
+
+        Calls ``Module.read_all()`` on all modules (registers +
+        external mem caches, from the device), then re-checks the
+        asserts (appending a block to the log if any are triggered)
+        and updates the shown values.  Nothing is cleared (unlike the
+        periodic update).
+        """
+        if self._asserts_checking:
+            return  # a read-all / update / check is still in flight
+        self.run_worker(
+            self._read_all_worker(), name="read_all", exclusive=False
+        )
+
+    async def _read_all_worker(self) -> None:
+        """'r' (read all) worker: read every module from the device
+        (``read_all()`` on all modules — including the not-yet-shown
+        kids, which loads their registers) and refresh the asserts
+        and the shown values."""
+        self._refresh_idle.clear()
+        try:
+            # read_all() asserts on cache-file modules (which are
+            # pre-loaded), so fall back to the tree read there
+            use_read_all = not self.top_module._use_cache
+            try:
+                if use_read_all:
+                    await self.top_module.read_all_tree(
+                        read_external_mem_cache=True
+                    )
+                else:
+                    await self.top_module.read_all_tree(
+                        read_external_mem_cache=False
+                    )
+            except Exception as err:  # noqa: BLE001
+                logging.warning("read all failed: %s", err, exc_info=True)
+                return
+            # the read may have loaded (new) kid modules: re-check with
+            # a tree rebuild so their asserts join the log
+            await self._recheck_asserts(rebuild=use_read_all)
+            self._refresh_shown_values()
+        finally:
+            # register writes held by _wait_refresh_idle() may now go out
+            self._refresh_idle.set()
 
     def action_toggle_value_bits(self) -> None:
         """'v' key: toggle the display of ``uint`` / ``sint`` values
@@ -1924,7 +1998,8 @@ def main() -> None:
         default=0.0,
         help="Periodically read all registers (read_all_tree) and "
              "re-check the asserts every N seconds (0 = off, default: 0). "
-             "Cycle at runtime with the 'r' key.",
+             "Cycle at runtime with the 'u' (update) key; the 'r' "
+             "(read all) key does a one-shot read of all modules."
     )
 
     regio.cli_utils.add_parser_args(parser)
