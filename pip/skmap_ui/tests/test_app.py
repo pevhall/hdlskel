@@ -21,6 +21,8 @@ from skmap_ui.demo import (
     _DemoModule,
     _SYSCTRL_ADDR,
     _SYSCTRL_DATA,
+    _UART_ADDR,
+    _UART_DATA,
     _head_bytes,
     _mem_sub,
     _u32,
@@ -707,8 +709,8 @@ def test_enter_edits_rw_value():
             assert "CTRL" in app.value_input.placeholder
 
             # the input line is prefilled with the current value (hex
-            # for x32 bits registers, zero-padded to the byte width)
-            assert app.value_input.value == "0x0000"
+            # for bits registers, zero-padded to width/4 hex chars)
+            assert app.value_input.value == "0x00000000"
             app.value_input.value = "0x2f"
             await pilot.press("enter")
             await pilot.pause()
@@ -1056,8 +1058,9 @@ def test_edit_outside_min_max_aborted():
             app.table.move_cursor(row=3, column=0)
             await pilot.press("enter")
             await pilot.pause()
-            # bits kind: prefilled in hex (like the table shows)
-            assert app.value_input.value == "0x001E"
+            # bits kind: prefilled in hex (like the table shows —
+            # ceil_div(32, 4) = 8 digits)
+            assert app.value_input.value == "0x0000001E"
 
             # 256 > max 100: rejected, the input stays open for a fix
             app.value_input.value = "0x100"
@@ -1111,11 +1114,12 @@ def test_value_bits_toggle():
             # default: int (decimal)
             await _wait_cell(app, pilot, 1, VALUE, "[ 170, 187, 204, 221 ]")
             await _wait_cell(app, pilot, 2, VALUE, "[ 5, -85 ]")
-            # bits: hex (S2 lane 1 = -85 is shown as 0xAB)
+            # bits: hex, ceil_div(width, 4) digits (S2 lane 1 = -85
+            # is shown as 0xAB)
             await pilot.press("v")
             await pilot.pause()
             await _wait_cell(app, pilot, 1, VALUE, "[ 0xAA, 0xBB, 0xCC, 0xDD ]")
-            await _wait_cell(app, pilot, 2, VALUE, "[ 0x5, 0xAB ]")
+            await _wait_cell(app, pilot, 2, VALUE, "[ 0x05, 0xAB ]")
             # the active option shows in the border title
             assert "bits" in app.table.border_title
             # toggle back to int
@@ -1139,7 +1143,7 @@ def test_value_bits_toggle():
             await pilot.press("enter")
             await pilot.pause()
             lanes = list(app.value_inputs.query("ValueInput.lane"))
-            assert [l.value for l in lanes] == ["0x5", "0xAB"]
+            assert [l.value for l in lanes] == ["0x05", "0xAB"]
             await pilot.press("escape")
             await pilot.pause()
     _run(run())
@@ -1237,7 +1241,7 @@ def test_expand_vec_bits_display():
             assert len(app._row_keys) == 10
             await _wait_cell(app, pilot, 2, VALUE, "0xAA")
             await _wait_cell(app, pilot, 5, VALUE, "0xDD")
-            await _wait_cell(app, pilot, 7, VALUE, "0x5")
+            await _wait_cell(app, pilot, 7, VALUE, "0x05")
             await _wait_cell(app, pilot, 8, VALUE, "0xAB")
             # header rows in bits mode too
             await _wait_cell(app, pilot, 1, VALUE, "[ 0xAA, 0xBB, 0xCC, 0xDD ]")
@@ -1300,11 +1304,11 @@ def make_sintw_top():
 
 
 def test_bits_display_sign_extends_sint():
-    """sint values in the bits display are sign-extended to the type's
-    byte width (Reg._str_num digit count, dependent on
-    value_type.width): a 12-bit -40 shows as 0xFFD8 (not 0xFD8), a
-    4-bit -1 as 0xFF (not 0xF); positive values and the int display
-    are unaffected; the input prefill follows."""
+    """sint values in the bits display are sign-extended to
+    ceil_div(width, 4) hex digits (dependent on value_type.width):
+    a 12-bit -40 shows as 0xFD8, a 4-bit -2 as 0xE, a 4-bit -1 as 0xF;
+    positive values and the int display are unaffected; the input
+    prefill follows."""
     async def run():
         top = make_sintw_top()
         app = SkmapUiApp(top)
@@ -1322,9 +1326,9 @@ def test_bits_display_sign_extends_sint():
             await _wait_cell(app, pilot, 5, VALUE, "-40")
             await pilot.press("v")
             await pilot.pause()
-            # bits mode: sign-extended to the byte width
-            await _wait_cell(app, pilot, 0, VALUE, "[ 0xFF, 0x5, 0xFE, 0x3 ]")
-            await _wait_cell(app, pilot, 5, VALUE, "0xFFD8")
+            # bits mode: ceil_div(width, 4) digits, sign-extended
+            await _wait_cell(app, pilot, 0, VALUE, "[ 0xF, 0x5, 0xE, 0x3 ]")
+            await _wait_cell(app, pilot, 5, VALUE, "0xFD8")
             # the lane prefill follows the sign-extended display
             app.table.focus()
             app.table.move_cursor(row=2, column=0)  # S4[1] = 5
@@ -1336,7 +1340,7 @@ def test_bits_display_sign_extends_sint():
             app.table.move_cursor(row=5, column=0)  # S12 header
             await pilot.press("enter")
             await pilot.pause()
-            assert app.value_input.value == "0xFFD8"
+            assert app.value_input.value == "0xFD8"
             await pilot.press("escape")
             await pilot.pause()
     _run(run())
@@ -1887,6 +1891,12 @@ def test_read_all_key_reads_device_and_refreshes():
             # show the SYSCTRL map (STATUS is its first row)
             await _select_node(app, _find_node(app, sysctrl), pilot)
 
+            # put the cursor on CTRL (row 1), not the top row: a read-all
+            # must keep the selected highlighted row where it is
+            app.table.focus()
+            app.table.move_cursor(row=1, column=0)
+            await pilot.pause()
+
             # change the (fake) device STATUS value, then 'r' (read all)
             data = bytearray(_SYSCTRL_DATA)
             data[20:24] = _u32(0x42)
@@ -1895,6 +1905,8 @@ def test_read_all_key_reads_device_and_refreshes():
             # the read reaches the cache: the shown value is refreshed
             await _wait_cell(app, pilot, 0, VALUE, "error: 0x0042")
             assert status.read_uint_cached() == 0x42
+            # ...and the selected (highlighted) row is kept
+            assert app.table.cursor_row == 1
             # the assert re-check appended a block (still triggered) and
             # nothing was cleared (the rc register is still set)
             await _wait_log(
@@ -1938,4 +1950,98 @@ def test_keymap_no_trigger_key_and_u_is_update():
             await pilot.press("r")  # read all: no change to the period
             await pilot.pause()
             assert app.refresh_period is before
+    _run(run())
+
+
+def test_tab_focus_toggles_tree_and_table():
+    """'tab' / 'shift+tab' move the focus between the two panels only
+    (the tree and the register map table), never to the input / log."""
+    async def run():
+        app = SkmapUiApp(make_demo())
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            # the table has the initial focus
+            assert app.app.focused is app.table
+
+            def focus_panel():
+                """The panel (tree / table) that has the focus."""
+                focused = app.app.focused
+                if focused is None:
+                    return None
+                if focused in app.tree_view.ancestors_with_self:
+                    return app.tree_view
+                if focused in app.table.ancestors_with_self:
+                    return app.table
+                return None
+
+            assert focus_panel() is app.table
+            # tab -> the tree, tab again -> back to the table
+            await pilot.press("tab")
+            await pilot.pause()
+            assert focus_panel() is app.tree_view
+            await pilot.press("tab")
+            await pilot.pause()
+            assert focus_panel() is app.table
+            # shift+tab -> the tree as well (only two panels)
+            await pilot.press("shift+tab")
+            await pilot.pause()
+            assert focus_panel() is app.tree_view
+            await pilot.press("shift+tab")
+            await pilot.pause()
+            assert focus_panel() is app.table
+            # the input and the log never receive the focus
+            assert app.app.focused is not app.value_input
+            assert app.app.focused is not app.log
+
+    _run(run())
+
+
+def test_x_clears_shown_module_rc_and_triggered_rc_asserts():
+    """'x' (clear RC) writes zero to every rc register of the module
+    whose register map is shown AND to every rc register that is a
+    triggered assert (the log checks the whole tree)."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            sysctrl = top.kids_cached()[0]
+            # UART.RSR (rc) starts clear: set the (fake) device RSR so
+            # it becomes a triggered assert.  RSR lives in UART — not
+            # the shown module — so 'x' must clear it as a *triggered
+            # rc assert*, not via the shown module's clear_reg_rc().
+            uart = sysctrl.kids_cached()[0]
+            rsr = uart.arr_reg_var[0]
+            assert rsr.name == "RSR" and rsr.acc == Acc.rc
+            data = bytearray(_UART_DATA)
+            data[20:24] = _u32(1)
+            top._regio.write_mem(_UART_ADDR, bytes(data))
+            # the assert check reads from the skmap cache, so pull the
+            # (fake) device RSR value into the cache first
+            await uart.read_bytes(rsr.addr, rsr.size)
+            # force a re-check so RSR joins the triggered asserts
+            app.action_check_asserts()
+            for _ in range(500):
+                if any(
+                    isinstance(a, Reg) and a.name == "RSR"
+                    for a in app.last_asserts
+                ):
+                    break
+                await pilot.pause()
+            assert any(
+                isinstance(a, Reg) and a.name == "RSR"
+                for a in app.last_asserts
+            ), app.last_asserts
+
+            # show the UART map (which owns RSR), then 'x' (clear RC):
+            # the shown module's own rc registers are cleared via
+            # clear_reg_rc() and RSR — a triggered rc assert — via
+            # write_zero_cached()
+            await _select_node(app, _find_node(app, uart), pilot)
+            app.action_clear_triggered()
+            for _ in range(500):
+                if rsr.read_uint_cached() == 0:
+                    break
+                await pilot.pause()
+            assert rsr.read_uint_cached() == 0
     _run(run())

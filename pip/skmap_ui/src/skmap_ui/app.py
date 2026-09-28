@@ -52,10 +52,13 @@ refresh only logs new events (0 = off).  The ``r`` (read all) key
 does a one-shot read: it calls ``Module.read_all()`` on *every*
 module (registers + external mem caches, from the device), then
 re-checks the asserts (appending a block to the log if any are
-triggered) and updates the shown values — without clearing anything.
-The ``x`` key does the rc / assert clear on demand and re-checks.
-Register writes (``enter``) are **held** while a read-all / refresh
-is in progress and only go to the device once it has finished.  A value outside a register's configured
+triggered) and updates the shown values — without clearing anything
+and without moving the selected (highlighted) table row.  The ``x``
+(clear RC) key clears all ``rc`` registers of the *shown* module
+(``clear_reg_rc()``) plus every ``rc`` register that is a triggered
+assert (the log checks the whole tree), then re-checks.  Register
+writes (``enter``) are **held** while a read-all / refresh is in
+progress and only go to the device once it has finished.  A value outside a register's configured
 min / max limits is caught locally (the same condition
 ``Reg.check_value_limit()`` raises on) and the write is aborted
 before it reaches the device.  Device I/O errors are reported on the
@@ -82,10 +85,15 @@ addr, type, acc, name and description) plus one row per vector index
 ``enter`` on a lane row edits that lane (written with
 ``ExternalMemVec.write_idx_uint`` / ``write_idx_sint``), on the
 header row it opens one input per lane; ``rc`` lanes are cleared
-(writes zero) on ``enter``.  ``t`` triggers the selected register row:
-writable registers / flags are *written* (``t`` on a register with
-min / max limits picks a random value *within* the limits),
-read-only ones are *read* (skmap's "trigger" = register write).  All
+(writes zero) on ``enter``.  Triggering the selected register row
+(``action_trigger_selected`` — no key): writable registers / flags
+are *written* (a register with min / max limits picks a random value
+*within* the limits), read-only ones are *read* (skmap's "trigger" =
+register write).  ``tab`` / ``shift+tab`` move the focus between the
+two panels only (the tree and the register map table).  In the bits
+(``v``) display, hex values have ``ceil_div(value_type.width, 4)``
+digits and ``sint`` values are sign-extended (a 4-bit -2 shows as
+``0xE``).  All
 register / flag / mem device accesses use skmap's async *non-cached*
 regio reads/writes (never ``*_cached``), so the value really goes to
 / comes from the regio (live TCP server or cache file) and the skmap
@@ -175,16 +183,17 @@ def _hex(value: int, width: int) -> str:
 def _bits_str(value: int, width: int, kind: ValueKind) -> str:
     """Hex string for the bits display of a ``width``-bit value.
 
-    Zero-padded to the type's byte width (the same format as skmap's
-    ``Reg._str_num(v, 16)``) and, for ``sint``, *sign-extended* to that
-    byte width — e.g. a 12-bit -40 shows as ``0xFFD8`` (not ``0xFD8``),
-    a 4-bit -1 as ``0xFF``, a 4-bit 5 as ``0x05``.
+    With as many hex digits as ``ceil_div(width, 4)`` (half the type's
+    bit width), and, for ``sint``, *sign-extended* to that width — so
+    negative numbers show as their (positive) two's complement hex:
+    a 4-bit -2 shows as ``0xE``, a 4-bit -1 as ``0xF``, a 12-bit -40
+    as ``0xFD8``.
     """
-    byte_width = -(-width // 8)
-    v = value & ((1 << (byte_width * 8)) - 1)
+    hex_digits = -(-width // 4)  # ceil_div(width, 4)
+    v = value & ((1 << width) - 1)
     if kind is ValueKind.sint and v & (1 << (width - 1)):
-        v |= (1 << (byte_width * 8)) - (1 << width)
-    return f"0x{v:0{byte_width}X}"
+        v |= (1 << (hex_digits * 4)) - (1 << width)
+    return f"0x{v:0{hex_digits}X}"
 
 
 def _assert_value_str(obj: Union[Reg, RFlag]) -> str:
@@ -247,6 +256,24 @@ class ModuleTree(Tree):
         if node is not None and node.children:
             node.expand()
 
+    def key_tab(self, event: events.Key) -> bool:
+        """'tab' on the tree: next panel (the register map table).
+
+        The screen's default tab binding (checked with priority) would
+        move the focus to the next focusable widget (value input / log);
+        this handler runs first (on the focused widget) and stops the
+        event so only the two panels are cycled.
+        """
+        self.app.action_focus_next_panel()
+        event.stop()
+        return True
+
+    def _key_shift_tab(self, event: events.Key) -> bool:
+        """'shift+tab' on the tree: previous panel (the register map table)."""
+        self.app.action_focus_previous_panel()
+        event.stop()
+        return True
+
 
 class RegMapTable(DataTable):
     """Register map table where ``enter`` requests editing the row.
@@ -262,6 +289,24 @@ class RegMapTable(DataTable):
 
     def action_select_cursor(self) -> None:
         self.post_message(self.EditRequested())
+
+    def key_tab(self, event: events.Key) -> bool:
+        """'tab' on the table: next panel (the module tree).
+
+        The screen's default tab binding (checked with priority) would
+        move the focus to the next focusable widget (value input / log);
+        this handler runs first (on the focused widget) and stops the
+        event so only the two panels are cycled.
+        """
+        self.app.action_focus_next_panel()
+        event.stop()
+        return True
+
+    def _key_shift_tab(self, event: events.Key) -> bool:
+        """'shift+tab' on the table: previous panel (the module tree)."""
+        self.app.action_focus_previous_panel()
+        event.stop()
+        return True
 
 
 class ValueInput(Input):
@@ -312,10 +357,15 @@ class SkmapUiApp(App):
         ("l", "cycle_asserts_level", "Assert level"),
         ("r", "read_all_modules", "Read all"),
         ("u", "cycle_refresh", "Update"),
-        ("x", "clear_triggered", "Clear triggered"),
+        ("x", "clear_triggered", "Clear RC"),
         ("v", "toggle_value_bits", "Value bits"),
         ("e", "toggle_expand_vec", "Expand vec"),
         Binding("enter", "edit_selected_value", "Edit value", show=False),
+        # NB: tab / shift+tab are NOT app bindings — the screen's default
+        # tab binding (checked with priority) would beat them and move the
+        # focus to the value input / log.  Instead the two panels (tree /
+        # table) each install a key_tab / _key_shift_tab handler (see
+        # ModuleTree / RegMapTable) that cycles between the two panels only.
     ]
 
     #: mouse hit-zone (cells) around a pane divider that starts a drag
@@ -347,6 +397,12 @@ class SkmapUiApp(App):
         self._drag: str | None = None  # "h" (tree|table) or "v" (workspace|log)
         # one regio connection on one event loop: serialize device I/O
         self._regio_lock = asyncio.Lock()
+        # the table row to restore the cursor to after a tree-rebuild
+        # re-select (set by the read-all / assert-check workers): the
+        # re-select's NodeSelected message is processed *after* the
+        # worker's own restore, so it restores the cursor there instead
+        # of rebuilding the table (which would reset the cursor)
+        self._restore_cursor_key: str | None = None
         # set while no periodic refresh is in flight.  Register writes
         # (enter / t) wait on this, so a write is never made in the
         # middle of a refresh: a refresh reads the whole tree and then
@@ -399,7 +455,7 @@ class SkmapUiApp(App):
                 id="value-input",
                 placeholder=(
                     "enter: edit (rw/wt) / clear (rc) | l: assert level | "
-                    "u: update | r: read all | x: clear triggered | "
+                    "u: update | r: read all | x: clear RC | tab: panels | "
                     "a: check asserts | v: value bits | e: expand vec"
                 ),
             )
@@ -500,6 +556,22 @@ class SkmapUiApp(App):
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         data = event.node.data
         if isinstance(data, Module):
+            if (
+                self._restore_cursor_key is not None
+                and self.tree_view.highlighted is not None
+                and event.node.data is self.tree_view.highlighted.data
+            ):
+                # a tree rebuild re-selecting the already-shown module
+                # (the read-all / assert-check workers do this after
+                # rebuilding the tree): keep the table as is — only
+                # the highlight moves — and restore the cursor the
+                # worker remembered (this message is processed after
+                # the worker's own restore, so it must not be lost).
+                # NB: compare by module (data), not node identity — the
+                # rebuild creates fresh Tree.Node objects.
+                self.tree_view.set_highlighted(event.node)
+                self._restore_table_cursor(self._restore_cursor_key)
+                return
             self.tree_view.set_highlighted(event.node)
             self._show_module(data)
         elif isinstance(data, ExternalMem):
@@ -768,6 +840,18 @@ class SkmapUiApp(App):
     # asserts: check, append log, periodic refresh, clear triggered
     # ------------------------------------------------------------------
 
+    def _remember_table_cursor(self) -> str | None:
+        """The key of the table row the cursor is on (or None)."""
+        if 0 <= self.table.cursor_row < len(self._row_keys):
+            return self._row_keys[self.table.cursor_row]
+        return None
+
+    def _restore_table_cursor(self, key: str | None) -> None:
+        """Move the table cursor back to ``key`` (when it still exists
+        in the rebuilt table)."""
+        if key is not None and key in self._row_objs:
+            self.table.move_cursor(row=self._row_keys.index(key), column=0)
+
     async def _check_asserts(self) -> None:
         """'a' key / on start: build the tree and re-check all asserts."""
         if self._asserts_checking:
@@ -792,15 +876,28 @@ class SkmapUiApp(App):
             self.asserts_checked = True
             self._append_assert_log(worst, log_f)
             self._refresh_shown_values()
+            # remember the shown table row: the tree rebuild (and the
+            # re-select that follows it) must not move the cursor.  The
+            # re-select's NodeSelected message is processed *after* this
+            # method returns, so the restore happens there (see
+            # on_tree_node_selected); the restore here covers the
+            # no-reselect case only.
+            cur_key = self._remember_table_cursor()
+            self._restore_cursor_key = cur_key
             root_node = self._build_tree()
             self._force_lines()
-            # re-select the module that was on show (tree was rebuilt)
+            # re-select the module that was on show (tree was rebuilt);
+            # the NodeSelected it posts is processed after this method
+            # returns and restores the cursor there (see
+            # on_tree_node_selected); the restore here covers the
+            # no-reselect case
             if self._row_module is not None:
                 node = self._node_for(self._row_module)
                 if node is not None:
                     self.tree_view.select_node(node)
             elif root_node is not None:
                 self.tree_view.select_node(root_node)
+            self._restore_table_cursor(cur_key)
         except Exception as err:  # noqa: BLE001
             logging.warning("check asserts failed: %s", err)
         finally:
@@ -815,6 +912,9 @@ class SkmapUiApp(App):
         self._asserts_checking = True
         log_f: list[Union[RFlag, Reg]] = []
         try:
+            # remember the shown table row: the tree rebuild (and the
+            # re-select that follows it) must not move the cursor
+            cur_key = self._remember_table_cursor() if rebuild else None
             if rebuild:
                 try:
                     await self.top_module.make_tree()
@@ -825,12 +925,20 @@ class SkmapUiApp(App):
                     )
                 self._build_tree()
                 self._force_lines()
+                # re-select the shown module (the read-all may have
+                # loaded new kids, so the tree was rebuilt).  Its
+                # NodeSelected message is processed *after* this method
+                # returns, so the cursor restore happens there (see
+                # on_tree_node_selected); the restore here covers the
+                # no-reselect case only.
+                self._restore_cursor_key = cur_key
                 if self._row_module is not None:
                     node = self._node_for(self._row_module)
                     if node is not None:
                         self.tree_view.select_node(node)
                 else:
                     self.tree_view.select_node(self.tree_view.root)
+                self._restore_table_cursor(cur_key)
             if self._kids_loaded(self.top_module):
                 worst = self.top_module.check_assert_tree_cached(
                     self.asserts_level, log_f
@@ -1161,20 +1269,48 @@ class SkmapUiApp(App):
             self._refresh_idle.set()
 
     def action_clear_triggered(self) -> None:
-        """'x' key: write zero to every triggered rc register."""
+        """'x' (clear RC) key: write zero to every rc register of the
+        shown module and to every rc register that is a triggered
+        assert (the assert check covers the whole tree), then
+        re-check.
+
+        ``Module.clear_assert_tree()`` does exactly that: for every
+        module it writes zero to each ``rc`` register whose assert is
+        currently triggered — which includes the rc registers of the
+        shown module and of every triggered assert.
+        """
         self.run_worker(
             self._clear_triggered_worker(), name="clear_triggered", exclusive=False
         )
 
     async def _clear_triggered_worker(self) -> None:
         try:
-            if self._row_module is not None:
-                await self._row_module.clear_reg_rc()
             await self.top_module.clear_assert_tree()
         except Exception as err:  # noqa: BLE001
-            logging.warning("clear triggered asserts failed: %s", err)
+            logging.warning("clear RC failed: %s", err)
             return
         await self._recheck_asserts()
+
+    # ------------------------------------------------------------------
+    # panel focus (tab / shift+tab: tree <-> register map table)
+    # ------------------------------------------------------------------
+
+    #: focus chain limited to the two panels (tree / register map)
+    _PANELS_SELECTOR = "#modules, #registers"
+
+    def action_focus_next_panel(self) -> None:
+        """'tab' key: move the focus to the next panel — the focus
+        chain is limited to the two panels (tree / register map), so
+        the value input / log are never entered via tab."""
+        self.screen.focus_next(self._PANELS_SELECTOR)
+
+    def action_focus_previous_panel(self) -> None:
+        """'shift+tab' key: like 'tab' (only two panels: previous).
+
+        With two panels the previous of one is the other, so this is
+        the same target as 'tab'.
+        """
+        self.screen.focus_previous(self._PANELS_SELECTOR)
 
     # ------------------------------------------------------------------
     # device I/O: skmap async (non-cached) regio reads / writes
