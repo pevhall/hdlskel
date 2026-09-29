@@ -75,6 +75,9 @@ async def test_skmap_module_test_acc_types(dut):
         print("reloaded:", r_cache.regions())
 
 
+        # for _ in range(10):
+        #     await module_top.read_all_tree(read_external_mem_cache=False)
+        #     await module_top.clear_assert_tree()
 
     # server = regio.tcp_server.RegioTcpServer(ramface_ctrl)
     # await server.start()
@@ -89,6 +92,7 @@ async def test_skmap_module_test_acc_types(dut):
 
     # await Timer(50, unit="ns")  # wait a bit
     # await FallingEdge(dut.clk_i)  # wait for falling edge/"negedge"
+    print ("EXITING")
 
     assert True
 

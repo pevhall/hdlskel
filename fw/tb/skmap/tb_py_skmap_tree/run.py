@@ -39,6 +39,8 @@ dep = analyse(config_files ='hdldepends.toml', top_entity=top_entity)
 compile_order = dep.to_dict()['files']
 # print(f'{compile_order=}')
 # print(f'{script_dir=}')
+print(f'{run_server=}')
+print(f'{gui=}')
 
 sim = HdlWorkflow(
     eda_tool = "nvc",
