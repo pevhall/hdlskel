@@ -54,9 +54,12 @@ module (registers + external mem caches, from the device), then
 re-checks the asserts (appending a block to the log if any are
 triggered) and updates the shown values — without clearing anything
 and without moving the selected (highlighted) table row.  The ``x``
-(clear RC) key clears all ``rc`` registers of the *shown* module
-(``clear_reg_rc()``) plus every ``rc`` register that is a triggered
-assert (the log checks the whole tree), then re-checks.  Register
+(clear RC) key is *write-only*: it writes zero to every ``rc``
+register of the *shown* module and to every ``rc`` register that is a
+triggered assert (the log checks the whole tree); it performs no device
+reads and does not re-check the asserts, so it can neither trigger nor
+log any new assert (the shown values are just refreshed from the
+updated cache).  Register
 writes (``enter``) are **held** while a read-all / refresh is in
 progress and only go to the device once it has finished.  A value outside a register's configured
 min / max limits is caught locally (the same condition
@@ -69,7 +72,11 @@ The tree starts fully expanded; ``enter``
 selects the module under the cursor and shows its register map (mirrors
 ``print_reg_map_cached``), and the node of the module whose register map
 is currently shown is highlighted in the tree.  ``left`` / ``right``
-collapse / expand the cursor node.  ``enter`` on a table row edits the
+collapse / expand the cursor node.  ``shift`` + ``up`` / ``down`` moves
+the selected row (register map) / the cursor (tree) 5 lines at a time;
+``shift`` + ``left`` / ``right`` scrolls the register map or the tree
+horizontally by 5 cells (the register-map cursor is unchanged; in the
+tree a plain ``left`` / ``right`` still expands / collapses the node).  ``enter`` on a table row edits the
 value of ``rw`` / ``wt`` registers: the input line is prefilled with
 the *current* value and can be edited in place (``enter`` to write,
 ``escape`` to cancel, both hex and decimal accepted); a *vector*
@@ -256,6 +263,49 @@ class ModuleTree(Tree):
         if node is not None and node.children:
             node.expand()
 
+    def _key_shift_up(self, event: events.Key) -> bool:
+        """'shift+up' on the tree: move the cursor 5 lines up.
+
+        Overrides the base Tree's 'shift+up' (previous sibling) so the
+        selected line moves by 5 instead of one sibling.
+        """
+        self._move_cursor_by(5, up=True)
+        event.stop()
+        return True
+
+    def _key_shift_down(self, event: events.Key) -> bool:
+        """'shift+down' on the tree: move the cursor 5 lines down."""
+        self._move_cursor_by(5, up=False)
+        event.stop()
+        return True
+
+    def _move_cursor_by(self, n: int, up: bool) -> None:
+        """Move the tree cursor ``n`` lines up or down (clamped)."""
+        if self.cursor_line < 0:
+            return
+        last = len(self._tree_lines) - 1  # noqa: SLF001
+        target = max(0, min(self.cursor_line - (n if up else -n), last))
+        self.cursor_line = target
+        self.scroll_to_line(target, animate=False)
+
+    def _key_shift_left(self, event: events.Key) -> bool:
+        """'shift+left' on the tree: scroll horizontally by 5 cells.
+
+        Overrides the base Tree's 'shift+left' (cursor to parent); the
+        cursor node does not move (only the view scrolls).
+        """
+        for _ in range(5):
+            self.scroll_left(animate=False)
+        event.stop()
+        return True
+
+    def _key_shift_right(self, event: events.Key) -> bool:
+        """'shift+right' on the tree: scroll horizontally by 5 cells."""
+        for _ in range(5):
+            self.scroll_right(animate=False)
+        event.stop()
+        return True
+
     def key_tab(self, event: events.Key) -> bool:
         """'tab' on the tree: next panel (the register map table).
 
@@ -287,8 +337,49 @@ class RegMapTable(DataTable):
     class EditRequested(Message):
         """Posted when ``enter`` is pressed on the table."""
 
+    #: how many lines 'shift+up' / 'shift+down' move the cursor
+    _SHIFT_ROW_STEP = 5
+
     def action_select_cursor(self) -> None:
         self.post_message(self.EditRequested())
+
+    def _key_shift_up(self, event: events.Key) -> bool:
+        """'shift+up' on the table: move the selected row 5 lines up."""
+        self._move_cursor_by(self._SHIFT_ROW_STEP, up=True)
+        event.stop()
+        return True
+
+    def _key_shift_down(self, event: events.Key) -> bool:
+        """'shift+down' on the table: move the selected row 5 lines down."""
+        self._move_cursor_by(self._SHIFT_ROW_STEP, up=False)
+        event.stop()
+        return True
+
+    def _move_cursor_by(self, n: int, up: bool) -> None:
+        """Move the table cursor ``n`` rows up or down (clamped, column
+        kept, scrolled into view)."""
+        if not self.rows:
+            return
+        n_rows = len(self.rows)
+        target = max(0, min(self.cursor_row + (-n if up else n), n_rows - 1))
+        self.move_cursor(row=target, column=self.cursor_column, scroll=True)
+
+    def _key_shift_left(self, event: events.Key) -> bool:
+        """'shift+left' on the table: scroll horizontally by 5× the
+        amount a plain 'left' moves the cursor (the cursor does not
+        move, only the view scrolls)."""
+        for _ in range(self._SHIFT_ROW_STEP):
+            super(RegMapTable, self).action_scroll_left()
+        event.stop()
+        return True
+
+    def _key_shift_right(self, event: events.Key) -> bool:
+        """'shift+right' on the table: scroll horizontally by 5× the
+        amount a plain 'right' moves the cursor (cursor unchanged)."""
+        for _ in range(self._SHIFT_ROW_STEP):
+            super(RegMapTable, self).action_scroll_right()
+        event.stop()
+        return True
 
     def key_tab(self, event: events.Key) -> bool:
         """'tab' on the table: next panel (the module tree).
@@ -1052,13 +1143,13 @@ class SkmapUiApp(App):
 
     def _update_log_title(self) -> None:
         """Border title of the log pane: current assert option values."""
-        refresh = (
-            f"refresh: {self.refresh_period:g} s"
+        update = (
+            f"update: {self.refresh_period:g} s"
             if self.refresh_period
-            else "refresh: off"
+            else "update: off"
         )
         self.log_view.border_title = (
-            f"asserts (level >= {self.asserts_level.name})  ·  {refresh}"
+            f"asserts (level >= {self.asserts_level.name})  ·  {update}"
         )
 
     def _update_row_value(self, key: str, value: Text) -> None:
@@ -1269,27 +1360,76 @@ class SkmapUiApp(App):
             self._refresh_idle.set()
 
     def action_clear_triggered(self) -> None:
-        """'x' (clear RC) key: write zero to every rc register of the
-        shown module and to every rc register that is a triggered
-        assert (the assert check covers the whole tree), then
-        re-check.
+        """'x' (clear RC) key: write zero to every ``rc`` register of the
+        shown module and to every ``rc`` register that is a triggered
+        assert (the assert check covers the whole tree).
 
-        ``Module.clear_assert_tree()`` does exactly that: for every
-        module it writes zero to each ``rc`` register whose assert is
-        currently triggered — which includes the rc registers of the
-        shown module and of every triggered assert.
+        This is a *write-only* action: it never reads from the device and
+        does not re-check (or re-log) the asserts — so it can neither
+        trigger nor log any new assert (the shown values are just
+        refreshed from the cache, which the writes update in place).
         """
         self.run_worker(
             self._clear_triggered_worker(), name="clear_triggered", exclusive=False
         )
 
+    @staticmethod
+    def _module_rc_items(module: Module) -> list:
+        """Every clearable (``rc``) asset of a module: its ``rc``
+        registers plus the ``rc`` flags of its flags registers."""
+        items: list = []
+        for reg in module.arr_reg_var:
+            if reg.acc == Acc.rc:
+                if isinstance(reg, RegFlags):
+                    for flag in reg.flags:
+                        if flag.ass != Ass.none:
+                            items.append(flag)
+                else:
+                    items.append(reg)
+        return items
+
     async def _clear_triggered_worker(self) -> None:
+        self._refresh_idle.clear()
         try:
-            await self.top_module.clear_assert_tree()
-        except Exception as err:  # noqa: BLE001
-            logging.warning("clear RC failed: %s", err)
-            return
-        await self._recheck_asserts()
+            try:
+                # write zero to every rc register / rc flag of the shown
+                # module (the register map only shows that module)
+                if self._row_module is not None:
+                    for item in self._module_rc_items(self._row_module):
+                        await self._clear_rc_item(item)
+                # ...and every rc register / rc flag that is a triggered
+                # assert (the log checks the whole tree)
+                for item in self.last_asserts:
+                    if isinstance(item, Reg):
+                        if item.acc == Acc.rc:
+                            await self._clear_rc_item(item)
+                    elif isinstance(item, RFlag):
+                        # an rc flag assert (RFlag has no acc of its own;
+                        # it is a triggered assert of an rc register)
+                        if item.reg_flags.acc == Acc.rc:
+                            await self._clear_rc_item(item)
+            # NB: a triggered assert that is ALSO a rc register / rc flag
+            # of the shown module is cleared (once) by the loop above; the
+            # shown-module loop clears the shown module's rc registers that
+            # are *not* currently triggered asserts
+            except Exception as err:  # noqa: BLE001
+                logging.warning("clear RC failed: %s", err, exc_info=True)
+                return
+            # no re-check: the writes update the skmap cache in place, so
+            # just refresh the shown values from the cache (no device I/O,
+            # no new asserts are triggered or logged)
+            self._refresh_shown_values()
+        finally:
+            # register writes held by _wait_refresh_idle() may now go out
+            self._refresh_idle.set()
+
+    @staticmethod
+    async def _clear_rc_item(item) -> None:
+        """Write zero to a single ``rc`` register or ``rc`` flag."""
+        if isinstance(item, RFlag):
+            await item.write_bool(False)
+        else:
+            await item.write_zero()
 
     # ------------------------------------------------------------------
     # panel focus (tab / shift+tab: tree <-> register map table)

@@ -1749,7 +1749,7 @@ def test_cycle_refresh_key():
             await pilot.pause()
             assert app.refresh_period is None
             assert app._refresh_timer is None
-            assert "refresh: off" in app.log_view.border_title
+            assert "update: off" in app.log_view.border_title
     _run(run())
 
 
@@ -1785,7 +1785,10 @@ def test_refresh_period_does_not_shadow_app_refresh():
     _run(run())
 
 
-def test_clear_triggered():
+def test_clear_triggered_write_only_no_new_log():
+    """'x' (clear RC) is *write-only*: it writes zero to every triggered
+    rc register but performs no device reads and does NOT re-check the
+    asserts, so it triggers / logs no new assert block."""
     async def run():
         top = make_demo()
         app = SkmapUiApp(top)
@@ -1794,30 +1797,61 @@ def test_clear_triggered():
             pmu = top.kids_cached()[1]
             v_event = pmu.arr_reg_var[0]
             assert v_event.name == "V_EVENT"
-            assert v_event.read_uint_cached() == 1
+            assert v_event.read_uint_cached() == 1  # triggered on start
+            n0 = _n_blocks(app._log_lines)
+            assert n0 == 1  # only the initial check appended a block
 
-            # x: write zero to every triggered rc register, re-read from
-            # the device, re-check
+            # x: write zero to V_EVENT (a triggered rc register of the
+            # whole tree) ...
             await pilot.press("x")
-            await pilot.pause()
             for _ in range(500):
                 if v_event.read_uint_cached() == 0:
                     break
                 await pilot.pause()
             assert v_event.read_uint_cached() == 0
+            await pilot.pause()
 
-            # the block appended after the clear drops V_EVENT (rc,
-            # cleared); the warn flag and the error register (not rc)
-            # remain in it
-            await _wait_log(
-                app, pilot,
-                lambda ls: _last_block(ls)
-                and "2 triggered, worst: error" in _last_block(ls)[0],
-            )
-            joined = "\n".join(_last_block(app._log_lines))
-            assert "V_EVENT" not in joined
-            assert "FLAGS.f0" in joined
-            assert "STATUS" in joined
+            # ...but it did NOT re-check: no new block was appended (the
+            # clear cannot trigger / log any new assert)
+            assert _n_blocks(app._log_lines) == n0
+            # the shown value cell is refreshed from the cache (now 0)
+            await _select_node(app, _find_node(app, pmu), pilot)
+            await _wait_cell(app, pilot, 0, VALUE, "info: 0x0000")
+    _run(run())
+
+
+def test_clear_rc_clears_rc_register_not_non_rc_assert():
+    """'x' (clear RC) writes zero to the *rc* registers that are
+    triggered asserts (the whole tree) but leaves non-rc triggered
+    asserts (ro / rw) untouched."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            # V_EVENT is an rc reg triggered assert (PMU); STATUS is an ro
+            # reg triggered assert (SYSCTRL).  x must clear V_EVENT but
+            # leave STATUS set.
+            pmu = top.kids_cached()[1]
+            sysctrl = top.kids_cached()[0]
+            v_event = pmu.arr_reg_var[0]
+            status = sysctrl.arr_reg_var[0]
+            assert v_event.name == "V_EVENT" and v_event.acc == Acc.rc
+            assert status.name == "STATUS" and status.acc == Acc.ro
+            assert v_event.read_uint_cached() == 1  # triggered
+            assert status.read_uint_cached() == 1   # triggered (ro)
+
+            # show any module (the clear covers the whole tree)
+            await _select_node(app, _find_node(app, top), pilot)
+            await pilot.press("x")
+            for _ in range(500):
+                if v_event.read_uint_cached() == 0:
+                    break
+                await pilot.pause()
+            assert v_event.read_uint_cached() == 0  # the rc reg was cleared
+            assert status.read_uint_cached() == 1   # the ro reg was NOT
+            # no re-check: the log did not grow
+            assert _n_blocks(app._log_lines) == 1
     _run(run())
 
 
@@ -1950,6 +1984,120 @@ def test_keymap_no_trigger_key_and_u_is_update():
             await pilot.press("r")  # read all: no change to the period
             await pilot.pause()
             assert app.refresh_period is before
+    _run(run())
+
+
+def test_shift_up_down_moves_5_rows_table_and_tree():
+    """'shift+up' / 'shift+down' move the selected row (table) / the
+    cursor (tree) 5 lines at a time instead of one."""
+    async def run():
+        app = SkmapUiApp(make_demo())
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+
+            # ---- register map table: the cursor moves 5 rows ----
+            # show a module with several rows: expand a vector register
+            # so the table has > 5 rows.  The top module's FLAGS has 2
+            # flag sub-rows; simpler: put enough rows via expand on the
+            # external mem vec (16 lanes).  Select DMEM (ExternalMemVec)
+            # in the tree -> one row per lane (16 rows).
+            dmem = app.top_module.arr_external_mem[0]
+            await _select_node(app, _find_node(app, dmem), pilot)
+            n = len(app._row_keys)
+            assert n >= 6  # 16 lanes (>= 6)
+            app.table.focus()
+            app.table.move_cursor(row=0, column=0)
+            await pilot.pause()
+            # shift+down from row 0 -> row 5
+            await pilot.press("shift+down")
+            await pilot.pause()
+            assert app.table.cursor_row == 5
+            # shift+down again -> row 10
+            await pilot.press("shift+down")
+            await pilot.pause()
+            assert app.table.cursor_row == 10
+            # shift+up clamps at 0
+            app.table.move_cursor(row=3, column=0)
+            await pilot.pause()
+            await pilot.press("shift+up")
+            await pilot.pause()
+            assert app.table.cursor_row == 0
+
+            # ---- module tree: the cursor moves 5 lines ----
+            # the demo tree is short (5 lines), so exercise the 5-step
+            # move directly and check it clamps; a plain 'up'/'down' still
+            # moves one line (so the 5-step is a real difference)
+            tree = app.tree_view
+            tree.focus()
+            nlines = len(tree._tree_lines)  # noqa: SLF001
+            assert nlines >= 3
+            tree.cursor_line = nlines - 1  # bottom line
+            await pilot.pause()
+            # shift+up from the bottom clamps at 0 (a 5-step that is larger
+            # than the remaining distance), unlike plain up (which would
+            # land one line up)
+            tree._move_cursor_by(5, up=True)
+            await pilot.pause()
+            assert tree.cursor_line == 0
+            # shift+down from the top moves 5 lines (clamped to the bottom)
+            tree.cursor_line = 0
+            tree._move_cursor_by(5, up=False)
+            await pilot.pause()
+            assert tree.cursor_line == nlines - 1
+    _run(run())
+
+
+def test_shift_left_right_scrolls_table_horizontally():
+    """In the register map table, 'shift+left' / 'shift+right' scroll
+    the view horizontally (5 cells each, cursor unchanged); a plain
+    'left' / 'right' still moves the cursor one column (not scroll)."""
+    async def run():
+        app = SkmapUiApp(make_demo())
+        async with app.run_test(size=(60, 20)) as pilot:
+            await _wait_asserts(app, pilot)
+            app.table.focus()
+            app.table.move_cursor(row=0, column=0)
+            await pilot.pause()
+            before_x, _ = app.table.scroll_offset
+            # shift+right scrolls 5 cells right, the cursor stays put
+            await pilot.press("shift+right")
+            await pilot.pause()
+            after_x, _ = app.table.scroll_offset
+            assert after_x == before_x + 5
+            assert app.table.cursor_column == 0  # cursor did not move
+            # shift+left scrolls back 5 cells
+            await pilot.press("shift+left")
+            await pilot.pause()
+            back_x, _ = app.table.scroll_offset
+            assert back_x == before_x
+    _run(run())
+
+
+def test_shift_left_right_scrolls_tree_horizontally():
+    """In the module tree, 'shift+left' / 'shift+right' scroll the view
+    horizontally (5 cells each) without moving the cursor node (a plain
+    'left' / 'right' expands / collapses the node there instead)."""
+    async def run():
+        app = SkmapUiApp(make_demo())
+        async with app.run_test(size=(60, 20)) as pilot:
+            await _wait_asserts(app, pilot)
+            tree = app.tree_view
+            tree.focus()
+            node = tree.cursor_node
+            tree.cursor_line = 0
+            await pilot.pause()
+            before_x, _ = tree.scroll_offset
+            # shift+right scrolls 5 cells right, the node stays
+            await pilot.press("shift+right")
+            await pilot.pause()
+            after_x, _ = tree.scroll_offset
+            assert after_x == before_x + 5
+            assert tree.cursor_node is node  # node did not move
+            # shift+left scrolls back
+            await pilot.press("shift+left")
+            await pilot.pause()
+            back_x, _ = tree.scroll_offset
+            assert back_x == before_x
     _run(run())
 
 

@@ -31,11 +31,13 @@ currently displayed is **highlighted** (bold bright blue).
 | `left` / `right` | collapse / expand the tree node under the cursor (`space` toggles too) |
 | `a` | re-run `make_tree()` + `check_assert_tree_cached()` and append the triggered asserts to the log |
 | `l` | cycle the **assert level** (debug → info → warn → error → fatal): asserts below the level are no longer logged (see *Assert log*) |
-| `u` | cycle the **update (refresh) period** (off → 1 → 5 → 30 s): every period the app calls `Module.read_all_tree()`, re-checks the asserts (appending any triggered ones to the log) and clears the `rc` registers (see *Assert log*) |
+| `u` | cycle the **update period** (off → 1 → 5 → 30 s): every period the app calls `Module.read_all_tree()`, re-checks the asserts (appending any triggered ones to the log) and clears the `rc` registers (see *Assert log*) |
 | `r` | **read all**: a one-shot read — calls `Module.read_all()` on *every* module (registers + external mem caches, from the device), then re-checks the asserts (appending a block to the log if any are triggered) and updates the shown *Value* cells.  Unlike the periodic update it clears **nothing** and does **not** move the row cursor |
-| `x` | **clear RC**: write zero to every `rc` register of the *shown* module (`Module.clear_reg_rc()`) and to every `rc` register that is a triggered assert (the assert check covers the whole tree), then re-check |
+| `x` | **clear RC**: *write-only* — writes zero to every `rc` register of the *shown* module and to every `rc` register that is a triggered assert (the assert check covers the whole tree).  It does **no device reads** and does **not** re-check, so it can neither trigger nor log any new assert (the shown values are refreshed from the cache) |
 | `v` | toggle the display of `uint` / `sint` values between **int** (decimal, the default) and **bits** (hex, like the `bits` kind — `sint` values sign-extended to the type's byte width); the input prefill follows the display (see *Display options*) |
 | `e` | toggle **expanding vector registers** in the register map into one row per vector index (like the `ExternalMemVec` view, see *Display options*) |
+| `shift` + `up` / `down` | in the register map or the tree: move the selected row / the cursor **5** lines at a time (instead of one) |
+| `shift` + `left` / `right` | in the register map: scroll horizontally by **5×** the amount a plain `left` / `right` moves the cursor (the cursor does not move); in the tree: scroll horizontally by **5** cells (a plain `left` / `right` expands / collapses the cursor node there instead of scrolling) |
 
 On start the top module is selected (its register map is shown right away)
 and the assert check runs automatically.
@@ -129,17 +131,20 @@ whole mem read from the device on open.  Pressing `enter`:
 | a lane row, `rc` | writes zero to that lane (`write_idx_uint(idx, 0)`) |
 | the header row, `rc` | writes zero to every lane |
 
-### Clearing `rc` registers (refresh / `x`)
+### Clearing `rc` registers (update / `x`)
 
-The `x` key (clear RC) calls `Module.clear_assert_tree()`, which
-writes zero to every **`rc` register whose assert is currently
-triggered** — across the whole tree (the log checks the whole tree).
-That covers both the `rc` registers of the *shown* module and of every
-other module that has a triggered assert.
+The `x` key (clear RC) is a **write-only** action: it writes zero to
+the `rc` registers of the *shown* module and to every `rc` register
+that is a triggered assert (the assert check covers the whole tree).
+It performs **no device reads** and does **not** re-check the asserts,
+so it can neither trigger nor log any new assert; the shown *Value*
+cells are simply refreshed from the (now updated) cache.
 
-The periodic update (the `u` key) clears the shown module's `rc`
-registers the same way (`clear_reg_rc()`) and re-checks the asserts on
-every tick.
+The periodic update (the `u` key) reads the whole tree from the device,
+re-checks the asserts (appending to the log), and then clears the
+shown module's `rc` registers (`clear_reg_rc()`) and the triggered
+asserts of the whole tree (`clear_assert_tree()`), so the next update
+only logs new events.
 
 ## Assert log
 
@@ -166,7 +171,7 @@ re-logs an `rc` assert if it was re-triggered in the meantime, while
 `ro`/`rw` asserts keep being logged until their value changes.
 
 The log view's border shows the current options, e.g.
-`asserts (level >= debug)  ·  refresh: 5 s` (or `refresh: off`).
+`asserts (level >= debug)  ·  update: 5 s` (or `update: off`).
 
 The log always shows values the way skmap renders them (int for
 `uint` / `sint`, hex for `bits`), independent of the table's `v`
