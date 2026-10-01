@@ -22,7 +22,7 @@ def promote_to_sw_w(w : int) -> int:
 
 
 def set_bits(value : int, bit_mask: int, bit_vals: int) -> int:
-    return (value & ~bit_mask) | (bit_mask & bit_mask)
+    return (value & ~bit_mask) | (bit_mask & bit_vals)
 
 def set_bit(value : int, bit_pos: int, bit_val: bool) -> int:
     return set_bits(value, 1<<bit_pos, (int(bit_val))<<bit_pos)

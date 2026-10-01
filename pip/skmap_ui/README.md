@@ -32,8 +32,10 @@ currently displayed is **highlighted** (bold bright blue).
 | `a` | re-run `make_tree()` + `check_assert_tree_cached()` and append the triggered asserts to the log |
 | `l` | cycle the **assert level** (debug → info → warn → error → fatal): asserts below the level are no longer logged (see *Assert log*) |
 | `u` | cycle the **update period** (off → 1 → 5 → 30 s): every period the app calls `Module.read_all_tree()`, re-checks the asserts (appending any triggered ones to the log) and clears the `rc` registers (see *Assert log*) |
-| `r` | **read all**: a one-shot read — calls `Module.read_all()` on *every* module (registers + external mem caches, from the device), then re-checks the asserts (appending a block to the log if any are triggered) and updates the shown *Value* cells.  Unlike the periodic update it clears **nothing** and does **not** move the row cursor |
-| `x` | **clear RC**: *write-only* — writes zero to every `rc` register of the *shown* module and to every `rc` register that is a triggered assert (the assert check covers the whole tree).  It does **no device reads** and does **not** re-check, so it can neither trigger nor log any new assert (the shown values are refreshed from the cache) |
+| `R` | **read all**: a one-shot read — calls `Module.read_all()` on *every* module (registers + external mem caches, from the device), then re-checks the asserts (appending a block to the log if any are triggered) and updates the shown *Value* cells.  Unlike the periodic update it clears **nothing** and does **not** move the row cursor |
+| `r` | **read**: read the currently selected value from the device.  With the **register map** focused it reads the asset under the table cursor (register / flag / external mem); with the **tree** focused it calls `Module.read_all()` on the module under the tree cursor.  The read refreshes the skmap cache and the shown *Value* cell |
+| `t` | **toggle bool**: if the **register map** is focused and a bool (or bool list / vector) type is selected, invert the bool(s) and write the inverted value — a single bool, an individual flag bit, or every flag of a flag register.  Only writable (`rw` / `wt`) registers / flags are toggled |
+| `x` | **clear RC**: *write-only* — calls `Module.clear_reg_rc()` on the *shown* module and `Module.clear_assert_tree()` on the top module (clearing the triggered `rc` asserts of the whole tree).  It does **no device reads** and does **not** re-check, so it can neither trigger nor log any new assert (the shown values are refreshed from the cache) |
 | `v` | toggle the display of `uint` / `sint` values between **int** (decimal, the default) and **bits** (hex, like the `bits` kind — `sint` values sign-extended to the type's byte width); the input prefill follows the display (see *Display options*) |
 | `e` | toggle **expanding vector registers** in the register map into one row per vector index (like the `ExternalMemVec` view, see *Display options*) |
 | `shift` + `up` / `down` | in the register map or the tree: move the selected row / the cursor **5** lines at a time (instead of one) |
@@ -53,7 +55,7 @@ edited in place; input accepts decimal or `0x`-hex:
 |------|--------|
 | `rw` / `wt` | focuses the input bar and prefills the current value; `enter` writes it to the **device** via `Reg.write_uint`; `escape` cancels |
 | `rc` | **clears** the register immediately (writes zero to the device) |
-| `ro` | nothing (read-only; use `r` (read all) to read it from the device) |
+| `ro` | nothing (read-only; use `r` (read) to read it from the device) |
 | `k` / `na` | nothing — the value is hardwired / has no access, so it is never read back |
 
 **Vector registers** open one input column per vector index instead of
@@ -112,8 +114,9 @@ are shown in the table's border title, e.g.
   **one row per vector index** (lane address, `name[idx]`, the lane's
   value via `Reg.read_idx_value_cached` / `read_idx_uint_cached`).
   `enter` on a lane row edits just that lane (`rw`/`wt`) or clears it
-  (`rc`, writes zero); `t` on a writable lane row writes a random
-  value (within the reg's min / max limits) to just that lane.
+  (`rc`, writes zero); `t` (toggle bool) on a bool lane inverts just
+  that lane (a uint/sint/bits lane is not a bool, so `t` does nothing
+  there).
 
 ### Editing an external mem (`ExternalMemVec`)
 
@@ -133,18 +136,20 @@ whole mem read from the device on open.  Pressing `enter`:
 
 ### Clearing `rc` registers (update / `x`)
 
-The `x` key (clear RC) is a **write-only** action: it writes zero to
-the `rc` registers of the *shown* module and to every `rc` register
-that is a triggered assert (the assert check covers the whole tree).
-It performs **no device reads** and does **not** re-check the asserts,
-so it can neither trigger nor log any new assert; the shown *Value*
-cells are simply refreshed from the (now updated) cache.
+The `x` key (clear RC) is a **write-only** action: it calls
+`Module.clear_reg_rc()` on the *shown* module (the register map only
+shows that module) and `Module.clear_assert_tree()` on the top module
+(clearing the triggered `rc` asserts of the whole tree).  It performs
+**no device reads** and does **not** re-check the asserts, so it can
+neither trigger nor log any new assert; the shown *Value* cells are
+simply refreshed from the (now updated) cache.
 
 The periodic update (the `u` key) reads the whole tree from the device,
 re-checks the asserts (appending to the log), and then clears the
 shown module's `rc` registers (`clear_reg_rc()`) and the triggered
-asserts of the whole tree (`clear_assert_tree()`), so the next update
-only logs new events.
+asserts of the whole tree (`clear_assert_tree()`) — the same clear
+step as `x`, only preceded by a device read + re-check — so the next
+update only logs new events.
 
 ## Assert log
 
@@ -182,13 +187,15 @@ The four options:
 | option | CLI | key | effect |
 |--------|-----|-----|--------|
 | assert level | `--asserts-level {debug,info,warn,error,fatal}` (default `debug`) | `l` | asserts below the level still count for the *worst* level, but are **not** listed in the log |
-| update (refresh) period | `--refresh SECS` (default `0` = off) | `u` (cycles off/1/5/30) | every period the app 1. calls `Module.read_all_tree()` (all registers of the whole tree, including external mem caches, are **read from the device**), 2. re-checks the asserts — appending a block to the log if any are triggered — and updates the *Value* cells of the displayed table, and 3. clears all `rc` registers of the *selected* module via `Module.clear_reg_rc()` and the triggered asserts of the *whole tree* via `Module.clear_assert_tree()`, so the next update only logs **new** events. Register writes made while an update / read-all is in progress are **held** until it has finished (see *Editing register values*) |
-| read all | — | `r` | a **one-shot** read: calls `Module.read_all()` on every module (registers + external mem caches, from the device), then re-checks the asserts (appending a block to the log if any are triggered) and updates the shown *Value* cells — clears **nothing** (the `rc` registers stay set) |
-| clear RC | — | `x` | writes zero to the `rc` registers of the shown module and of the triggered asserts (no device read), then re-checks |
+| update period | `--refresh SECS` (default `0` = off) | `u` (cycles off/1/5/30) | every period the app 1. calls `Module.read_all_tree()` (all registers of the whole tree, including external mem caches, are **read from the device**), 2. re-checks the asserts — appending a block to the log if any are triggered — and updates the *Value* cells of the displayed table, and 3. clears all `rc` registers of the *selected* module via `Module.clear_reg_rc()` and the triggered asserts of the *whole tree* via `Module.clear_assert_tree()`, so the next update only logs **new** events. Register writes made while an update / read-all is in progress are **held** until it has finished (see *Editing register values*) |
+| read all | — | `R` | a **one-shot** read: calls `Module.read_all()` on every module (registers + external mem caches, from the device), then re-checks the asserts (appending a block to the log if any are triggered) and updates the shown *Value* cells — clears **nothing** (the `rc` registers stay set) |
+| read | — | `r` | reads the currently selected value from the device: the asset under the **register map** cursor, or `Module.read_all()` on the **tree**'s selected module — refreshes the skmap cache and the shown *Value* cell |
+| toggle bool | — | `t` | (register map focused) inverts the bool(s) of a selected bool / flag type and writes the result |
+| clear RC | — | `x` | writes zero to the `rc` registers of the shown module (`clear_reg_rc()`) and the triggered asserts of the whole tree (`clear_assert_tree()`); **no** device read, **no** re-check |
 
 `make_tree()` is only re-run by `a` (it loads uninitialised kids); the
-periodic update, `r` (read all) and `x` work on the already-built tree, so
-they never block on an unreadable module.
+periodic update, `R` (read all), `r` (read) and `x` work on the
+already-built tree, so they never block on an unreadable module.
 
 ## Device I/O
 

@@ -48,18 +48,27 @@ the register map, then clears all ``rc`` registers of the *selected*
 module (``clear_reg_rc()`` — the register map only shows that
 module) and the triggered asserts of the *whole tree*
 (``clear_assert_tree()`` — the log checks recursively) so the next
-refresh only logs new events (0 = off).  The ``r`` (read all) key
+refresh only logs new events (0 = off).  The ``R`` (read all) key
 does a one-shot read: it calls ``Module.read_all()`` on *every*
 module (registers + external mem caches, from the device), then
 re-checks the asserts (appending a block to the log if any are
 triggered) and updates the shown values — without clearing anything
-and without moving the selected (highlighted) table row.  The ``x``
-(clear RC) key is *write-only*: it writes zero to every ``rc``
-register of the *shown* module and to every ``rc`` register that is a
-triggered assert (the log checks the whole tree); it performs no device
-reads and does not re-check the asserts, so it can neither trigger nor
-log any new assert (the shown values are just refreshed from the
-updated cache).  Register
+and without moving the selected (highlighted) table row.  The ``r``
+(read) key reads the currently selected value from the device: with
+the register map focused it reads the asset under the table cursor,
+and with the tree focused it calls ``Module.read_all()`` on the module
+under the tree cursor (the read refreshes the skmap cache, and the
+shown value is refreshed from it).  The ``t`` (toggle bool) key
+inverts the bool(s) of the selected row when the register map is
+focused and a bool (or bool list / vector) type is selected — a
+single bool, an individual flag bit, or every flag of a flag register
+— and writes the inverted value.  The ``x``
+(clear RC) key is *write-only*: it calls ``Module.clear_reg_rc()`` on
+the *shown* module and ``Module.clear_assert_tree()`` on the top
+module (clearing the triggered ``rc`` asserts of the whole tree); it
+performs no device reads and does not re-check the asserts, so it can
+neither trigger nor log any new assert (the shown values are just
+refreshed from the updated cache).  Register
 writes (``enter``) are **held** while a read-all / refresh is in
 progress and only go to the device once it has finished.  A value outside a register's configured
 min / max limits is caught locally (the same condition
@@ -446,7 +455,9 @@ class SkmapUiApp(App):
         ("a", "check_asserts", "Check asserts"),
         ("c", "clear_log", "Clear log"),
         ("l", "cycle_asserts_level", "Assert level"),
-        ("r", "read_all_modules", "Read all"),
+        ("R", "read_all_modules", "Read all"),
+        ("r", "read_selected", "Read"),
+        ("t", "toggle_bool", "Toggle bool"),
         ("u", "cycle_refresh", "Update"),
         ("x", "clear_triggered", "Clear RC"),
         ("v", "toggle_value_bits", "Value bits"),
@@ -546,8 +557,9 @@ class SkmapUiApp(App):
                 id="value-input",
                 placeholder=(
                     "enter: edit (rw/wt) / clear (rc) | l: assert level | "
-                    "u: update | r: read all | x: clear RC | tab: panels | "
-                    "a: check asserts | v: value bits | e: expand vec"
+                    "u: update | R: read all | r: read | t: toggle bool | "
+                    "x: clear RC | tab: panels | a: check asserts | "
+                    "v: value bits | e: expand vec"
                 ),
             )
         yield RichLog(id="log", markup=True, min_width=0)
@@ -1245,7 +1257,7 @@ class SkmapUiApp(App):
         self._update_log_title()
 
     def action_read_all_modules(self) -> None:
-        """'r' (read all) key: a one-shot read of every module.
+        """'R' (read all) key: a one-shot read of every module.
 
         Calls ``Module.read_all()`` on all modules (registers +
         external mem caches, from the device), then re-checks the
@@ -1260,7 +1272,7 @@ class SkmapUiApp(App):
         )
 
     async def _read_all_worker(self) -> None:
-        """'r' (read all) worker: read every module from the device
+        """'R' (read all) worker: read every module from the device
         (``read_all()`` on all modules — including the not-yet-shown
         kids, which loads their registers) and refresh the asserts
         and the shown values."""
@@ -1288,6 +1300,73 @@ class SkmapUiApp(App):
         finally:
             # register writes held by _wait_refresh_idle() may now go out
             self._refresh_idle.set()
+
+    def action_read_selected(self) -> None:
+        """'r' (read) key: read the currently selected value from the
+        device.
+
+        If the register map is focused, read the asset selected by the
+        table cursor (register / flag / external mem); if the tree is
+        focused, call ``Module.read_all()`` on the module selected by
+        the tree cursor.  The read updates the skmap cache, and the
+        shown value cell is refreshed from it.
+        """
+        if self.focused is self.table:
+            self._read_selected_row()
+        elif self.focused is self.tree_view:
+            self._read_selected_module()
+
+    def _read_selected_row(self) -> None:
+        """Read the asset of the table's cursor row from the device."""
+        if self.table.row_count == 0 or self.table.cursor_row < 0:
+            return
+        row = self.table.cursor_row
+        if row >= len(self._row_keys):
+            return
+        key = self._row_keys[row]
+        obj = self._row_objs[key]
+        name = (
+            f"{obj.reg_flags.name}.{obj.name}"
+            if isinstance(obj, RFlag)
+            else getattr(obj, "name", "?")
+        )
+        self._run_regio(
+            self._read_row_async(key, obj), name=f"read {name}"
+        )
+
+    def _read_selected_module(self) -> None:
+        """Read the module under the tree cursor from the device
+        (``Module.read_all()``) and refresh the shown values.  If the
+        tree cursor is on an external mem, read the mem instead."""
+        node = self.tree_view.cursor_node
+        if node is None:
+            return
+        data = node.data
+        if isinstance(data, Module):
+            self._run_regio(
+                self._read_module_async(data), name=f"read {data.name()}"
+            )
+        elif isinstance(data, ExternalMemCached):
+            self._run_regio(
+                self._read_mem_async(data), name=f"read {data.name}"
+            )
+
+    async def _read_mem_async(self, mem: ExternalMemCached) -> None:
+        """Read an external mem from the device, then refresh the
+        shown values from the (updated) skmap cache."""
+        await self._regio(mem.read(0, mem.size))
+        self._refresh_shown_values()
+
+    async def _read_module_async(self, module: Module) -> None:
+        """Read one module from the device (``read_all``), then refresh
+        the shown values from the (updated) skmap cache."""
+        if module._use_cache:
+            logging.warning(
+                "%s is a cache-file module (no device read)", module.name()
+            )
+            return
+        await self._regio(module.read_all(read_external_mem_cache=True))
+        self._refresh_shown_values()
 
     def action_toggle_value_bits(self) -> None:
         """'v' key: toggle the display of ``uint`` / ``sint`` values
@@ -1360,76 +1439,97 @@ class SkmapUiApp(App):
             self._refresh_idle.set()
 
     def action_clear_triggered(self) -> None:
-        """'x' (clear RC) key: write zero to every ``rc`` register of the
-        shown module and to every ``rc`` register that is a triggered
-        assert (the assert check covers the whole tree).
+        """'x' (clear RC) key: clear the ``rc`` registers.
 
-        This is a *write-only* action: it never reads from the device and
-        does not re-check (or re-log) the asserts — so it can neither
-        trigger nor log any new assert (the shown values are just
-        refreshed from the cache, which the writes update in place).
+        Calls ``Module.clear_reg_rc()`` on the module shown in the
+        register map (the register map only shows that module) and
+        ``Module.clear_assert_tree()`` on the top module (clears the
+        triggered ``rc`` asserts of the whole tree).  The writes update
+        the skmap cache in place, so the shown *Value* cells are
+        refreshed from the cache afterwards.  This is a write-only
+        action: it does not re-check (or re-log) the asserts, so it
+        cannot trigger or log any new assert.
         """
         self.run_worker(
             self._clear_triggered_worker(), name="clear_triggered", exclusive=False
         )
 
-    @staticmethod
-    def _module_rc_items(module: Module) -> list:
-        """Every clearable (``rc``) asset of a module: its ``rc``
-        registers plus the ``rc`` flags of its flags registers."""
-        items: list = []
-        for reg in module.arr_reg_var:
-            if reg.acc == Acc.rc:
-                if isinstance(reg, RegFlags):
-                    for flag in reg.flags:
-                        if flag.ass != Ass.none:
-                            items.append(flag)
-                else:
-                    items.append(reg)
-        return items
-
     async def _clear_triggered_worker(self) -> None:
         self._refresh_idle.clear()
         try:
             try:
-                # write zero to every rc register / rc flag of the shown
-                # module (the register map only shows that module)
+                # clear the rc registers of the shown module (register map)
                 if self._row_module is not None:
-                    for item in self._module_rc_items(self._row_module):
-                        await self._clear_rc_item(item)
-                # ...and every rc register / rc flag that is a triggered
-                # assert (the log checks the whole tree)
-                for item in self.last_asserts:
-                    if isinstance(item, Reg):
-                        if item.acc == Acc.rc:
-                            await self._clear_rc_item(item)
-                    elif isinstance(item, RFlag):
-                        # an rc flag assert (RFlag has no acc of its own;
-                        # it is a triggered assert of an rc register)
-                        if item.reg_flags.acc == Acc.rc:
-                            await self._clear_rc_item(item)
-            # NB: a triggered assert that is ALSO a rc register / rc flag
-            # of the shown module is cleared (once) by the loop above; the
-            # shown-module loop clears the shown module's rc registers that
-            # are *not* currently triggered asserts
+                    await self._row_module.clear_reg_rc()
+                # ...and the triggered rc asserts of the whole tree
+                await self.top_module.clear_assert_tree()
             except Exception as err:  # noqa: BLE001
                 logging.warning("clear RC failed: %s", err, exc_info=True)
                 return
-            # no re-check: the writes update the skmap cache in place, so
-            # just refresh the shown values from the cache (no device I/O,
+            # the writes updated the skmap cache in place; refresh the
+            # shown values from the cache (no device read, no re-check ->
             # no new asserts are triggered or logged)
             self._refresh_shown_values()
         finally:
             # register writes held by _wait_refresh_idle() may now go out
             self._refresh_idle.set()
 
-    @staticmethod
-    async def _clear_rc_item(item) -> None:
-        """Write zero to a single ``rc`` register or ``rc`` flag."""
-        if isinstance(item, RFlag):
-            await item.write_bool(False)
+    def action_toggle_bool(self) -> None:
+        """'t' (toggle bool) key: if the register map is focused and a
+        bool (or bool list / vector) type is selected, invert the
+        bool(s) and write the inverted value to the device.
+
+        Only writable (``rw`` / ``wt``) registers / flags are toggled;
+        a non-bool selection (or a read-only register) does nothing.
+        """
+        if self.focused is not self.table:
+            return
+        if self.table.row_count == 0 or self.table.cursor_row < 0:
+            return
+        row = self.table.cursor_row
+        if row >= len(self._row_keys):
+            return
+        key = self._row_keys[row]
+        self._toggle_bool_row(row, key, self._row_objs[key])
+
+    def _toggle_bool_row(self, row: int, key: str, obj) -> None:
+        """Invert and write the bool(s) of the selected row, when it is
+        a bool / flag type (a single bool, an individual flag bit, or a
+        bool list / vector)."""
+        # an individual flag bit (a sub-row of a RegFlags register)
+        if isinstance(obj, RFlag):
+            reg = obj.reg_flags
+            if reg.acc not in (Acc.rw, Acc.wt):
+                return  # only writable flags can be toggled
+            self._run_regio(
+                self._flag_write_async(key, obj, not obj.read_bool_cached()),
+                name=f"toggle {reg.name}.{obj.name}",
+            )
+            return
+        # a flag-kind register (single bool / bool list / bool vector)
+        if not isinstance(obj, Reg) or obj.value_type.kind is not ValueKind.flag:
+            return  # not a bool / flag type: nothing to toggle
+        if obj.acc not in (Acc.rw, Acc.wt):
+            return  # only writable registers can be toggled
+        vt = obj.value_type
+        if vt.is_vec:
+            # a bool vector: invert every lane and write them
+            pairs = [
+                (i, int(not b)) for i, b in enumerate(obj.read_list_bool_cached())
+            ]
+            self._write_vec_row(key, obj, pairs)
+            return
+        if isinstance(obj, RegFlags):
+            # a flag bitfield (a list of bool flags): invert every flag bit
+            mask = 0
+            for f in obj.flags:
+                mask |= 1 << f.bit
+            cur = obj.read_uint_cached()
+            new = (cur & ~mask) | ((~cur) & mask)
+            self._write_row(row, obj, new, "WRITE")
         else:
-            await item.write_zero()
+            # a single bool: invert it
+            self._write_row(row, obj, int(not obj.read_bool_cached()), "WRITE")
 
     # ------------------------------------------------------------------
     # panel focus (tab / shift+tab: tree <-> register map table)
@@ -2084,7 +2184,7 @@ class SkmapUiApp(App):
                 self._trigger_reg(row, obj)
 
     def _trigger_reg(self, row: int, reg: Reg) -> None:
-        """'t' on a register row (device I/O, see module docstring)."""
+        """Trigger a register row (device I/O, see module docstring)."""
         key = self._row_keys[row]
         if reg.acc in (Acc.rw, Acc.wt):
             if isinstance(reg, RegVec):
@@ -2111,7 +2211,7 @@ class SkmapUiApp(App):
             )
 
     def _trigger_reg_lane(self, row: int, reg: Reg, idx: int) -> None:
-        """'t' on a lane row of an expanded vector register: writable
+        """Trigger a lane row of an expanded vector register: writable
         lanes are *written* (a random value within the reg's min / max
         limits, just that lane); ro / rc lanes *read* the register
         (the header row and every lane row are updated)."""
@@ -2133,7 +2233,7 @@ class SkmapUiApp(App):
             )
 
     def _trigger_flag(self, row: int, flag: RFlag) -> None:
-        """'t' on a flag row (device I/O, see module docstring)."""
+        """Trigger a flag row (device I/O, see module docstring)."""
         key = self._row_keys[row]
         reg = flag.reg_flags
         if reg.acc in (Acc.rw, Acc.wt):
@@ -2166,7 +2266,7 @@ class SkmapUiApp(App):
         await self._read_row_async(key, flag)
 
     def _trigger_mem(self, row: int, mem: ExternalMem) -> None:
-        """'t' on an external mem row: read it from the device (a lane
+        """Trigger an external mem row: read it from the device (a lane
         row of an ExternalMemVec view reads just that lane)."""
         if not isinstance(mem, ExternalMemCached):
             logging.warning(

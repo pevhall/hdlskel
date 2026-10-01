@@ -1906,7 +1906,7 @@ def test_table_highlights_whole_row():
 
 
 def test_read_all_key_reads_device_and_refreshes():
-    """'r' (read all): a one-shot read of all modules from the device
+    """'R' (read all): a one-shot read of all modules from the device
     (read_all on every module) that updates the assert log and the
     shown values — without clearing the triggered rc registers."""
     async def run():
@@ -1931,11 +1931,11 @@ def test_read_all_key_reads_device_and_refreshes():
             app.table.move_cursor(row=1, column=0)
             await pilot.pause()
 
-            # change the (fake) device STATUS value, then 'r' (read all)
+            # change the (fake) device STATUS value, then 'R' (read all)
             data = bytearray(_SYSCTRL_DATA)
             data[20:24] = _u32(0x42)
             top._regio.write_mem(_SYSCTRL_ADDR, bytes(data))
-            await pilot.press("r")
+            await pilot.press("R")
             # the read reaches the cache: the shown value is refreshed
             await _wait_cell(app, pilot, 0, VALUE, "error: 0x0042")
             assert status.read_uint_cached() == 0x42
@@ -1946,13 +1946,146 @@ def test_read_all_key_reads_device_and_refreshes():
             await _wait_log(
                 app, pilot, lambda ls: _n_blocks(ls) > n_blocks_before
             )
-            assert v_event.read_uint_cached() == 1  # rc NOT cleared by 'r'
+            assert v_event.read_uint_cached() == 1  # rc NOT cleared by 'R'
     _run(run())
 
 
-def test_keymap_no_trigger_key_and_u_is_update():
-    """The 't' trigger key is removed from the keymap; 'u' (not 'r')
-    cycles the update (refresh) period; 'r' is the one-shot read all."""
+def test_read_selected_table_reads_cursor_reg():
+    """'r' (read) with the register map focused reads the register under
+    the table cursor from the device (updating the cache + cell)."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            sysctrl = top.kids_cached()[0]
+            status = sysctrl.arr_reg_var[0]  # STATUS (ro)
+            assert status.name == "STATUS"
+            assert status.read_uint_cached() == 1  # initial value
+            # show the SYSCTRL map (row 0 = STATUS)
+            await _select_node(app, _find_node(app, sysctrl), pilot)
+            app.table.focus()
+            app.table.move_cursor(row=0, column=0)
+            await pilot.pause()
+            # change the (fake) device STATUS value (offset 20)
+            data = bytearray(_SYSCTRL_DATA)
+            data[20:24] = _u32(0x17)
+            top._regio.write_mem(_SYSCTRL_ADDR, bytes(data))
+            # the cache still shows the old value ...
+            assert status.read_uint_cached() != 0x17
+            # ...'r' (table focused) reads just the selected register
+            await pilot.press("r")
+            for _ in range(500):
+                if status.read_uint_cached() == 0x17:
+                    break
+                await pilot.pause()
+            assert status.read_uint_cached() == 0x17
+    _run(run())
+
+
+def test_read_selected_tree_reads_module():
+    """'r' (read) with the tree focused calls ``Module.read_all()`` on
+    the module under the tree cursor (all its registers, not just one)."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            sysctrl = top.kids_cached()[0]
+            status = sysctrl.arr_reg_var[0]  # STATUS (ro)
+            ctrl = sysctrl.arr_reg_var[1]    # CTRL (rw)
+            # change BOTH device values (read_all reads all regs)
+            data = bytearray(_SYSCTRL_DATA)
+            data[20:24] = _u32(0x2A)  # STATUS (offset 20)
+            data[24:28] = _u32(0x55)  # CTRL (offset 24)
+            top._regio.write_mem(_SYSCTRL_ADDR, bytes(data))
+            # focus the tree, cursor on the SYSCTRL node
+            app.tree_view.select_node(_find_node(app, sysctrl))
+            for _ in range(50):
+                await pilot.pause()
+            app.tree_view.focus()
+            await pilot.pause()
+            # 'r' (tree focused): read_all on the selected module
+            await pilot.press("r")
+            for _ in range(500):
+                if (
+                    status.read_uint_cached() == 0x2A
+                    and ctrl.read_uint_cached() == 0x55
+                ):
+                    break
+                await pilot.pause()
+            assert status.read_uint_cached() == 0x2A
+            assert ctrl.read_uint_cached() == 0x55
+    _run(run())
+
+
+def test_toggle_bool_flips_selected_flag():
+    """'t' (toggle bool) with the register map focused inverts the
+    selected bool (here a flag bit of the FLAGS register) and writes
+    the inverted value."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            # the top module's FLAGS register: f0 (bit0) set, f1 clear
+            top_flags = top.arr_reg_var[1]
+            assert top_flags.name == "FLAGS"
+            f0, f1 = top_flags.flags[0], top_flags.flags[1]
+            assert f0.read_bool_cached() is True
+            assert f1.read_bool_cached() is False
+            # show the top module and put the cursor on the f0 flag row
+            await _select_node(app, _find_node(app, top), pilot)
+            f0_row = next(
+                ii for ii, key in enumerate(app._row_keys)
+                if app._row_objs[key] is f0
+            )
+            app.table.focus()
+            app.table.move_cursor(row=f0_row, column=0)
+            await pilot.pause()
+            # 't' (table focused): toggle just the selected flag (f0)
+            await pilot.press("t")
+            for _ in range(500):
+                if f0.read_bool_cached() is False:
+                    break
+                await pilot.pause()
+            assert f0.read_bool_cached() is False  # f0 toggled off
+            assert f1.read_bool_cached() is False  # f1 untouched
+    _run(run())
+
+
+def test_toggle_bool_flips_flag_register():
+    """'t' (toggle bool) on a flag-register (bitfield) row inverts
+    every flag of the register and writes the result."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            top_flags = top.arr_reg_var[1]  # FLAGS: f0 set, f1 clear (0b01)
+            assert top_flags.read_uint_cached() == 1
+            # show the top module and put the cursor on the FLAGS row
+            await _select_node(app, _find_node(app, top), pilot)
+            flags_row = next(
+                ii for ii, key in enumerate(app._row_keys)
+                if app._row_objs[key] is top_flags
+            )
+            app.table.focus()
+            app.table.move_cursor(row=flags_row, column=0)
+            await pilot.pause()
+            # 't' (table focused): toggle every flag of the register
+            await pilot.press("t")
+            for _ in range(500):
+                if top_flags.read_uint_cached() == 2:  # 0b10
+                    break
+                await pilot.pause()
+            assert top_flags.read_uint_cached() == 2  # f0 off, f1 on
+    _run(run())
+
+
+def test_keymap_read_keys_and_u_is_update():
+    """'u' cycles the update period; 'R' is the one-shot read all;
+    'r' is the one-shot read of the selection; 't' toggles a bool."""
     by_key = {}
     for b in SkmapUiApp.BINDINGS:
         if isinstance(b, tuple):
@@ -1960,16 +2093,17 @@ def test_keymap_no_trigger_key_and_u_is_update():
         else:
             by_key[b.key] = b.action
     keys = set(by_key)
-    assert "t" not in keys
-    assert "u" in keys and "r" in keys
-    assert by_key["u"] == "cycle_refresh"   # u: update (periodic refresh)
-    assert by_key["r"] == "read_all_modules"  # r: read all (one-shot)
+    assert "u" in keys and "R" in keys and "r" in keys and "t" in keys
+    assert by_key["u"] == "cycle_refresh"     # u: update (periodic refresh)
+    assert by_key["R"] == "read_all_modules"  # R: read all (one-shot)
+    assert by_key["r"] == "read_selected"     # r: read the selection
+    assert by_key["t"] == "toggle_bool"       # t: toggle bool
 
     async def run():
         app = SkmapUiApp(make_demo())
         async with app.run_test() as pilot:
             await _wait_asserts(app, pilot)
-            # 'u' cycles the update period, 'r' does not
+            # 'u' cycles the update period, 'R' does not
             await pilot.press("u")
             await pilot.pause()
             assert app.refresh_period == 1.0
@@ -1981,7 +2115,7 @@ def test_keymap_no_trigger_key_and_u_is_update():
             await pilot.pause()
             assert app.refresh_period is None
             before = app.refresh_period
-            await pilot.press("r")  # read all: no change to the period
+            await pilot.press("R")  # read all: no change to the period
             await pilot.pause()
             assert app.refresh_period is before
     _run(run())
