@@ -104,7 +104,7 @@ async def test_skmap_module_test_acc_types(dut):
     dut.warn_flag2_i.value = 0
     dut.error_flag3_i.value = 0
     dut.fatal_flag4_i.value = 0
-    dut.debug_flag_vec_i.value = 0
+    dut.debug_flag_vec_i.value = 1
     dut.mem_rw_ptr_i.value = 0
 
     dut.mem_rw_rply_i.en.value   = 0

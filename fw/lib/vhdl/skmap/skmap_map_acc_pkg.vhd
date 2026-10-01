@@ -298,7 +298,7 @@ package body skmap_map_acc_pkg is
         k_vec_int_io(reg_idx) := val;
         b := 0;
         inc(reg_idx);
-        if ii = val_i'high + 1 then
+        if ii = val_i'high then
           at_end := True;
         else
           val := k_vec_int_io(reg_idx);

@@ -156,7 +156,7 @@ class Reg:
         match (base):
             case 2:  return f'0b{value:0{self.value_type.width}b}'
             case 10: return str(value)
-            case 16: return f'0x{value:0{ceil_div(self.value_type.width,8)}X}'
+            case 16: return f'0x{value:0{ceil_div(self.value_type.width,4)}X}'
 
     def has_limit(self):
         return self.value_type.kind in (ValueKind.uint, ValueKind.sint, ValueKind.bits) and (
@@ -559,9 +559,14 @@ class RFlag:
         if self.ass != Ass.none:
            s += to_rich_str(f'{self.ass}: ', ass_checked.color) 
         s += '0b'
-        for v in lv:
+        for v in lv[::-1]:
+            
+            if ass_checked <= Ass.passed or not v:
+                a = ass_checked
+            else:
+                a = Ass.passed
             v = str(int(v))
-            s += to_rich_str(v, ass_checked.color) 
+            s += to_rich_str(v, a.color) 
         return s
 
     def read_bool_cached(self) -> bool:

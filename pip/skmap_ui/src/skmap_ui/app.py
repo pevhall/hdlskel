@@ -155,6 +155,7 @@ from skmap import (
     make_module,
 )
 from skmap.external_mem import ExternalMemCached, ExternalMemVec
+from textual import actions
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -377,16 +378,22 @@ class RegMapTable(DataTable):
         """'shift+left' on the table: scroll horizontally by 5× the
         amount a plain 'left' moves the cursor (the cursor does not
         move, only the view scrolls)."""
-        for _ in range(self._SHIFT_ROW_STEP):
-            super(RegMapTable, self).action_scroll_left()
+        try:
+            for _ in range(self._SHIFT_ROW_STEP):
+                super(RegMapTable, self).action_scroll_left()
+        except actions.SkipAction:
+            pass
         event.stop()
         return True
 
     def _key_shift_right(self, event: events.Key) -> bool:
         """'shift+right' on the table: scroll horizontally by 5× the
         amount a plain 'right' moves the cursor (cursor unchanged)."""
-        for _ in range(self._SHIFT_ROW_STEP):
-            super(RegMapTable, self).action_scroll_right()
+        try:
+            for _ in range(self._SHIFT_ROW_STEP):
+                super(RegMapTable, self).action_scroll_right()
+        except actions.SkipAction:
+            pass
         event.stop()
         return True
 
