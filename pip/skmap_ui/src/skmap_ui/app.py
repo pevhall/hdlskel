@@ -1210,6 +1210,19 @@ class SkmapUiApp(App):
             elif obj is reg:
                 self._update_row_value(key, self._reg_value_text(reg))
 
+    def _update_flags_reg_rows(self, reg_flags: RegFlags) -> None:
+        """Update the value cells of a RegFlags in the shown table: its
+        own (header) row plus every RFlag sub-row under it.  The values
+        come from the skmap cache (a flag read updates the whole
+        RegFlags, so all of its flags' cells are refreshed)."""
+        for key, obj in self._row_objs.items():
+            if obj is reg_flags:
+                self._update_row_value(key, self._reg_value_text(reg_flags))
+            elif isinstance(obj, RFlag) and obj.reg_flags is reg_flags:
+                self._update_row_value(
+                    key, Text.from_markup(obj._value_rich_str())
+                )
+
     def _refresh_shown_values(self) -> None:
         """Update the value cells of the currently shown table (cached)."""
         for key, obj in self._row_objs.items():
@@ -1313,10 +1326,13 @@ class SkmapUiApp(App):
         device.
 
         If the register map is focused, read the asset selected by the
-        table cursor (register / flag / external mem); if the tree is
-        focused, call ``Module.read_all()`` on the module selected by
-        the tree cursor.  The read updates the skmap cache, and the
-        shown value cell is refreshed from it.
+        table cursor (register / flag / external mem); a flag row (a
+        RegFlags or one of its RFlag bits) reads the whole RegFlags and
+        refreshes every flag under it.  If the tree is focused, call
+        ``Module.read_all()`` on the module selected by the tree cursor.
+        The read updates the skmap cache and the shown value cells are
+        refreshed from it; any read Reg / RFlag whose assert is now
+        triggered is appended to the assert log.
         """
         if self.focused is self.table:
             self._read_selected_row()
@@ -1338,7 +1354,8 @@ class SkmapUiApp(App):
             else getattr(obj, "name", "?")
         )
         self._run_regio(
-            self._read_row_async(key, obj), name=f"read {name}"
+            self._read_row_async(key, obj, log_asserts=True),
+            name=f"read {name}",
         )
 
     def _read_selected_module(self) -> None:
@@ -1374,6 +1391,7 @@ class SkmapUiApp(App):
             return
         await self._regio(module.read_all(read_external_mem_cache=True))
         self._refresh_shown_values()
+        self._log_module_asserts(module)
 
     def action_toggle_value_bits(self) -> None:
         """'v' key: toggle the display of ``uint`` / ``sint`` values
@@ -1596,21 +1614,33 @@ class SkmapUiApp(App):
             return reg.read_char()
         return reg.read_uint()
 
-    async def _read_row_async(self, key: str, obj: RowObj) -> None:
+    async def _read_row_async(
+        self, key: str, obj: RowObj, *, log_asserts: bool = False
+    ) -> None:
         """Read one table row's asset from the device and refresh the cell.
 
-        The non-cached read also updates the skmap cache.
+        The non-cached read also updates the skmap cache.  A flag row
+        (a RegFlags, or one of its RFlag bits) reads the whole RegFlags
+        and refreshes every flag row under it.  With ``log_asserts``
+        (the 'r' read) a triggered assert of the read asset(s) is also
+        appended to the assert log.
         """
+        # the RegFlags for a flag row (the reg itself, or its parent), else None
+        flag_reg = (
+            obj.reg_flags
+            if isinstance(obj, RFlag)
+            else (obj if isinstance(obj, RegFlags) else None)
+        )
         mem_idx = (
             self._row_mem_idx.get(key) if isinstance(obj, ExternalMemVec) else None
         )
         if mem_idx is not None:
             coro = obj.read_idx_bytes(mem_idx)
+        elif flag_reg is not None:
+            coro = flag_reg.read_uint()
         elif isinstance(obj, ExternalMem):
             n = min(8, obj.size)
             coro = obj.read(0, n)
-        elif isinstance(obj, RFlag):
-            coro = obj.read_bool()
         else:
             coro = self._async_read_coro(obj)
         try:
@@ -1620,21 +1650,48 @@ class SkmapUiApp(App):
                 "read of %s failed: %s", getattr(obj, "name", "?"), err
             )
             return
-        if self._row_objs.get(key) is not obj:
+        if flag_reg is not None:
+            self._update_flags_reg_rows(flag_reg)
+        elif self._row_objs.get(key) is not obj:
             return  # the row was replaced meanwhile (module switched)
-        if mem_idx is not None:
+        elif mem_idx is not None:
             self._update_row_value(key, self._mem_lane_value_text(obj, mem_idx))
         elif isinstance(obj, ExternalMem):
             data = obj.read_cached(0, n)
             self._update_row_value(
                 key, Text(f"(Mem {data.hex(' ')})", style="dim")
             )
-        elif isinstance(obj, RFlag):
-            self._update_row_value(
-                key, Text.from_markup(obj._value_rich_str())
-            )
         else:
             self._update_reg_rows(obj)
+        if log_asserts:
+            self._log_read_asserts(obj)
+
+    def _log_read_asserts(self, obj: RowObj) -> None:
+        """After a read, append any triggered assert of the read asset to
+        the assert log (a new time-stamped block).
+
+        The assert is evaluated from the (just read) cached value: a
+        plain Reg, or — for a RegFlags / one of its RFlag bits — the
+        whole RegFlags, whose triggered flags are the logged asserts.
+        """
+        if isinstance(obj, RFlag):
+            reg = obj.reg_flags
+        elif isinstance(obj, Reg):
+            reg = obj
+        else:
+            return
+        log_f: list[Union[Reg, RFlag]] = []
+        worst = reg.ass_check_cached(self.asserts_level, log_f)
+        if log_f:
+            self._append_assert_log(worst, log_f)
+
+    def _log_module_asserts(self, module: Module) -> None:
+        """After a read of a module, append any triggered assert of its
+        registers / flags to the assert log (a new time-stamped block)."""
+        log_f: list[Union[Reg, RFlag]] = []
+        worst = module.check_assert_cached(self.asserts_level, log_f)
+        if log_f:
+            self._append_assert_log(worst, log_f)
 
     # ------------------------------------------------------------------
     # mouse-resizable panes

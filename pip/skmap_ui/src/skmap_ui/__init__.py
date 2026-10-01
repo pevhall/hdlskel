@@ -26,7 +26,7 @@ Or your own module::
     SkmapUiApp(module).run()
 """
 
-__version__ = "0.11.3"
+__version__ = "0.11.4"
 
 from skmap_ui.app import SkmapUiApp, main
 

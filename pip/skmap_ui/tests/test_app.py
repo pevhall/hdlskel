@@ -21,6 +21,8 @@ from skmap_ui.demo import (
     _DemoModule,
     _SYSCTRL_ADDR,
     _SYSCTRL_DATA,
+    _TOP_ADDR,
+    _TOP_DATA,
     _UART_ADDR,
     _UART_DATA,
     _head_bytes,
@@ -325,7 +327,7 @@ def test_register_map_top():
 
             assert _cell(app, 1, NAME) == "V_RESET"
             assert _cell(app, 1, ACC) == "rw"
-            assert _cell(app, 1, VALUE).strip() == "0x0005"
+            assert _cell(app, 1, VALUE).strip() == "0x00000005"
 
             assert _cell(app, 2, NAME) == "FLAGS"
             assert _cell(app, 2, VALUE).strip() == "0b00000001"
@@ -364,7 +366,7 @@ def test_register_map_kid():
 
             assert _cell(app, 0, NAME) == "STATUS"
             assert _cell(app, 0, ACC) == "ro"
-            assert "error: 0x0001" in _cell(app, 0, VALUE)
+            assert "error: 0x00000001" in _cell(app, 0, VALUE)
 
             assert _cell(app, 1, NAME) == "CTRL"
             assert _cell(app, 1, ACC) == "rw"
@@ -449,9 +451,9 @@ def test_asserts_logged():
             assert "FLAGS.f0" in joined
             assert "warn: True" in joined
             assert "STATUS" in joined
-            assert "error: 0x0001" in joined
+            assert "error: 0x00000001" in joined
             assert "V_EVENT" in joined
-            assert "info: 0x0001" in joined
+            assert "info: 0x00000001" in joined
 
             # the RichLog view holds the rendered snapshot too
             assert len(app.log_view.lines) > 3
@@ -514,7 +516,7 @@ def test_trigger_readonly_reg():
             app.action_trigger_selected()
 
             # async: ro register is read from the (fake) device
-            await _wait_cell(app, pilot, 0, VALUE, "error: 0x0002")
+            await _wait_cell(app, pilot, 0, VALUE, "error: 0x00000002")
 
     _run(run())
 
@@ -723,7 +725,7 @@ def test_enter_edits_rw_value():
                 await pilot.pause()
             assert ctrl.read_uint_cached() == 0x2F
             # the cell is refreshed by the device read-back
-            await _wait_cell(app, pilot, 1, VALUE, "0x002F")
+            await _wait_cell(app, pilot, 1, VALUE, "0x0000002F")
 
     _run(run())
 
@@ -1081,7 +1083,9 @@ def test_edit_outside_min_max_aborted():
             app.value_input.value = "100"
             await pilot.press("enter")
             await pilot.pause()
-            await _wait_cell(app, pilot, 3, VALUE, "(0x0002 <= v <= 0x0064) 0x0064")
+            await _wait_cell(
+                app, pilot, 3, VALUE, "(0x00000002 <= v <= 0x00000064) 0x00000064"
+            )
             assert lmt.read_uint_cached() == 100
 
             # trigger (no longer a key) picks random values within [2, 100]
@@ -1602,7 +1606,7 @@ def test_refresh_reads_all_registers():
             data[20:24] = _u32(0x7)
             top._regio.write_mem(_SYSCTRL_ADDR, bytes(data))
 
-            await _wait_cell(app, pilot, 0, VALUE, "error: 0x0007")
+            await _wait_cell(app, pilot, 0, VALUE, "error: 0x00000007")
     _run(run())
 
 
@@ -1664,7 +1668,7 @@ def test_write_held_while_refresh_in_flight():
 
             # the refresh finishes: the held write now goes out
             app._refresh_idle.set()
-            await _wait_cell(app, pilot, 1, VALUE, "0x0042")
+            await _wait_cell(app, pilot, 1, VALUE, "0x00000042")
             assert ctrl.read_uint_cached() == 0x42
     _run(run())
 
@@ -1816,7 +1820,7 @@ def test_clear_triggered_write_only_no_new_log():
             assert _n_blocks(app._log_lines) == n0
             # the shown value cell is refreshed from the cache (now 0)
             await _select_node(app, _find_node(app, pmu), pilot)
-            await _wait_cell(app, pilot, 0, VALUE, "info: 0x0000")
+            await _wait_cell(app, pilot, 0, VALUE, "info: 0x00000000")
     _run(run())
 
 
@@ -1937,7 +1941,7 @@ def test_read_all_key_reads_device_and_refreshes():
             top._regio.write_mem(_SYSCTRL_ADDR, bytes(data))
             await pilot.press("R")
             # the read reaches the cache: the shown value is refreshed
-            await _wait_cell(app, pilot, 0, VALUE, "error: 0x0042")
+            await _wait_cell(app, pilot, 0, VALUE, "error: 0x00000042")
             assert status.read_uint_cached() == 0x42
             # ...and the selected (highlighted) row is kept
             assert app.table.cursor_row == 1
@@ -2016,6 +2020,99 @@ def test_read_selected_tree_reads_module():
                 await pilot.pause()
             assert status.read_uint_cached() == 0x2A
             assert ctrl.read_uint_cached() == 0x55
+    _run(run())
+
+
+def test_read_flag_updates_all_flags_of_reg():
+    """'r' (read) on a flag row reads the whole RegFlags and refreshes
+    every flag row under it (not just the selected one)."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            top_flags = top.arr_reg_var[1]
+            f0, f1 = top_flags.flags[0], top_flags.flags[1]
+            assert f1.read_bool_cached() is False  # f1 clear in the cache
+            # set f1 in the *device* (the cache still has it clear)
+            off = top_flags.addr - _TOP_ADDR
+            data = bytearray(_TOP_DATA)
+            data[off] = 3  # 0b11: f0 + f1
+            top._regio.write_mem(_TOP_ADDR, bytes(data))
+            # show the top module and put the cursor on the f0 row
+            await _select_node(app, _find_node(app, top), pilot)
+            f0_row = next(
+                ii for ii, key in enumerate(app._row_keys)
+                if app._row_objs[key] is f0
+            )
+            f1_row = next(
+                ii for ii, key in enumerate(app._row_keys)
+                if app._row_objs[key] is f1
+            )
+            app.table.focus()
+            app.table.move_cursor(row=f0_row, column=0)
+            await pilot.pause()
+            # 'r' (table focused): read the whole FLAGS register
+            await pilot.press("r")
+            for _ in range(500):
+                if f1.read_bool_cached() is True:
+                    break
+                await pilot.pause()
+            # both flags were refreshed from the read (f1 now set)
+            assert f1.read_bool_cached() is True
+            assert _cell(app, f0_row, VALUE).strip() == "warn: True"
+            assert _cell(app, f1_row, VALUE).strip() == "True"
+    _run(run())
+
+
+def test_read_triggered_reg_appends_log():
+    """'r' (read) on a register whose assert is triggered appends a new
+    block to the assert log (the read re-evaluates the assert too)."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            sysctrl = top.kids_cached()[0]
+            status = sysctrl.arr_reg_var[0]  # STATUS (ro, error, set)
+            assert status.read_bool_cached() is True  # triggered
+            assert _n_blocks(app._log_lines) == 1
+            await _select_node(app, _find_node(app, sysctrl), pilot)
+            status_row = next(
+                ii for ii, key in enumerate(app._row_keys)
+                if app._row_objs[key] is status
+            )
+            app.table.focus()
+            app.table.move_cursor(row=status_row, column=0)
+            await pilot.pause()
+            await pilot.press("r")
+            await _wait_log(app, pilot, lambda lines: _n_blocks(lines) == 2)
+            assert any("STATUS" in line for line in _last_block(app._log_lines))
+    _run(run())
+
+
+def test_read_module_appends_its_asserts_to_log():
+    """'r' (read) with the tree focused reads the selected module and
+    appends a block with *that module's* triggered asserts only (here
+    STATUS — not the other modules' asserts)."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            sysctrl = top.kids_cached()[0]
+            assert _n_blocks(app._log_lines) == 1
+            app.tree_view.select_node(_find_node(app, sysctrl))
+            for _ in range(50):
+                await pilot.pause()
+            app.tree_view.focus()
+            await pilot.pause()
+            await pilot.press("r")
+            await _wait_log(app, pilot, lambda lines: _n_blocks(lines) == 2)
+            last = _last_block(app._log_lines)
+            assert any("STATUS" in line for line in last)
+            assert not any("V_EVENT" in line for line in last)
+            assert not any("FLAGS.f0" in line for line in last)
     _run(run())
 
 
