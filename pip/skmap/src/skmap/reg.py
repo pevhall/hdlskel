@@ -561,7 +561,7 @@ class RFlag:
         s += '0b'
         for v in lv[::-1]:
             
-            if ass_checked <= Ass.passed or not v:
+            if ass_checked <= Ass.passed or v:
                 a = ass_checked
             else:
                 a = Ass.passed

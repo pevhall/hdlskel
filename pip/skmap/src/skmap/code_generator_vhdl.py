@@ -42,64 +42,84 @@ class ValueKindVhdl(Enum):
     def is_int(self) -> bool:
         return self in (ValueKindVhdl.integer, ValueKindVhdl.natural)
 
+    def is_num(self) -> bool:
+        return self in (ValueKindVhdl.integer, ValueKindVhdl.natural, ValueKindVhdl.unsigned, ValueKindVhdl.signed)
+
 class ValueTypeVhdl:
     # def __init__(self, kind : ValueKindVhdl,      vec_len : Optional[int] = None, elem_w : Optional[int] = None):
-    def __init__(self, t : ValueTypeT, is_k : bool, flat_port_types : bool = False):
+    def __init__(self, t : ValueTypeT, is_k : bool, use_basic_port_types : bool = False):
         self.t = t
         self.is_k = is_k
         self.elem_w  = t.width
         self.vec_len = t.vec_len
-
         self.kind = None
-        if self.is_bool:
-            kind_basic = ValueKindVhdl.sl
-        else:
-            kind_basic = ValueKindVhdl.slv
+        self.port_elem_w = t.width
+        use_kind_basic = False
         if is_k:
-            if flat_port_types:
-                match t.kind:
-                    case ValueKind.uint: self.kind = ValueKindVhdl.natural
-                    case ValueKind.sint: self.kind = ValueKindVhdl.integer
-                    case ValueKind.char:
-                        assert self.elem_w == 8
-                        if self.vec_len is None:
-                            self.kind = ValueKindVhdl.character
-                        else:
-                            self.kind = ValueKindVhdl.string
-                    case ValueKind.bits: self.kind = kind_basic
-                    case ValueKind.flag: 
-                        if self.is_bool:
-                            self.kind = ValueKindVhdl.boolean
-                        else:
-                            self.kind = ValueKindVhdl.boolean_vector
-                assert self.kind is not None
-            else:
-                if self.vec_len is not None:
-                    self.kind = kind_basic
-                else:
-                    match t.kind:
-                        case ValueKind.uint: self.kind = ValueKindVhdl.natural
-                        case ValueKind.sint: self.kind = ValueKindVhdl.integer
-                        case ValueKind.char: self.kind = kind_basic
-                        case ValueKind.bits: self.kind = kind_basic
-                        case ValueKind.flag: self.kind = kind_basic
-                    assert self.kind is not None
+            match t.kind:
+                case ValueKind.uint: self.kind = ValueKindVhdl.natural
+                case ValueKind.sint: self.kind = ValueKindVhdl.integer
+                case ValueKind.char:
+                    assert self.elem_w == 8
+                    if self.vec_len is None:
+                        self.kind = ValueKindVhdl.character
+                    else:
+                        self.kind = ValueKindVhdl.string
+                case ValueKind.bits: use_kind_basic = True
+                case ValueKind.flag:
+                    if self.is_bool:
+                        self.kind = ValueKindVhdl.boolean
+                    else:
+                        self.kind = ValueKindVhdl.boolean_vector
         else:
-            if flat_port_types:
-                match t.kind:
-                    case ValueKind.uint: self.kind = ValueKindVhdl.unsigned
-                    case ValueKind.sint: self.kind = ValueKindVhdl.signed
-                    case ValueKind.char:
-                        assert self.elem_w == 8
-                        if self.vec_len is None:
-                            self.kind = ValueKindVhdl.character
-                        else:
-                            self.kind = ValueKindVhdl.string
-                    case ValueKind.bits: self.kind = kind_basic
-                    case ValueKind.flag: self.kind = kind_basic
-                assert self.kind is not None
+            match t.kind:
+                case ValueKind.uint: self.kind = ValueKindVhdl.unsigned
+                case ValueKind.sint: self.kind = ValueKindVhdl.signed
+                case ValueKind.char:
+                    assert self.elem_w == 8
+                    if self.vec_len is None:
+                        self.kind = ValueKindVhdl.character
+                    else:
+                        self.kind = ValueKindVhdl.string
+                case ValueKind.bits: use_kind_basic = True
+                case ValueKind.flag: use_kind_basic = True
+
+        if use_kind_basic:
+            if self.is_bool:
+                self.kind = ValueKindVhdl.sl
             else:
-                self.kind = kind_basic
+                self.kind = ValueKindVhdl.slv
+        assert self.kind is not None
+
+        self.port_flattened = False
+        if use_basic_port_types:
+            make_slv = False
+            match self.kind:
+                case ValueKindVhdl.integer:        self.port_flattened = self.t.is_vec
+                case ValueKindVhdl.natural:        self.port_flattened = self.t.is_vec
+                case ValueKindVhdl.sl:             self.port_flattened = self.t.is_vec
+                case ValueKindVhdl.slv:            self.port_flattened = self.t.is_vec
+                case ValueKindVhdl.unsigned:       self.port_flattened = True
+                case ValueKindVhdl.signed:         self.port_flattened = True
+                case ValueKindVhdl.character:      self.port_flattened = True
+                case ValueKindVhdl.string:         self.port_flattened = True
+                case ValueKindVhdl.boolean:        self.port_flattened = self.t.is_vec
+                case ValueKindVhdl.boolean_vector: self.port_flattened = True
+                case _: assert(False)
+
+        print(f'{use_basic_port_types=} f{self.port_flattened=} {self.kind=} {self.vec_len=}')
+        if(self.port_flattened):
+            self.port_kind   = ValueKindVhdl.slv
+            if self.vec_len is None:
+                self.port_elem_w = self.elem_w
+            else:
+                self.port_elem_w = ResolvableFunctionOperation(self.elem_w, BultiInOperation.mult, self.vec_len)
+            self.port_vec_len = None
+        else:
+            self.port_kind = self.kind
+            self.port_elem_w = self.elem_w
+            self.port_vec_len = self.vec_len
+        assert self.kind is not None
 
     @property
     def is_vec(self) -> bool:
@@ -109,10 +129,21 @@ class ValueTypeVhdl:
     def is_bool(self) -> bool:
         return self.elem_w == 1 and self.vec_len is None
 
-    def vhdl_type_str(self) -> str:
-        elem_rng = f"({to_vhdl_source(self.elem_w)}-1 downto 0)"
-        if self.vec_len is None:
-            match self.kind:
+    def vhdl_type_str(self, is_port=False) -> str:
+        if is_port:
+            kind     = self.port_kind
+            vec_len  = self.port_vec_len
+            elem_w   = self.port_elem_w
+        else:
+            kind     = self.kind
+            vec_len  = self.vec_len
+            elem_w   = self.elem_w
+
+        print(f'{is_port=} {kind=} {vec_len=}')
+
+        elem_rng = f"({to_vhdl_source(elem_w)}-1 downto 0)"
+        if vec_len is None:
+            match kind:
                 case ValueKindVhdl.integer   : return "integer"
                 case ValueKindVhdl.natural   : return "natural"
                 case ValueKindVhdl.sl        : return "std_ulogic"
@@ -124,20 +155,65 @@ class ValueTypeVhdl:
                 case ValueKindVhdl.boolean   : return "boolean"
                 case ValueKindVhdl.boolean_vector : assert f"boolean_vector{elem_rng}"
         else:
-            vec_rng = f"(0 to {to_vhdl_source(self.vec_len)}-1)"
-            str_rng = f"(1 to {to_vhdl_source(self.vec_len)})"
-            match self.kind:
+            vec_rng = f"(0 to {to_vhdl_source(vec_len)}-1)"
+            str_rng = f"(1 to {to_vhdl_source(vec_len)})"
+            match kind:
                 case ValueKindVhdl.integer   : return f"integer_vector{vec_rng}"
                 case ValueKindVhdl.natural   : return f"integer_vector{vec_rng}"
                 case ValueKindVhdl.sl        : assert False
                 case ValueKindVhdl.slv       : return f"vec_slv_t{vec_rng}{elem_rng}"
-                case ValueKindVhdl.unsigned  : return f"vec_unsigned{vec_rng}{elem_rng}"
-                case ValueKindVhdl.signed    : return f"vec_signed{vec_rng}{elem_rng}"
+                case ValueKindVhdl.unsigned  : return f"vec_unsigned_t{vec_rng}{elem_rng}"
+                case ValueKindVhdl.signed    : return f"vec_signed_t{vec_rng}{elem_rng}"
                 case ValueKindVhdl.character : assert False
                 case ValueKindVhdl.string    : return f"string{str_rng}"
                 case ValueKindVhdl.boolean   : assert False
                 case ValueKindVhdl.boolean_vector : assert False
         assert False
+
+    def map_acc_k_type_conv(self, name : str) -> tuple[str, Optional[bool]]:
+        if self.vec_len is None:
+            match self.kind:
+                case ValueKindVhdl.integer   : return name, True
+                case ValueKindVhdl.natural   : return name, False
+                case ValueKindVhdl.sl        : return f"to_slv({name})", None
+                case ValueKindVhdl.slv       : return name, None
+                case ValueKindVhdl.unsigned  : return f"to_slv({name})", None
+                case ValueKindVhdl.signed    : return f"to_slv({name})", None
+                case ValueKindVhdl.character : assert False
+                case ValueKindVhdl.string    : assert False
+                case ValueKindVhdl.boolean   : return name, None
+                case ValueKindVhdl.boolean_vector : return name, None
+                case _: assert False
+        else:
+            if self.port_flattened:
+                elem_w_str = to_vhdl_source(self.elem_w)
+                match self.kind:
+                    case ValueKindVhdl.integer   : return f"to_vec_slv({name}, {elem_w_str})", None
+                    case ValueKindVhdl.natural   : return f"to_vec_slv({name}, {elem_w_str})", None
+                    case ValueKindVhdl.sl        : return name, None
+                    case ValueKindVhdl.slv       : return f"to_vec_slv({name}, {elem_w_str}))", None
+                    case ValueKindVhdl.unsigned  : return f"to_vec_slv({name}, {elem_w_str}))", None
+                    case ValueKindVhdl.signed    : return f"to_vec_slv({name}, {elem_w_str}))", None
+                    case ValueKindVhdl.character : assert False
+                    case ValueKindVhdl.string    : assert False
+                    case ValueKindVhdl.boolean   : assert False
+                    case ValueKindVhdl.boolean_vector : assert False
+                    case _: assert False
+            else:
+                match self.kind:
+                    case ValueKindVhdl.integer   : return name, True
+                    case ValueKindVhdl.natural   : return name, False
+                    case ValueKindVhdl.sl        : return f"to_slv({name})", None
+                    case ValueKindVhdl.slv       : return name, None
+                    case ValueKindVhdl.unsigned  : return f"to_vec_slv({name})", None
+                    case ValueKindVhdl.signed    : return f"to_vec_slv({name})", None
+                    case ValueKindVhdl.character : assert False
+                    case ValueKindVhdl.string    : assert False
+                    case ValueKindVhdl.boolean   : return name, None
+                    case ValueKindVhdl.boolean_vector : return name, None
+                    case _: assert False
+
+
 
     def vhdl_type_str_slv_2d(self) -> str:
         elem_rng = f"({to_vhdl_source(self.elem_w)}-1 downto 0)"
@@ -175,17 +251,18 @@ class RecipeFlagFw:
         return self.vec_len is not None
 
 class RecipeVarFw():
-    def __init__(self, var : RecipeVar, port_types:PortTypes='all'):
+    def __init__(self, var : RecipeVar, use_basic_port_types:bool=False):
         self.name : str = var.name
-        self.t    : ValueTypeVhdl = ValueTypeVhdl(var.t, False, port_types == 'flat')
+        self.t    : ValueTypeVhdl = ValueTypeVhdl(var.t, False, use_basic_port_types=use_basic_port_types)
         self.acc  : Acc = var.acc
         self.desc : str = var.desc
         self.ass        = var.ass
         self.fw_init    = var.fw_init
         self.max        = var.max
         self.min        = var.min
-        self.port_types = port_types
+        self.use_basic_port_types = use_basic_port_types
 
+        assert self.t.kind is not None
         assert self.acc != Acc.na
         output = self.acc.sw_writable
         self.direction : Literal['in', 'out'] = "out" if output else "in"
@@ -200,7 +277,7 @@ class RecipeVarFw():
             for f in var.flags:
                 self.flags.append(RecipeFlagFw(f, self) )
         else:
-            if self.direction == 'out' and (self.t.kind.is_int or self.t.is_bool):
+            if self.direction == 'out' and (self.t.kind.is_int or self.t.is_bool or (self.t.kind.is_num and self.t.is_vec)):
                 self.uses_var_name = True
                 self.name_ext = var_name(self.name)
                 self.p_name = port_name(self.name, self.direction)
@@ -215,7 +292,7 @@ class RecipeVarFw():
             case FwInitMode.zero: pass
             case FwInitMode.k:
                 self.init_name  = k_var_init_name(self.name)
-                self.init_t_str = self.t.vhdl_type_str()
+                self.init_t_str = self.t.vhdl_type_str(is_port=True)
             case FwInitMode.k_int:
                 self.init_name  = k_var_init_name(self.name)
                 self.init_t_str = "integer_vector" if self.t.is_vec else "integer"
@@ -229,12 +306,12 @@ class RecipeVarFw():
         return False
 
 class RecipeKFw:
-    def __init__(self, k : RecipeK, port_types:PortTypes='all'):
+    def __init__(self, k : RecipeK, use_basic_port_types:bool=False):
         self.name : str                         = k.name
-        self.t    : ValueTypeVhdl               = ValueTypeVhdl(k.t, True, port_types == 'flat')
+        self.t    : ValueTypeVhdl               = ValueTypeVhdl(k.t, True, use_basic_port_types=use_basic_port_types)
         self.acc  : Acc                         = k.acc
         self.desc : str                         = k.desc
-        self.port_types = port_types
+        self.use_basic_port_types = use_basic_port_types
         self.flags : Optional[list[RecipeFlagFw]] = None
         if k.flags is not None:
             self.flags = []
@@ -265,15 +342,17 @@ def to_vhdl_source(node: ResolvableT) -> str:
     if isinstance(node, int):
         return str(node)
     # if isinstance(node, str):   # plain-string leaf (e.g. name_to_k[name] = name)
-    #     return node
+    #     return f'"{node}"'
     if isinstance(node, RecipeIpkg):
         return f'{node.name}'
     if isinstance(node, RecipeK):
         return f'{node.name}'
     if isinstance(node, ResolvableFunctionOperation):
-        return f'({to_vhdl_source(node.lhs)} {op_to_vhdl_source(node.op)} {to_vhdl_source(node.rhs)})'
+        # return f'({to_vhdl_source(node.lhs)} {op_to_vhdl_source(node.op)} {to_vhdl_source(node.rhs)})'
+        return f'{to_vhdl_source(node.lhs)} {op_to_vhdl_source(node.op)} {to_vhdl_source(node.rhs)}'
     if isinstance(node, ResolvableFunctionBuiltIn):
         args = ', '.join(to_vhdl_source(p) for p in node.params)
+        print(f'{args=}')
         return f'skmap_recipe_{node.func.name}({args})'
     if hasattr(node, 'name'):  # RecipeK / RecipeIpkg leaf
         return node.name #type:ignore
@@ -304,7 +383,7 @@ def optional_add_func_str( s : str, fstr : Optional[str]) -> str:
     return f"{fstr}({s})"
 
 
-def ipkg_type_to_vhdl_str(t : ValueType, port_types:PortTypes='all') -> str:
+def ipkg_type_to_vhdl_str(t : ValueTypeT, port_types:PortTypes='all') -> str:
     elem_rng = f"({to_vhdl_source(t.elem_w)}-1 downto 0)"
     if port_types == 'flat':
         if t.is_vec:
@@ -347,7 +426,9 @@ def ipkg_type_to_vhdl_str(t : ValueType, port_types:PortTypes='all') -> str:
 #       case _: raise ValueError("FwInitMode has not vhdl_type_str");
 
 def vhdl_add_slv_cast( name : str, t: ValueTypeVhdl) -> str:
-    if t.is_vec:
+    if t.is_bool:
+        return f"to_slv({name})"
+    elif t.is_vec:
         if t.kind in (ValueKind.uint, ValueKind.sint):
             return f"to_vec_slv({name})"
     else:
@@ -446,6 +527,7 @@ library {hdlskel_lib};""")
         vhdl_f.write(f"""
 
 use {hdlskel_lib}.skmap_module_ipkg.SKMAP_SIZE_RESERVED_DEFAULT;
+use {hdlskel_lib}.skmap_recipe_functions_pkg.all;
 
 package {recipe.fw_module}_ipkg is\n\n""")
         if len(recipe.ipkg) > 1:
@@ -458,6 +540,8 @@ package {recipe.fw_module}_ipkg is\n\n""")
                     value = f'"{value}"'
                 else:
                     value = f"'{value}'"
+            else:
+                value = to_vhdl_source(value)
             vhdl_f.write(f"    constant {ipkgv.name} : {vhdl_t} := {value};")
             if ipkgv.desc is not None:
                 vhdl_f.write(f" --! {ipkgv.desc}")
@@ -523,7 +607,7 @@ entity {recipe.fw_module} is
 
         recipe_k_fw = []
         for vk in recipe.k:
-            recipe_k_fw.append(RecipeKFw(vk, port_types))
+            recipe_k_fw.append(RecipeKFw(vk, use_basic_port_types=port_types=='flat'))
 
         last_desc = None
         if len(recipe_k_fw) > 0:
@@ -540,16 +624,16 @@ entity {recipe.fw_module} is
                     vhdl_f.write(f'\n    {f.name} : {vhdl_t}')
                     if jj != len(kv.flags)-1: vhdl_f.write(";")
                     last_desc = f.desc
-
             else:
-                vhdl_t = kv.t.vhdl_type_str()
+                vhdl_t = kv.t.vhdl_type_str(is_port=True)
+                print(f'{kv.name=} {vhdl_t=} {kv.t.port_vec_len=} {kv.t.port_flattened=}')
                 vhdl_f.write(f'\n    {kv.name} : {vhdl_t}')
             if ii != len(recipe_k_fw)-1: vhdl_f.write(";")
             last_desc = kv.desc
 
         recipe_var_fw : list[RecipeVarFw] = []
         for varv in recipe.var:
-            recipe_var_fw.append(RecipeVarFw(varv))
+            recipe_var_fw.append(RecipeVarFw(varv, use_basic_port_types=port_types=='flat'))
 
         for varv in recipe_var_fw:
             if varv.fw_init.not_zero:
@@ -632,7 +716,7 @@ entity {recipe.fw_module} is
                     prev_desc = None
                     vhdl_f.write(f'\n    {p_name} : out {vhdl_t};')
 
-                vhdl_t = varv.t.vhdl_type_str()
+                vhdl_t = varv.t.vhdl_type_str(is_port=True)
                 if prev_desc is not None:
                     vhdl_f.write(f" --! {prev_desc}")
                 prev_desc = varv.desc
@@ -766,18 +850,16 @@ architecture rtl of {recipe.fw_module} is
         # for ii in range(total_k_with_fixed_idx):
         #     kv = recipe.k[ii]
         for kv in recipe_k_fw:
-            if not kv.t.kind.is_int:
-                if kv.t.is_bool:
-                    val = f', val_i=>to_slv({kv.name})'
-                else:
-                    val = f', val_i=>{kv.name}'
+            val, sngd = kv.t.map_acc_k_type_conv(kv.name)
+            val = f', val_i=>{val}'
+            if sngd is None:
                 vhdl_f.write(f"    skmap_map_acc_k(k_vec_int_io=>k_vec_int, byte_idx_io=>byte_idx{val});\n")
             else:
-                if isinstance(kv.t.elem_w, int) and kv.t.elem_w > 32:
+                if (kv.t.elem_w > 32):
                    raise RuntimeError(f"Currently k must support 32bit integers {kv.t.elem_w=} {kv.t.kind=}")
 
-                is_signed_str = 'TRUE' if kv.t.kind == ValueKindVhdl.integer else 'FALSE'
-                vhdl_f.write(f"    skmap_map_acc_k(k_vec_int_io=>k_vec_int, byte_idx_io=>byte_idx, val_i=>{kv.name}, w_i=>{kv.t.elem_w}, signed_i=>{is_signed_str});\n")
+                is_signed_str = 'TRUE' if sngd else 'FALSE'
+                vhdl_f.write(f"    skmap_map_acc_k(k_vec_int_io=>k_vec_int, byte_idx_io=>byte_idx{val}, w_i=>{kv.t.elem_w}, signed_i=>{is_signed_str});\n")
                 # name = kv.name
                 # if addr_byte % 4 == 0:
                 #     if addr_byte != 0: vhdl_f.write(f",\n")
@@ -1039,9 +1121,11 @@ begin
                                 vhdl_f.write(f'    {varv.p_name} <= {varv.name_ext};\n')
                         elif varv.t.is_vec:
                             match varv.t.kind:
-                                case ValueKindVhdl.natural: vhdl_f.write(f'    {varv.p_name} <= to_vec_unsigned({varv.name_ext});\n')
-                                case ValueKindVhdl.integer: vhdl_f.write(f'    {varv.p_name} <= to_vec_signed({varv.name_ext});\n')
-                                case _: assert False;
+                                case ValueKindVhdl.natural: vhdl_f.write(f'    {varv.p_name} <= to_vec_int(to_vec_unsigned({varv.name_ext}));\n')
+                                case ValueKindVhdl.integer: vhdl_f.write(f'    {varv.p_name} <= to_vec_int(to_vec_signed({varv.name_ext}));\n')
+                                case ValueKindVhdl.signed: vhdl_f.write(f'    {varv.p_name} <= to_vec_signed({varv.name_ext});\n')
+                                case ValueKindVhdl.unsigned: vhdl_f.write(f'    {varv.p_name} <= to_vec_unsigned({varv.name_ext});\n')
+                                case _: assert False, f'{varv.name=} {varv.t.kind=}';
                         elif varv.t.is_bool:
                             vhdl_f.write(f'    {varv.p_name} <= to_sl({varv.name_ext});\n')
                         else:

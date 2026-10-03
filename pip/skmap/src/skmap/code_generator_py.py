@@ -43,14 +43,15 @@ def to_python_source(node: ResolvableT) -> str:
     #     return str(int(node))
     if isinstance(node, int):
         return str(node)
-    if isinstance(node, str):   # plain-string leaf (e.g. name_to_k[name] = name)
-        return node
+    # if isinstance(node, str):   # plain-string leaf (e.g. name_to_k[name] = name)
+    #     return f'"{node}"'
     if isinstance(node, RecipeIpkg):
         return f'self.{node.name}'
     if isinstance(node, RecipeK):
         return f'self.{node.name}'
     if isinstance(node, ResolvableFunctionOperation):
-        return f'({to_python_source(node.lhs)} {op_to_py_source(node.op)} {to_python_source(node.rhs)})'
+        # return f'({to_python_source(node.lhs)} {op_to_py_source(node.op)} {to_python_source(node.rhs)})'
+        return f'{to_python_source(node.lhs)} {op_to_py_source(node.op)} {to_python_source(node.rhs)}'
     if isinstance(node, ResolvableFunctionBuiltIn):
         args = ', '.join(to_python_source(p) for p in node.params)
         return f'skmap.recipe_functions.{node.func.name}({args})'
@@ -106,7 +107,15 @@ write_value_function_str  = common.write_value_function_str
 
 def all_ipkg_value_parameters_str(ipkgv : RecipeIpkg) -> str:
     t_str = value_ret_type_str(ipkgv.t)
-    value = to_python_source(ipkgv.value)
+    value = ipkgv.value
+    if ipkgv.t.kind == ValueKind.char:
+        if ipkgv.t.is_vec:
+            value = f'"{value}"'
+        else:
+            value = f"'{value}'"
+    else:
+        value = to_python_source(value)
+    print(f'{value=}')
 
     s = ''
     s += f'    @property\n'

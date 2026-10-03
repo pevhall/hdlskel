@@ -12,6 +12,7 @@ ipkg = [
   # {name = "INT_33", value = "{INT11}*{INT3}" },
   {name = "INT_11", value = 11 },
   {name = "INT_33", value = "{INT_11*3}" },
+  {name = "INT_TEST", value = "{$clog2(INT_11+$cdiv(1+INT_11*3-2,INT_2))}" },
   {name = "STR_TESTING", value = "TESTING" }
 ]
 
@@ -26,6 +27,7 @@ k = [
   {name = "MEM_RO_WIDTH", t = "u8", desc = "MEM RO width"},
   {name = "MEM_RO_ADDR_W", t = "u8", desc = "MEM RO length"},
   {name = "MEM_RO_LATENCY", t = "u8", desc = "MEM RO latency"},
+  # {name = "CHAN_DDR_MAP",  t = "[{RW_LEN}]s8", desc = "delete this!"},
   {name = "FLAGSK",    t = "b", desc = "K Flags", flags = [
      # { name = "FLAGK0", desc = "FlagK 0", vec_len = "{RO_VAL_W}"},
      { name = "FLAGK1", ass = "debug",   desc = "FlagK 1"},
@@ -35,7 +37,7 @@ k = [
 
 var = [
   {name = "bit_bool_rc",  t = "b1", acc = "rc", desc = "Flag single"},
-  {name = "bit_bool_rw",  t = "b1", acc = "rw", desc = "Flag single"},
+  {name = "bit_bool_rw",  t = "b1", acc = "rw", desc = "Flag single", fw_init="k"},
   {name = "bit_bool_wt",  t = "b1", acc = "wt", desc = "Flag single"},
   {name = "bit_ro",  t = "x1", acc = "rc", desc = "Flag single"},
   {name = "bit_wt",  t = "x1", acc = "rw", desc = "Flag single"},

@@ -100,10 +100,14 @@ class RecipeK:
         return self.t.kind.is_int
 
 class ValueTypeUnresolved:
-    def __init__(self, kind : ValueKind, width : Optional[ResolvableT], vec_len : Union[None, int, RecipeK]):
+    def __init__(self, kind : ValueKind, width : ResolvableT, vec_len : Union[None, int, RecipeK]):
         self.kind    = kind
         self.width   = width
         self.vec_len = vec_len
+
+    @property
+    def elem_w(self) -> ResolvableT:
+        return self.width
 
     @property
     def is_vec(self) -> bool:
