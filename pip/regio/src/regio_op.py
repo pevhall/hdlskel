@@ -113,7 +113,6 @@ if __name__ == '__main__':
 
     def main():
         args = parse_args()
-        print(args)
 
         rd_bytes = asyncio.run( single_op(args) )
         if args.rd_file is not None:

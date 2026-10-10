@@ -1,6 +1,6 @@
 from pathlib import Path
-import regio.regio_cache as regio_cache
-from regio.regio_cache import RegioCache
+import regio.cache as regio_cache
+from regio.cache import RegioCache
 
 # ----------------------------------------------------------------------
 # Simple demo / smoke test when run directly

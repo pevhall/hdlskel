@@ -432,17 +432,18 @@ class Module(ABC):
     def _write_cache_to_regio_cache(self, r_cache : regio_cache.RegioCache, include_external_mem : bool = True):
         r_cache.cache_write(self._base_addr, bytes(self._cache))
 
-        for mem in self.arr_external_mem:
-            if not isinstance(mem, ExternalMemCached):
-                logging.warning("%s at %d, mem interface has not cached cached (probably too large)",
-                                self.name, self._base_addr)
-                continue
-            if not mem.cache_loaded:
-                logging.warning("%s at %d, mem interface has not yet been read.\n"
-                    +"   needs to be read frist before extracting the cache.",
-                                self.name, self._base_addr)
-                continue
-            r_cache.cache_write(mem.base_addr, mem.read_cached(0, mem.size))
+        if include_external_mem:
+            for mem in self.arr_external_mem:
+                if not isinstance(mem, ExternalMemCached):
+                    logging.warning("%s at %d, mem interface has not cached cached (probably too large)",
+                                    self.name, self._base_addr)
+                    continue
+                if not mem.cache_loaded:
+                    logging.warning("%s at %d, mem interface has not yet been read.\n"
+                        +"   needs to be read frist before extracting the cache.",
+                                    self.name, self._base_addr)
+                    continue
+                r_cache.cache_write(mem.base_addr, mem.read_cached(0, mem.size))
 
     def _write_cache_to_regio_cache_tree(self, r_cache : regio_cache.RegioCache, include_external_mem : bool = True):
         self._write_cache_to_regio_cache(r_cache, include_external_mem)

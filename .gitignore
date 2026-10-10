@@ -8,3 +8,4 @@ compile_order.txt
 .cache
 subprojects
 !*.wrap
+*.egg-info

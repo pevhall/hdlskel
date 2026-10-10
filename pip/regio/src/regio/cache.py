@@ -135,6 +135,7 @@ class RegioCache(Regio):
         # ...then overlay the new write so it takes precedence on
         # overlapping bytes.
         off = new_start - merged_start
+        print([hex(a) for a in data])
         merged_buf[off:off + len(data)] = data
 
         remaining.append((merged_start, merged_buf))
