@@ -7,6 +7,7 @@ from . import external_mem
 from . import reg_map_table
 from . import code_generator_vhdl
 from . import code_generator_py
+from . import code_generator_cpp
 from . import recipe_functions
 
 Head   = head.Head
@@ -35,3 +36,4 @@ print_table_reg_list = reg_map_table.print_table_reg_list
 
 generate_py_module   = code_generator_py.generate_py_module
 generate_vhdl_module = code_generator_vhdl.generate_vhdl_module
+generate_cpp_module = code_generator_cpp.generate_cpp_module

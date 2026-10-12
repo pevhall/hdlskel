@@ -61,6 +61,27 @@ public:
     addr_t kid_addr_at(size_t ii) const { return m_kid_addrs[ii]; }
     // Return the kid at idx, creating it from the regio if not yet made.
     std::shared_ptr<Module> kid_at(size_t ii);
+
+    template<typename T>
+    std::vector<std::shared_ptr<T>> all_kids_type() {
+        std::vector<std::shared_ptr<T>> vec_k_t;
+        for(auto k : m_kids) {
+            auto k_t = std::dynamic_pointer_cast<T>(k);
+            if (k_t) {
+                vec_k_t.push_back(k_t);
+            }
+        }
+        return vec_k_t;
+    }
+
+    template<typename T>
+    std::shared_ptr<T> single_kids_type() {
+        auto vec_k_t = all_kids_type<T>();
+        if (vec_k_t.size() != 1) {
+            throw std::runtime_error("Expected signel kid got "+std::to_string(vec_k_t.size()));
+        }
+        return vec_k_t[0];
+    }
     // Create all kids.
     std::vector<std::shared_ptr<Module>> & kids();
     const std::vector<std::shared_ptr<Module>> & kids_cached() const { return m_kids; }
@@ -165,8 +186,9 @@ void print_table_reg_list(const std::vector<RegOrFlag> & list, const std::string
 
 class ModuleUnknown : public Module {
 public:
-    constexpr static std::string class_name = "ModuleUnknown";
-    std::string name()     const override { return ModuleUnknown::class_name; }
+    // constexpr static std::string class_name = "ModuleUnknown";
+    // std::string name()     const override { return ModuleUnknown::class_name; }
+    std::string name()     const override { return "ModuleUnknown"; }
     id_t        id()       const override ;
     version_t   version()  const override { assert(false); return 0;};
     checksum_t  checksum() const override { assert(false); return 0;};

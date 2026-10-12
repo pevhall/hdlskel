@@ -40,7 +40,7 @@ std::shared_ptr<Module> ModuleFactory::instance_get_module(id_t id, version_t ve
             std::cerr << "Could not find registered module with id. Return ModuleUnknown\n";
             return module_unkowen.make_empty();
         } else {
-            throw std::runtime_error("Could not find registered module with id");
+            throw std::runtime_error("Could not find registered module with id "+id_to_str(id));
         }
     }
     auto & lookup_version = m_lookup[id];
@@ -79,9 +79,9 @@ void Module::align_byte_idx(addr_t size) {
 void Module::add_reg(std::shared_ptr<Reg> reg) {
     align_byte_idx(reg->elem_size());
     reg->initalise(this, m_byte_idx);
+    // std::cout << __FILE__ << ":" << __LINE__ << ": 0x" << std::hex<< m_byte_idx << std::dec <<" -> " <<reg->name()<< " " <<reg->size()<<" s.  es "<< reg->elem_size()<<"\n";
     m_byte_idx += reg->size() ;
     align_byte_idx(reg->elem_size());
-    // std::cout << __FILE__ << ":" << __LINE__ << ":" <<  m_byte_idx <<" = " <<i<< " + " <<reg->size()<<".  es "<< reg->elem_size()<<"\n";
 }
 void Module::add_reg_k  (std::shared_ptr<Reg> reg) {
     add_reg(reg);
@@ -402,7 +402,20 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
     module->m_byte_align = 1;
     module->m_byte_idx = head_size;
 
-    addr_t byte_idx_sub_end = module->m_byte_idx + head.len_sub*word_size;
+
+    // Read the kid addresses from the cache (they come right after the sub heads)
+    // std::cout << __FILE__ << ":" << __LINE__ << ": head.len_kids = " << +head.len_kids << std::endl;
+    module->m_kid_addrs.reserve(head.len_kids);
+    for (uint8_t ii = 0; ii < head.len_kids; ii++) {
+        addr_t kid_addr = 0;
+        std::memcpy(&kid_addr, &data[module->m_byte_idx], sizeof(addr_t));
+        module->m_byte_idx += 4;
+        assert(kid_addr != 0); // addr 0 should never be a kid
+        // std::cout << __FILE__ << ":" << __LINE__ << ": kid_addr = " << kid_addr << std::endl;
+        module->m_kid_addrs.push_back(kid_addr);
+
+    }
+    module->m_kids.resize(head.len_kids, nullptr);
 
     enum class SubID : uint8_t {
         PAD = 0x0,
@@ -412,8 +425,10 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
 
     addr_t var_byte_align = 1;
 
+    addr_t byte_idx_sub_end = module->m_byte_idx + head.len_sub*word_size;
     while (module->m_byte_idx != byte_idx_sub_end) {
         uint8_t sub_id = static_cast<uint8_t>(data[module->m_byte_idx]);
+        // std::cout << __FILE__ << ":" << __LINE__ << ": sub_id = " << +sub_id << ", m_byte_idx = "<<+module->m_byte_idx<<"\n";
         switch (sub_id) {
             case static_cast<uint8_t>(SubID::PAD):
                 module->m_byte_idx = byte_idx_sub_end;
@@ -440,21 +455,9 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
                 throw std::runtime_error(oss.str());
         }
     } 
-    //
-    // auto module = std::make_shared<ModuleUnknown>();
 
-    // Read the kid addresses from the cache (they come right after the sub heads)
-    module->m_kid_addrs.reserve(head.len_kids);
-    for (uint8_t ii = 0; ii < head.len_kids; ii++) {
-        addr_t kid_addr = 0;
-        std::memcpy(&kid_addr, &data[module->m_byte_idx + ii*word_size], sizeof(addr_t));
-        assert(kid_addr != 0); // addr 0 should never be a kid
-        module->m_kid_addrs.push_back(kid_addr);
-    }
-    module->m_kids.resize(head.len_kids, nullptr);
 
     module->init_first(regio, base_addr, std::move(data));
-    module->m_byte_idx += head.len_kids*word_size;
 
     addr_t byte_idx_expected = module->m_byte_idx + head.len_k*word_size;
     // std::cout <<"Initalsing map_k\n";

@@ -2,7 +2,7 @@ import ast
 import asyncio
 import cocotb
 import tbskel.ramface
-import regio.tcp_server
+import regio.tcp_server_single
 from regio import cache as regio_cache
 import skmap
 import logging
@@ -79,11 +79,11 @@ async def test_skmap_module_test_acc_types(dut):
         #     await module_top.read_all_tree(read_external_mem_cache=False)
         #     await module_top.clear_assert_tree()
 
-    # server = regio.tcp_server.RegioTcpServer(ramface_ctrl)
+    # server = regio.tcp_server_single.RegioTcpServer(ramface_ctrl)
     # await server.start()
 
     if run_server:
-        server = regio.tcp_server.RegioTcpServer(ramface_ctrl)
+        server = regio.tcp_server_single.RegioTcpServer(ramface_ctrl)
         await server.start()
 
     for _ in range(100):

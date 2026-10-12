@@ -3,10 +3,11 @@ import ast
 import asyncio
 import cocotb
 import tbskel.ramface
-import regio.tcp_server
+import regio.tcp_server_single
 import skmap
 import skmap.basic
 import logging
+from pathlib import Path
 
 from dataclasses import dataclass
 
@@ -199,8 +200,11 @@ async def test_skmap_module_test_acc_types(dut):
 
     # await module.mem_ro_read(0, module.mem_ro_size)
 
+    if 0:
+        module.write_cache_tree_to_file(Path('module_recipe.skmap'))
+
     if run_server:
-        server = regio.tcp_server.RegioTcpServer(ramface_ctrl) #type:ignore
+        server = regio.tcp_server_single.RegioTcpServer(ramface_ctrl) #type:ignore
         await server.start()
 
     for _ in range(100):

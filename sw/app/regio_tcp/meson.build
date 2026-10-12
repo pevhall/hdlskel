@@ -8,7 +8,7 @@
 # hdlskel_regio_tcp_dep = dependency('hdlskel_regio_tcp', fallback: ['hdlskel_regio_tcp', 'hdlskel_regio_tcp_dep'])
 
 executable(
-  'regio_tcp',
+  'hdlskel_regio_tcp_op',
   'main.cpp',
   dependencies: [hdlskel_regio_tcp_dep, hdlskel_regio_dep, cli11_dep],
   install: false
