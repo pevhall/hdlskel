@@ -50,8 +50,7 @@ def to_python_source(node: ResolvableT) -> str:
     if isinstance(node, RecipeK):
         return f'self.{node.name}'
     if isinstance(node, ResolvableFunctionOperation):
-        # return f'({to_python_source(node.lhs)} {op_to_py_source(node.op)} {to_python_source(node.rhs)})'
-        return f'{to_python_source(node.lhs)} {op_to_py_source(node.op)} {to_python_source(node.rhs)}'
+        return f'({to_python_source(node.lhs)} {op_to_py_source(node.op)} {to_python_source(node.rhs)})'
     if isinstance(node, ResolvableFunctionBuiltIn):
         args = ', '.join(to_python_source(p) for p in node.params)
         return f'skmap.recipe_functions.{node.func.name}({args})'

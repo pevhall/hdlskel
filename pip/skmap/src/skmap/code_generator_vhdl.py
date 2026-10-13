@@ -348,8 +348,7 @@ def to_vhdl_source(node: ResolvableT) -> str:
     if isinstance(node, RecipeK):
         return f'{node.name}'
     if isinstance(node, ResolvableFunctionOperation):
-        # return f'({to_vhdl_source(node.lhs)} {op_to_vhdl_source(node.op)} {to_vhdl_source(node.rhs)})'
-        return f'{to_vhdl_source(node.lhs)} {op_to_vhdl_source(node.op)} {to_vhdl_source(node.rhs)}'
+        return f'({to_vhdl_source(node.lhs)} {op_to_vhdl_source(node.op)} {to_vhdl_source(node.rhs)})'
     if isinstance(node, ResolvableFunctionBuiltIn):
         args = ', '.join(to_vhdl_source(p) for p in node.params)
         print(f'{args=}')

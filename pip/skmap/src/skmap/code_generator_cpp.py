@@ -246,7 +246,7 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
     return s
 
 def all_reg_value_functions_str(reg : RecipeReg) -> str:
-    if reg.t.kind == ValueKind.flag:
+    if reg.flags is not None:
         return all_reg_value_functions_str_is_flag(reg)
     else:
         return all_reg_value_functions_str_not_flag(reg)
@@ -295,6 +295,7 @@ def generate_cpp_module(recipe_file : Path, hpp_file : Path, cpp_file : Path):
 
     with open(hpp_file, 'w') as hpp_f, open(cpp_file, 'w') as cpp_f:
         hpp_f.write(f"""{file_header}
+#pragma once
 #include "hdlskel/skmap/basic_types.hpp"
 #include "hdlskel/skmap/reg.hpp"
 #include "hdlskel/skmap/module.hpp"
@@ -323,10 +324,10 @@ public:
     version_t   version()  const override {{ return {recipe.sw_module}::class_version; }}
     checksum_t  checksum() const override {{ return {recipe.sw_module}::class_checksum; }}
 
-    static int  skmap_ver_major() {{ return skmap::ver_major; }}
-    static int  skmap_ver_minor() {{ return skmap::ver_minor; }}
-    static int  skmap_ver_patch() {{ return skmap::ver_patch; }}
-    static std::string skmap_ver_str() {{ return skmap::ver_str; }}
+    static int  skmap_ver_major() {{ return {SKMAP_VER_MAJOR}; }}
+    static int  skmap_ver_minor() {{ return {SKMAP_VER_MINOR}; }}
+    static int  skmap_ver_patch() {{ return {SKMAP_VER_PATCH}; }}
+    static std::string skmap_ver_str() {{ return "{SKMAP_VER_STR}"; }}
 
     static bool registered;
 """)
@@ -378,6 +379,7 @@ private:
             hpp_f.write(f'    std::shared_ptr<ExternalMem> {name_to_ext_mem(memv.name)};\n')
 
         hpp_f.write(f"}};\n")
+        hpp_f.write(f"const bool module_{recipe.name}_registered = {recipe.sw_module}::registered;");
         hpp_f.write(f"\n}}\n")
 
         cpp_f.write(f"""{file_header}

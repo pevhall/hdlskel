@@ -104,7 +104,8 @@ void Module::update_cache() {
 }
 
 void Module::update_cache(addr_t addr_off, addr_t update_size) {
-    auto data = std::span(m_cache).subspan(addr_off, update_size);
+    addr_t size = align_byte(update_size);
+    auto data = std::span(m_cache).subspan(addr_off, size);
     m_regio->read(m_base_addr + addr_off, data);
 }
 
@@ -114,7 +115,8 @@ void Module::write_cache() {
 }
 
 void Module::write_cache(addr_t addr_off, addr_t update_size) {
-    auto data = std::span(m_cache).subspan(addr_off, update_size);
+    addr_t size = align_byte(update_size);
+    auto data = std::span(m_cache).subspan(addr_off, size);
     m_regio->write(m_base_addr + addr_off, data);
 }
 

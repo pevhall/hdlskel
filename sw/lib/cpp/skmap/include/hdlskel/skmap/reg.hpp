@@ -161,7 +161,7 @@ private:
 
 class RFlag {
 public:
-    RFlag(const std::string & name, uint bit, Ass ass, const std::string & desc);
+    RFlag(const std::string & name, uint32_t bit, Ass ass, const std::string & desc);
 
     void update_reg_cache();
     void write_reg_cache();
@@ -173,7 +173,7 @@ public:
     virtual std::string str_value_cached() const;
 
     std::string name() const {return m_name;}
-    uint bit() const {return m_bit;}
+    uint32_t bit() const {return m_bit;}
     Ass ass() const {return m_ass;}
     std::string desc() const {return m_desc;}
     const RegFlags * reg_flags() const { return m_reg_flags; }
@@ -181,8 +181,8 @@ public:
     virtual std::string value_type_str() const { return "b"; }
 
 protected:
-    bool read_bool_at_cached(uint bit) const;
-    void write_bool_at_cache(uint bit, bool v);
+    bool read_bool_at_cached(uint32_t bit) const;
+    void write_bool_at_cache(uint32_t bit, bool v);
     // Common flag assert logic: no ass -> none, value clear -> passed, else ass
     Ass ass_check_value(bool value) const;
 private:
@@ -190,7 +190,7 @@ private:
 
     RegFlags * m_reg_flags;
 protected:
-    uint m_bit;
+    uint32_t m_bit;
     Ass m_ass;
     const std::string m_name;
     const std::string m_desc;
@@ -224,7 +224,7 @@ private:
 class RegFlags: public Reg {
 public:
     virtual ~RegFlags() = default;
-    RegFlags(const std::string& name, Acc acc, uint width, std::vector<std::shared_ptr<RFlag>> flags, const std::string & desc)
+    RegFlags(const std::string& name, Acc acc, uint32_t width, std::vector<std::shared_ptr<RFlag>> flags, const std::string & desc)
     :   Reg( name, acc, make_ValueType(ValueKind::flag_, width),  desc)
     ,   m_flags(flags)
     {
@@ -269,16 +269,16 @@ inline std::shared_ptr<Reg> make_reg_k(const std::string & name, ValueType value
 inline std::shared_ptr<RegVec> make_reg_vec_k(const std::string & name, ValueType value_type, const std::string & desc) {
     return make_reg_vec(name, Acc::k, value_type, desc);
 }
-inline std::shared_ptr<RegFlags> make_reg_flags(const std::string& name, Acc acc, uint width, std::vector<std::shared_ptr<RFlag>> flags, const std::string & desc) {
+inline std::shared_ptr<RegFlags> make_reg_flags(const std::string& name, Acc acc, uint32_t width, std::vector<std::shared_ptr<RFlag>> flags, const std::string & desc) {
     return std::make_shared<RegFlags>(name, acc, width, flags, desc);
 }
-inline std::shared_ptr<RegFlags> make_reg_flags_k(const std::string& name, uint width, std::vector<std::shared_ptr<RFlag>> flags, const std::string & desc) {
+inline std::shared_ptr<RegFlags> make_reg_flags_k(const std::string& name, uint32_t width, std::vector<std::shared_ptr<RFlag>> flags, const std::string & desc) {
     return make_reg_flags(name, Acc::k, width, flags, desc);
 }
-inline std::shared_ptr<RFlag> make_r_flag(const std::string & name, uint bit, Ass ass, const std::string & desc) {
+inline std::shared_ptr<RFlag> make_r_flag(const std::string & name, uint32_t bit, Ass ass, const std::string & desc) {
     return std::make_shared<RFlag>(name, bit, ass,  desc);
 }
-inline std::shared_ptr<RFlagVec> make_r_flag_vec(const std::string & name, uint bit, Ass ass, const std::string & desc, addr_t vec_len) {
+inline std::shared_ptr<RFlagVec> make_r_flag_vec(const std::string & name, uint32_t bit, Ass ass, const std::string & desc, addr_t vec_len) {
     return std::make_shared<RFlagVec>(name, bit, ass,  desc, vec_len);
 }
 

@@ -561,7 +561,7 @@ Ass RegVec::ass_check_cached(Ass log_ass, std::vector<std::shared_ptr<RFlag>> * 
     return value ? m_ass : Ass::passed;
 }
 
-RFlag::RFlag(const std::string & name, uint bit, Ass ass, const std::string & desc)
+RFlag::RFlag(const std::string & name, uint32_t bit, Ass ass, const std::string & desc)
 :   m_bit(bit)
 ,   m_ass(ass)
 ,   m_name(name)
@@ -574,15 +574,15 @@ void RFlag::update_reg_cache() { m_reg_flags->update_cache(); }
 void RFlag::write_reg_cache() { m_reg_flags->write_cache();}
 
 
-bool RFlag::read_bool_at_cached(uint bit) const {
+bool RFlag::read_bool_at_cached(uint32_t bit) const {
     std::span<const std::byte> data = m_reg_flags->cache_data();
-    uint byte = bit / 8;
+    uint32_t byte = bit / 8;
     bit  = bit % 8;
     return (static_cast<uint8_t>(data[byte]) & (1<<bit)) != 0;
 }
-void RFlag::write_bool_at_cache(uint bit, bool v) {
+void RFlag::write_bool_at_cache(uint32_t bit, bool v) {
     std::span<std::byte> data = m_reg_flags->cache_data();
-    uint byte = bit / 8;
+    uint32_t byte = bit / 8;
     uint8_t b  = bit % 8;
     // uint8_t b = v<<bit;
     // uint8_t mask = 1<<bit;

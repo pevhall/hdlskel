@@ -1,3 +1,4 @@
+from skmap import code_generator_all_hpp
 from . import regio
 from . import head
 from . import reg
@@ -5,10 +6,10 @@ from . import module
 from . import basic_types
 from . import external_mem
 from . import reg_map_table
-from . import code_generator_vhdl
 from . import code_generator_py
+from . import code_generator_vhdl
 from . import code_generator_cpp
-from . import recipe_functions
+from . import code_generator_all_hpp
 
 Head   = head.Head
 Regio  = regio.Regio
@@ -36,4 +37,5 @@ print_table_reg_list = reg_map_table.print_table_reg_list
 
 generate_py_module   = code_generator_py.generate_py_module
 generate_vhdl_module = code_generator_vhdl.generate_vhdl_module
-generate_cpp_module = code_generator_cpp.generate_cpp_module
+generate_cpp_module  = code_generator_cpp.generate_cpp_module
+generate_all_hpp     = code_generator_all_hpp.generate_all_hpp

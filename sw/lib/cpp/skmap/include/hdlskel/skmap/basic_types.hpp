@@ -97,10 +97,9 @@ std::string str(Ass v);
 std::string str(ValueKind v);
 using uint_t = uint64_t;
 using sint_t = int64_t;
-using uint = uint32_t;
 class ValueType {
 public:
-    ValueType(ValueKind kind, uint width, std::optional<uint> vec_len = {})
+    ValueType(ValueKind kind, uint32_t width, std::optional<uint32_t> vec_len = {})
         : m_kind(kind)
         , m_width(width)
         , m_vec_len(vec_len)
@@ -114,7 +113,7 @@ public:
     addr_t sw_elem_offset() const { return m_sw_elem_offset; }
     ValueKind kind() const { return m_kind; }
     std::string str() const;
-    std::optional<uint> vec_len() const { return m_vec_len; }
+    std::optional<uint32_t> vec_len() const { return m_vec_len; }
     bool is_vec() const { return m_vec_len.has_value(); }
     addr_t size() const {
         if(m_vec_len) { return sw_elem_offset()* (*m_vec_len); }
@@ -123,11 +122,11 @@ public:
     void _sw_elem_offset(addr_t size) { m_sw_elem_offset = size; }
 private:
     ValueKind m_kind;
-    uint m_width;
-    std::optional<uint> m_vec_len;
+    uint32_t m_width;
+    std::optional<uint32_t> m_vec_len;
     addr_t m_sw_elem_offset;
 };
-inline ValueType make_ValueType(ValueKind kind, uint width, std::optional<uint> vec_len = {}) {
+inline ValueType make_ValueType(ValueKind kind, uint32_t width, std::optional<uint32_t> vec_len = {}) {
     ValueType value_type(kind, width, vec_len);
     return value_type;
 }
