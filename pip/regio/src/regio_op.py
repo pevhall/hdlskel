@@ -9,7 +9,7 @@ import regio.cli_utils
 
  
 
-async def single_op(args) -> bytes:
+async def single_op(args, rd : bool) -> Optional[bytes]:
 
     rio : regio.Regio = await regio.cli_utils.make_regio_from_args(args)
     addr = args.addr;
@@ -22,6 +22,9 @@ async def single_op(args) -> bytes:
     if size is None:
         assert wr_data is not None
         size = len(wr_data)
+    if not rd:
+        return None
+
 
     rd_data = await rio.read(addr, size)
 
@@ -114,11 +117,17 @@ if __name__ == '__main__':
     def main():
         args = parse_args()
 
-        rd_bytes = asyncio.run( single_op(args) )
+        print_rd = args.size <= 4096
+        rd = print_rd or args.rd_file is not None
+        rd_bytes = asyncio.run( single_op(args, rd) )
+
         if args.rd_file is not None:
+            assert rd_bytes is not None
             with open(args.rd_file, "wb") as rd_f:
                 rd_f.write(rd_bytes)
-        print(f'rd_bytes = {[hex(a) for a in rd_bytes]}')
+        if print_rd:
+            assert rd_bytes is not None
+            print(f'rd_bytes = {[hex(a) for a in rd_bytes]}')
 
     main()
 

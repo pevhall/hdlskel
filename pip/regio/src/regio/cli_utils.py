@@ -35,6 +35,12 @@ def add_parser_args(parser : argparse.ArgumentParser):
         action="store_true",
         help="If true, print all regio operations"
     )
+    parser.add_argument(
+        "--mtu",
+        type=int,
+        default=None,
+        help="Maximum Transmission Unit, used to split operation"
+    )
 
 async def make_regio_from_args(args) -> Regio:
     regio_options = RegioOptions()
@@ -45,6 +51,7 @@ async def make_regio_from_args(args) -> Regio:
         regio_options.tcp_host = args.host
         if args.port is not None:
             regio_options.tcp_port = args.port
+    regio_options.mtu = args.mtu
 
     regio_options.check()
     rio = await regio_options.make_regio()

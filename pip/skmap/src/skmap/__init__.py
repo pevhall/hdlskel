@@ -10,6 +10,7 @@ from . import code_generator_py
 from . import code_generator_vhdl
 from . import code_generator_cpp
 from . import code_generator_all_hpp
+from . import recipe_functions
 
 Head   = head.Head
 Regio  = regio.Regio

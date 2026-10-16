@@ -11,9 +11,8 @@ add_library(hdlskel_skmap_autogen STATIC
 
 # Public include directories needed by users of this library
 target_include_directories(hdlskel_skmap_autogen PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../skmap>
+    # $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../skmap>
 )
 
 # Dependencies: skmap, regio and tabulate (just like the Meson file)

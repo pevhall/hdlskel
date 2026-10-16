@@ -158,7 +158,6 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
             s += f'    @property\n'
             s += f'    def {reg.name}_min(self) -> int:\n'
             s += f'        return {to_python_source(reg.min)}\n\n'
-        
 
     match reg.acc:
         case Acc.k:
@@ -323,7 +322,7 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
     # """
 
 def all_reg_value_functions_str(reg : RecipeReg) -> str:
-    if reg.t.kind == ValueKind.flag:
+    if reg.flags is not None:
         return all_reg_value_functions_str_is_flag(reg)
     else:
         return all_reg_value_functions_str_not_flag(reg)
@@ -424,8 +423,7 @@ class {recipe.sw_module}(skmap.Module):
 """)
         for kv in recipe.k:
             name_k = name_to_reg_k(kv.name)
-            if kv.t.kind == ValueKind.flag:
-                assert kv.flags is not None
+            if kv.flags is not None:
                 for f in kv.flags:
                     vec_len_param = '' if f.vec_len is None else f' vec_len={to_python_source(f.vec_len)},'
                     bit = to_python_source(f.bit)
