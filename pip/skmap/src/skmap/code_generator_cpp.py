@@ -79,6 +79,8 @@ def value_ret_type_str(t : Union[ValueType, ValueTypeUnresolved], ignore_vec = F
         case ValueKind.bits:
             rt = 'uint_t'
         case ValueKind.flag:
+            if t.elem_w == 1:
+                return 'bool'
             rt = 'uint_t'
         case _:
             assert False
@@ -123,7 +125,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     func_read        = read_value_function_str (reg.t, cached=False, sw=SW)
     func_write_cached= write_value_function_str(reg.t, cached=True,  sw=SW)
     func_write       = write_value_function_str(reg.t, cached=False, sw=SW)
-    kind_f_s = _value_kind_function_str(reg.t.kind)
+    kind_f_s = _value_kind_function_str(reg.t)
     func_read_idx_cached = f'read_idx_{kind_f_s}_cached'
     func_read_idx = f'read_idx_{kind_f_s}'
     func_write_idx_cached = f'write_idx_{kind_f_s}_cached'

@@ -4,7 +4,9 @@ hdlskel_regio_lib = library(
   'regio',
   [
     'src/regio.cpp',
+    'src/cache.cpp',
     'include/hdlskel/regio/regio.hpp',
+    'include/hdlskel/regio/cache.hpp',
   ],
   include_directories: hdlskel_regio_inc,
   install: false

@@ -3,7 +3,9 @@
 # ----------------------------------------------------------------------
 add_library(hdlskel_regio STATIC
     src/regio.cpp
+    src/cache.cpp
     include/hdlskel/regio/regio.hpp
+    include/hdlskel/regio/cache.hpp
 )
 
 target_include_directories(hdlskel_regio PUBLIC

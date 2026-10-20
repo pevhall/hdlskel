@@ -1,6 +1,6 @@
 #include "hdlskel/skmap/module.hpp"
+#include "hdlskel/regio/tcp/regio_cli_utils.hpp"
 #include "hdlskel/regio/tcp/regio_tcp.hpp"
-#include "hdlskel/regio/tcp/regio_tcp_client.hpp"
 // Including the generated modules registers them with the ModuleFactory
 #include "hdlskel/skmap/autogen_test/recipe_test_bench_module.hpp"
 #include "hdlskel/skmap/autogen_test/test_skmap_tree_module.hpp"
@@ -9,9 +9,9 @@
 
 #include <iostream>
 #include <memory>
+#include <string>
 #include <vector>
 
-using hdlskel::regio::tcp::RegioTcpClient;
 using hdlskel::skmap::Module;
 using hdlskel::skmap::RegOrFlag;
 using hdlskel::skmap::Ass;
@@ -24,49 +24,60 @@ static bool modules_registered =
     hdlskel::skmap::autogen::TestSkmapTreeModule::registered;
 
 // Mirrors parse_args in pip/skmap/src/skmap/cli_utils.py
+int skmap_main(int argc, char** argv);
+
 int main(int argc, char** argv) {
+    try {
+        return skmap_main(argc, argv);
+    } catch (const std::exception& e) {
+        // e.g. an unknown module id, a bad cache file or an unmapped address.
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+}
+
+int skmap_main(int argc, char** argv) {
     CLI::App app{
-        "Skmap Utility",
-        "Interact with skmap regio server or cached skmap files"
+        "Interact with skmap regio server or cached skmap files",
+        "Skmap Utility"
     };
 
-    std::string host = "127.0.0.1";
-    app.add_option("-i,--host", host, "Connect to SKMap TCP Regio server")->capture_default_str();
-
-    uint16_t port = hdlskel::regio::tcp::PORT_DEFAULT;
-    app.add_option("-p,--port", port, "SKMap TCP Regio server's port number")->capture_default_str();
+    // --- regio.cli_utils.add_parser_args (-i, -f, -p, --mtu, --debug-print-regio) ---
+    hdlskel::regio::cli::RegioArgs regio_args;
+    hdlskel::regio::cli::add_parser_args(app, regio_args);
 
     hdlskel::skmap::addr_t addr = 0;
     app.add_option("-a,--addr", addr, "Regio Address")
         ->capture_default_str()
-        ->transform([](std::string s) { return std::to_string(std::stoul(s, nullptr, 0)); }); // allow hex
+        ->transform([](std::string s) { return std::to_string(hdlskel::regio::cli::auto_int(s)); });
 
     bool map = false;
     bool tree = false;
     bool asserts = false;
-    bool allow_unknowen = false;
+    bool allow_unkowen = false;
     bool clear = false;
-    bool debug_print_regio = false;
     app.add_flag("-m,--map", map, "Print SKMap reg map");
     app.add_flag("-t,--tree", tree, "Traverse tree");
     app.add_flag("-s,--asserts", asserts, "print asserts");
-    app.add_flag("-x,--allow-unknowen", allow_unknowen, "allow unknown modules");
+    // Python spells the long option --allow-unknowen, accept both.
+    app.add_flag("-x,--allow-unkowen,--allow-unknowen", allow_unkowen,
+                 "allow unknown modules (returns a default unknown module)");
     app.add_flag("-c,--clear", clear, "Clear all `read clear` registers");
-    app.add_flag("--debug-print-regio", debug_print_regio, "Debug: Print regio operations");
+
+    std::string write;
+    app.add_option("-w,--write", write,
+                   "If specified, write to cache file");
+
+    // -v, -vv, -vvv
+    int verbose = 0;
+    app.add_flag("-v", verbose, "Increase logging verbosity (repeat up to -vv)");
 
     CLI11_PARSE(app, argc, argv);
 
-    auto regio = std::make_shared<RegioTcpClient>(host, port);
-
-    if(debug_print_regio) {
-        std::shared_ptr<std::ostream> cout_ptr(&std::cout, [](std::ostream*) {
-            // Do not delete std::cout!
-        });
-        regio->set_log(cout_ptr);
-    }
+    auto regio = hdlskel::regio::cli::make_regio_from_args(regio_args);
 
     // --- Mirrors main in pip/skmap/src/skmap/cli_utils.py ---
-    auto module = Module::make_module(regio, addr, allow_unknowen);
+    auto module = Module::make_module(regio, addr, allow_unkowen);
     if (tree) {
         module->read_all_tree(/*read_external_mem_cache=*/false, /*skip_self=*/true);
     }
@@ -97,6 +108,10 @@ int main(int argc, char** argv) {
             std::cout << "Clearing all RC regs in module\n";
             module->clear_reg_rc();
         }
+    }
+
+    if (!write.empty()) {
+        module->write_cache_tree_to_file(write);
     }
 
     return 0;

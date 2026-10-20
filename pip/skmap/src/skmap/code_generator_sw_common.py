@@ -59,7 +59,8 @@ class Sw(Enum):
 # def value_ret_type_str(t : Union[ValueType, ValueTypeUnresolved]):
 #     assert(False)
 
-def _value_kind_function_str(k : ValueKind) -> str:
+def _value_kind_function_str(t : Union[ValueType, ValueTypeUnresolved]) -> str:
+    k = t.kind
     match k:
         case ValueKind.uint:
             return 'uint'
@@ -68,7 +69,10 @@ def _value_kind_function_str(k : ValueKind) -> str:
         case ValueKind.bits:
             return 'uint'
         case ValueKind.flag:
-            return 'uint'
+            if t.elem_w == 1:
+                return 'bool'
+            else:
+                return 'uint'
         case _:
             assert False
 
@@ -86,7 +90,7 @@ def _value_type_function_str(t : Union[ValueType, ValueTypeUnresolved], sw : Sw)
                 case(Sw.py ): f += 'list'
                 case(Sw.cpp): f += 'vec'
             f += '_'
-        f += _value_kind_function_str(t.kind)
+        f += _value_kind_function_str(t)
     return f
 
 def read_value_function_str(t : Union[ValueType, ValueTypeUnresolved], cached : bool, sw:Sw) -> str:

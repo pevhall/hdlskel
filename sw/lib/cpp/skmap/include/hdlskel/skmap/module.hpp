@@ -11,6 +11,10 @@
 #include <map>
 
 
+namespace hdlskel::regio {
+class RegioCache;
+}
+
 namespace hdlskel::skmap {
 
 class Module;
@@ -101,8 +105,7 @@ public:
         return k[0];
     }
     // Recursively create all modules in the tree.
-    void make_tree();
-    // Read the var region (and optionally external mem caches) of this module.
+    void make_tree();    // Read the var region (and optionally external mem caches) of this module.
     void read_all(bool read_external_mem_cache, bool skip_self = false);
     // read_all of this module and all its kids (recursively).
     void read_all_tree(bool read_external_mem_cache, bool skip_self = false);
@@ -123,11 +126,24 @@ public:
     std::string info_line_str() const;
     void print_tree_cached() const;
 
+    // --- Cache file persistence (mirrors write_cache_tree_to_file in
+    // pip/skmap/src/skmap/module.py) ---
+    // Write this module's cache (and all its kids) to a regio cache file.
+    void write_cache_tree_to_file(const std::string & path);
+
+    // When true, modules that cannot be looked up in the factory are created
+    // as ModuleUnknown instead of throwing. Propagated to all kids, so a
+    // whole tree of unregistered modules can be parsed.
+    bool allow_unkowen() const { return m_allow_unkowen; }
+
 private:
     // Print this module's mems and kids under `prefix` (box-drawing chars).
     void _print_tree_cached_walk(std::ostream & os, const std::string & prefix) const;
     // "<base_addr> <name> <head>" for another module (for tree lines).
     std::string info_line_of(const Module * m) const;
+    // Gather this module's (and, tree version, its kids') cache into r_cache.
+    void write_cache_to_regio_cache(regio::RegioCache & r_cache, bool include_external_mem = true);
+    void write_cache_to_regio_cache_tree(regio::RegioCache & r_cache, bool include_external_mem = true);
 
 private:
     void init_first(std::shared_ptr<regio::Regio> regio, addr_t base_addr, std::vector<std::byte> && cached);
@@ -149,6 +165,8 @@ protected: //would be nice to make these private
 
 public:
     std::span<std::byte> cache_data(addr_t addr_off, addr_t size);
+    // The whole module image (head + sub + kids + k + var) as cached.
+    const std::vector<std::byte> & cache() const { return m_cache; }
     void update_cache() ;
     void update_cache(addr_t addr_off, addr_t update_size);
     void write_cache() ;
@@ -176,6 +194,7 @@ private:
     std::vector<std::shared_ptr<ExternalMem>> m_arr_external_mem;
     std::vector<addr_t> m_kid_addrs;
     std::vector<std::shared_ptr<Module>> m_kids;
+    bool m_allow_unkowen = false;
 
     friend ModuleFactory;
 };

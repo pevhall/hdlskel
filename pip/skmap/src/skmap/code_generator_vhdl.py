@@ -107,7 +107,6 @@ class ValueTypeVhdl:
                 case ValueKindVhdl.boolean_vector: self.port_flattened = True
                 case _: assert(False)
 
-        print(f'{use_basic_port_types=} f{self.port_flattened=} {self.kind=} {self.vec_len=}')
         if(self.port_flattened):
             self.port_kind   = ValueKindVhdl.slv
             if self.vec_len is None:
@@ -138,8 +137,6 @@ class ValueTypeVhdl:
             kind     = self.kind
             vec_len  = self.vec_len
             elem_w   = self.elem_w
-
-        print(f'{is_port=} {kind=} {vec_len=}')
 
         elem_rng = f"({to_vhdl_source(elem_w)}-1 downto 0)"
         if vec_len is None:
@@ -351,7 +348,6 @@ def to_vhdl_source(node: ResolvableT) -> str:
         return f'({to_vhdl_source(node.lhs)} {op_to_vhdl_source(node.op)} {to_vhdl_source(node.rhs)})'
     if isinstance(node, ResolvableFunctionBuiltIn):
         args = ', '.join(to_vhdl_source(p) for p in node.params)
-        print(f'{args=}')
         return f'skmap_recipe_{node.func.name}({args})'
     if hasattr(node, 'name'):  # RecipeK / RecipeIpkg leaf
         return node.name #type:ignore
@@ -625,7 +621,6 @@ entity {recipe.fw_module} is
                     last_desc = f.desc
             else:
                 vhdl_t = kv.t.vhdl_type_str(is_port=True)
-                print(f'{kv.name=} {vhdl_t=} {kv.t.port_vec_len=} {kv.t.port_flattened=}')
                 vhdl_f.write(f'\n    {kv.name} : {vhdl_t}')
             if ii != len(recipe_k_fw)-1: vhdl_f.write(";")
             last_desc = kv.desc

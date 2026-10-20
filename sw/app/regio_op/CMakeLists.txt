@@ -1,6 +1,5 @@
-
 # ----------------------------------------------------------------------
-# executable: hdlskel_regio_tcp_op
+# executable: regio_op (C++ mirror of pip/regio/src/regio_op.py)
 # ----------------------------------------------------------------------
 add_executable(hdlskel_regio_tcp_op
     main.cpp

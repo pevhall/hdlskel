@@ -44,6 +44,11 @@ public:
     void write(addr_t addr, const std::vector<uint8_t> & data);
     std::vector<uint8_t> read(addr_t addr, addr_t size);
 
+    // True once the cache has been filled from the device. Mirrors
+    // ExternalMemCached.cache_loaded in the python library, which is always
+    // true because the whole memory is cached on construction.
+    bool cache_loaded() const { return true; }
+
 private:
     void check_size(addr_t addr, addr_t size) const;
 

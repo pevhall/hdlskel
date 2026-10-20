@@ -93,7 +93,10 @@ def value_ret_type_str(t : Union[ValueType, ValueTypeUnresolved]):
         case ValueKind.bits:
             rt = 'int'
         case ValueKind.flag:
-            rt = 'int'
+            if t.elem_w == 1:
+                rt = 'bool'
+            else:
+                rt = 'int'
         case _:
             assert False
     if t.is_vec:
@@ -114,7 +117,6 @@ def all_ipkg_value_parameters_str(ipkgv : RecipeIpkg) -> str:
             value = f"'{value}'"
     else:
         value = to_python_source(value)
-    print(f'{value=}')
 
     s = ''
     s += f'    @property\n'
@@ -130,7 +132,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     func_read         = read_value_function_str(reg.t,  cached=False, sw=Sw.py)
     func_write_cached = write_value_function_str(reg.t, cached=True,  sw=Sw.py)
     func_write        = write_value_function_str(reg.t, cached=False, sw=Sw.py)
-    kind_f_s = _value_kind_function_str(reg.t.kind)
+    kind_f_s = _value_kind_function_str(reg.t)
     func_read_idx_cached = f'read_idx_{kind_f_s}_cached'
     func_write_idx_cached = f'write_idx_{kind_f_s}_cached'
     func_read_idx = f'read_idx_{kind_f_s}'

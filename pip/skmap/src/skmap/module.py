@@ -27,11 +27,14 @@ class Module(ABC):
 
     
 
-    def __init__(self, regio : Regio, addr : int, module_head : Head, module_data : bytearray, maximum_external_mem_cache_size : int = 1024*1024):
+    def __init__(self, regio : Regio, addr : int, module_head : Head, module_data : bytearray, maximum_external_mem_cache_size : int = 1024*1024, allow_unknowen : bool = False):
         self._regio     = regio
         self._base_addr = addr
         self._head      = module_head
         self._cache     = module_data
+        # Propagated to all kids, so a whole tree of unregistered modules can
+        # be parsed (as ModuleUnkowen) instead of raising.
+        self._allow_unknowen = allow_unknowen
         self._kid_addrs= [0] * self._head.len_kids
         self._kids     : list[Optional['Module']] = [None] * self._head.len_kids
         self._arr_reg_k   : list[RegKTypes] = []
@@ -157,7 +160,7 @@ class Module(ABC):
 
     async def kid_at(self, idx : int) -> 'Module':
         if self._kids[idx] is None:
-            self._kids[idx] = await make_module(self._regio, self._kid_addrs[idx])
+            self._kids[idx] = await make_module(self._regio, self._kid_addrs[idx], allow_unknowen=self._allow_unknowen)
 
         kid = self._kids[idx]
         assert kid is not None
@@ -559,7 +562,7 @@ class ModuleFactory():
                         logging.debug("SKMAP patch version missmatch module has %s, expected %s",
                                       module_class.skmap_ver_str(), SKMAP_VER_STR)
                     logging.info('Creating module (head =  %s)', module_head)
-                    return module_class(regio, addr, module_head, module_data)
+                    return module_class(regio, addr, module_head, module_data, allow_unknowen=allow_unknowen)
                 else:
                     logging.error('Bad check sum for %s v%d, module_head.checksum =  %s, module_class.checksum = %s', module_class.name(), module_class.version(), hex(module_head.checksum), hex(module_class.checksum()))
         else:
@@ -567,7 +570,7 @@ class ModuleFactory():
 
         if allow_unknowen:
             logging.warning("Return Unkowen module - see previouse warnings")
-            return ModuleUnkowen(regio, addr, module_head, module_data)
+            return ModuleUnkowen(regio, addr, module_head, module_data, allow_unknowen=allow_unknowen)
         else:
             raise Exception("Unkowen modules not allowed, raising error, see previouse errors")
 

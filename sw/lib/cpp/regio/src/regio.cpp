@@ -1,9 +1,6 @@
-
-
-
-
 #include "hdlskel/regio/regio.hpp"
 
+#include <algorithm>
 #include <iomanip>   // for std::hex, std::setw, std::setfill
 namespace {
 
@@ -29,16 +26,41 @@ namespace hdlskel::regio {
 
 void Regio::write(size_t addr, std::span<const std::byte> data) {
 
-    if(m_log) {
-        append_op_str(*m_log, true, addr, data);
+    if (m_mtu.has_value() && data.size() > *m_mtu) {
+        const size_t mtu = *m_mtu;
+        for (size_t offset = 0; offset < data.size(); offset += mtu) {
+            auto chunk = data.subspan(offset, std::min(mtu, data.size() - offset));
+            if(m_log) {
+                append_op_str(*m_log, true, addr + offset, chunk);
+            }
+            if (!m_error_on_write) {
+                dev_write(addr + offset, chunk);
+            }
+        }
+    } else {
+        if(m_log) {
+            append_op_str(*m_log, true, addr, data);
+        }
+        if (!m_error_on_write) {
+            dev_write(addr, data);
+        }
     }
-    dev_write(addr, data);
 }
 void Regio::read(size_t addr, std::span<std::byte> data) {
-    dev_read(addr, data);
-    if(m_log) {
-
-        append_op_str(*m_log, false, addr, data);
+    if (m_mtu.has_value() && data.size() > *m_mtu) {
+        const size_t mtu = *m_mtu;
+        for (size_t offset = 0; offset < data.size(); offset += mtu) {
+            auto chunk = data.subspan(offset, std::min(mtu, data.size() - offset));
+            dev_read(addr + offset, chunk);
+            if(m_log) {
+                append_op_str(*m_log, false, addr + offset, chunk);
+            }
+        }
+    } else {
+        dev_read(addr, data);
+        if(m_log) {
+            append_op_str(*m_log, false, addr, data);
+        }
     }
 }
 }

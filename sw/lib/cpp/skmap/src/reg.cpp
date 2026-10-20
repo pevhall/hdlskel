@@ -2,6 +2,7 @@
 #include "hdlskel/skmap/reg.hpp"
 #include "hdlskel/skmap/module.hpp"
 #include <cstring>
+#include <iomanip>
 // #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -218,6 +219,27 @@ Ass Reg::ass_check_cached(Ass log_ass, std::vector<std::shared_ptr<RFlag>> * log
     return value ? m_ass : Ass::passed;
 }
 
+// Mirrors Reg._str_num in pip/skmap/src/skmap/reg.py:
+//   base  2 -> 0b<zero padded to width bits>
+//   base 10 -> plain decimal
+//   base 16 -> 0x<zero padded to ceil(width/4) upper case digits>
+std::string str_num(sint_t value, addr_t width, int base) {
+    std::ostringstream oss;
+    uint64_t u = static_cast<uint64_t>(value);
+    if (base == 2) {
+        oss << "0b";
+        for (addr_t bit = width; bit > 0; bit--) {
+            oss << ((u >> (bit - 1)) & 1);
+        }
+    } else if (base == 16) {
+        oss << "0x" << std::uppercase << std::hex << std::setfill('0')
+            << std::setw(static_cast<int>((width + 3) / 4)) << u;
+    } else {
+        oss << value;
+    }
+    return oss.str();
+}
+
 std::string Reg::str_value_cached() const {
     // Mirrors Reg.read_rich_str_cached in pip/skmap/src/skmap/reg.py (minus colour):
     //   [ass: ][(min <= v <= max) ]value
@@ -248,7 +270,14 @@ std::string Reg::str_value_cached() const {
             break;
         }
         case ValueKind::flag_: {
-            value_str = (read_uint_cached() != 0) ? "true" : "false";
+            // A single bit flag reads as a bool, a wider one as binary (like py).
+            if (m_value_type.elem_width() <= 1) {
+                value_str = (read_uint_cached() != 0) ? "true" : "false";
+            } else {
+                value_int = static_cast<sint_t>(read_uint_cached());
+                have_int = true;
+                base = 2;
+            }
             break;
         };
     }
@@ -263,9 +292,9 @@ std::string Reg::str_value_cached() const {
         if (limit_ass > ass) { ass = limit_ass; }
         // (min <= v <= max)
         ss << "(";
-        if (m_min.has_value()) { ss << *m_min << " <= "; }
+        if (m_min.has_value()) { ss << str_num(*m_min, m_value_type.elem_width(), base) << " <= "; }
         ss << "v";
-        if (m_max.has_value()) { ss << " <= " << *m_max; }
+        if (m_max.has_value()) { ss << " <= " << str_num(*m_max, m_value_type.elem_width(), base); }
         ss << ") ";
     }
 
@@ -273,11 +302,7 @@ std::string Reg::str_value_cached() const {
         ss << value_str;
     } else {
         assert(have_int);
-        if (base == 16) {
-            ss << "0x" << std::hex << value_int;
-        } else {
-            ss << value_int;
-        }
+        ss << str_num(value_int, m_value_type.elem_width(), base);
     }
     return ss.str();
 }
@@ -484,21 +509,23 @@ std::string RegVec::str_value_cached() const {
             else { if (v < value_min) value_min = v; if (v > value_max) value_max = v; }
         }
         (void)value_min; (void)value_max;
+        int base = (m_value_type.kind() == ValueKind::bits_) ? 16 : 10;
         ss << "(";
-        if (m_min.has_value()) { ss << *m_min << " <= "; }
+        if (m_min.has_value()) { ss << str_num(*m_min, m_value_type.elem_width(), base) << " <= "; }
         ss << "v";
-        if (m_max.has_value()) { ss << " <= " << *m_max; }
+        if (m_max.has_value()) { ss << " <= " << str_num(*m_max, m_value_type.elem_width(), base); }
         ss << ") ";
     }
 
     int base = 10;
+    if (m_value_type.kind() == ValueKind::bits_) { base = 16; }
     ss << "[ ";
     switch(m_value_type.kind()) {
         case ValueKind::uint_: {
             const auto vec = read_vec_uint_cached();
             for (size_t ii = 0; ii < vec.size(); ii++) {
                 if (ii) { ss << ", "; }
-                ss << vec[ii];
+                ss << str_num(static_cast<sint_t>(vec[ii]), m_value_type.elem_width(), base);
             }
             break;
         }
@@ -506,7 +533,7 @@ std::string RegVec::str_value_cached() const {
             const auto vec = read_vec_sint_cached();
             for (size_t ii = 0; ii < vec.size(); ii++) {
                 if (ii) { ss << ", "; }
-                ss << vec[ii];
+                ss << str_num(vec[ii], m_value_type.elem_width(), base);
             }
             break;
         }
@@ -514,7 +541,7 @@ std::string RegVec::str_value_cached() const {
             const auto vec = read_vec_uint_cached();
             for (size_t ii = 0; ii < vec.size(); ii++) {
                 if (ii) { ss << ", "; }
-                ss << "0x" << std::hex << vec[ii];
+                ss << str_num(static_cast<sint_t>(vec[ii]), m_value_type.elem_width(), base);
             }
             break;
         }
@@ -530,7 +557,6 @@ std::string RegVec::str_value_cached() const {
             ss << __FILE__ << ":" << __LINE__ << ": ERROR";
         }
     }
-    (void)base;
     ss << " ]";
     return ss.str();
 }
@@ -655,8 +681,10 @@ std::string RFlagVec::str_value_cached() const {
         ::operator<<(oss, m_ass) << ": ";
     }
     oss << "0b";
-    for( bool v : read_vec_bool_cached() ) {
-        oss << static_cast<int>(v);
+    // Most significant bit first (python iterates lv[::-1]).
+    const auto vec = read_vec_bool_cached();
+    for (size_t ii = vec.size(); ii > 0; ii--) {
+        oss << static_cast<int>(vec[ii - 1]);
     }
     return oss.str();
 }

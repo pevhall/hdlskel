@@ -2,6 +2,7 @@
 #include "hdlskel/skmap/head.hpp"
 #include "hdlskel/skmap/reg.hpp"
 #include "hdlskel/skmap/module.hpp"
+#include "hdlskel/regio/cache.hpp"
 #include <iomanip>
 #include <iostream>
 
@@ -179,7 +180,7 @@ void Module::print_reg_map() {
             mem->name(),
             str(mem->acc()),
             type_str,
-            "(Mem size: " + std::to_string(mem->size()) + " B)",
+            "(Mem size:" + std::to_string(mem->size()) + " B)",
             mem->desc()
         });
     }
@@ -242,7 +243,9 @@ void print_table_reg_list(const std::vector<RegOrFlag> & list, const std::string
 std::shared_ptr<Module> Module::kid_at(size_t ii) {
     assert(ii < m_kid_addrs.size());
     if (m_kids[ii] == nullptr) {
-        m_kids[ii] = make_module(m_regio, m_kid_addrs[ii]);
+        // Propagate allow_unkowen so a whole tree of unregistered modules can
+        // be parsed (as ModuleUnknown) instead of throwing on the first kid.
+        m_kids[ii] = make_module(m_regio, m_kid_addrs[ii], m_allow_unkowen);
     }
     return m_kids[ii];
 }
@@ -401,6 +404,7 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
     regio->read(base_addr + head_size, data_span.subspan(head_size, data.size()-head_size));
 
     auto module = ModuleFactory::get_module(head.id, head.version(), allow_unkowen);
+    module->m_allow_unkowen = allow_unkowen;
     module->m_byte_align = 1;
     module->m_byte_idx = head_size;
 
@@ -489,6 +493,43 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
 }
 
 // std::shared_ptr<Module> make_Module(std::shared_ptr<regio::Regio> regio, size_t base_addr);
+
+// --- Cache file persistence ---
+
+void Module::write_cache_to_regio_cache(regio::RegioCache & r_cache, bool include_external_mem) {
+    r_cache.cache_write(m_base_addr, std::span<const std::byte>(m_cache));
+
+    if (include_external_mem) {
+        for (auto & mem : m_arr_external_mem) {
+            if (!mem->cache_loaded()) {
+                std::cerr << "WARNING: " << name() << " at " << m_base_addr
+                          << ", mem interface has not yet been read;\n"
+                          << "   needs to be read first before extracting the cache.\n";
+                continue;
+            }
+            r_cache.cache_write(mem->base_addr(), mem->read_cached(0, mem->size()));
+        }
+    }
+}
+
+void Module::write_cache_to_regio_cache_tree(regio::RegioCache & r_cache, bool include_external_mem) {
+    write_cache_to_regio_cache(r_cache, include_external_mem);
+
+    for (auto & k : m_kids) {
+        if (k == nullptr) {
+            std::cerr << "WARNING: " << name() << " at " << m_base_addr
+                      << ", kid not yet initalised wil not write to cache\n";
+            continue;
+        }
+        k->write_cache_to_regio_cache_tree(r_cache);
+    }
+}
+
+void Module::write_cache_tree_to_file(const std::string & path) {
+    regio::RegioCache r_cache;
+    write_cache_to_regio_cache_tree(r_cache);
+    r_cache.save_to_file(path);
+}
 
 id_t ModuleUnknown::id() const {
     assert(false);
