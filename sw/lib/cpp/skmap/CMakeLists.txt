@@ -14,6 +14,7 @@ add_library(hdlskel_skmap STATIC
     include/hdlskel/skmap/module.hpp
     include/hdlskel/skmap/external_mem.hpp
     include/hdlskel/skmap/recipe_functions.hpp
+    include/hdlskel/skmap/version.hpp
 )
 
 target_include_directories(hdlskel_skmap PUBLIC

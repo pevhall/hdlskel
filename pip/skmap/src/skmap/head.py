@@ -18,6 +18,8 @@ SIZE_HEAD       : int = SIZE_HEAD_WORDS * SIZE_WORD
 SIZE_ID         : int = 8
 SIZE_CHECKSUM   : int = 2
 SYNC            : int = 0xD8
+VERSION_BITS    : int = 4
+FLAGS_BITS      : int = 4
 
 
 def get_id_str( id : bytes ):
@@ -32,6 +34,7 @@ class Head:
 
     id        : str
     version   : int
+    flags     : int
     checksum  : int
     len_kids  : int
     len_sub   : int
@@ -43,8 +46,13 @@ class Head:
         self.id        = get_id_str(data[0:SIZE_ID])
         ii = SIZE_ID;
         self.sync      = data[ii]; ii += 1
-        self.version   = data[ii]; ii += 1
-        # assert self.version < 16
+        # Low nibble is the version, high nibble is reserved flags
+        # (must be zero currently) - mirrors Head::version()/flags() in
+        # sw/lib/cpp/skmap/include/hdlskel/skmap/head.hpp
+        version_flags = data[ii]; ii += 1
+        self.version   = version_flags & ((1 << VERSION_BITS) - 1)
+        self.flags     = version_flags >> VERSION_BITS
+        assert self.flags == 0, "Head flags are reserved and must be zero"
         self.checksum  = int.from_bytes(data[ii:ii+SIZE_CHECKSUM], byteorder='little')
         ii += SIZE_CHECKSUM
         self.len_kids  = data[ii]; ii += 1

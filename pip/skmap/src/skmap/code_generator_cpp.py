@@ -326,10 +326,10 @@ public:
     version_t   version()  const override {{ return {recipe.sw_module}::class_version; }}
     checksum_t  checksum() const override {{ return {recipe.sw_module}::class_checksum; }}
 
-    static int  skmap_ver_major() {{ return {SKMAP_VER_MAJOR}; }}
-    static int  skmap_ver_minor() {{ return {SKMAP_VER_MINOR}; }}
-    static int  skmap_ver_patch() {{ return {SKMAP_VER_PATCH}; }}
-    static std::string skmap_ver_str() {{ return "{SKMAP_VER_STR}"; }}
+    int  skmap_ver_major() const override {{ return {SKMAP_VER_MAJOR}; }}
+    int  skmap_ver_minor() const override {{ return {SKMAP_VER_MINOR}; }}
+    int  skmap_ver_patch() const override {{ return {SKMAP_VER_PATCH}; }}
+    std::string skmap_ver_str() const override {{ return "{SKMAP_VER_STR}"; }}
 
     static bool registered;
 """)

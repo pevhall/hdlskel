@@ -38,9 +38,11 @@ struct __attribute__((packed)) Head {
         static uint8_t VERSION_MASK = (1<<VERSION_BITS)-1;
         return _version_flags & (VERSION_MASK);
     }
+    // Upper nibble: reserved for future use, must currently be zero
+    // (asserted in Module::make_module).
     uint8_t flags() const {
         static uint8_t FLAGS_MASK = (1<<FLAGS_BITS)-1;
-        return (_version_flags<<VERSION_BITS) & (FLAGS_MASK);
+        return (_version_flags >> VERSION_BITS) & (FLAGS_MASK);
     }
     size_t module_len() const {
         return head_len 

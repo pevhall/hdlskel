@@ -14,6 +14,7 @@ hdlskel_skmap_lib = library(
   , './include/hdlskel/skmap/module.hpp'
   , './include/hdlskel/skmap/external_mem.hpp'
   , './include/hdlskel/skmap/recipe_functions.hpp'
+  , './include/hdlskel/skmap/version.hpp'
   ],
   include_directories: hdlskel_skmap_inc,
   # dependencies: [hdlskel_regio_dep],

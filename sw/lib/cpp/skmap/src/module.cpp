@@ -3,6 +3,7 @@
 #include "hdlskel/skmap/reg.hpp"
 #include "hdlskel/skmap/module.hpp"
 #include "hdlskel/regio/cache.hpp"
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
 
@@ -15,6 +16,19 @@
 namespace hdlskel::skmap {
 
 // std::shared_ptr<ModuleFactorv> ModuleFactory::instance = std::make_shared<ModuleFactory>();
+
+namespace {
+
+// id_t is fixed width and zero padded - trim the trailing nulls for messages.
+std::string id_to_str_trimmed(id_t id) {
+    std::string s = id_to_str(id);
+    while (not s.empty() and s.back() == '\0') {
+        s.pop_back();
+    }
+    return s;
+}
+
+}
 
 bool ModuleFactory::instance_register_module(std::shared_ptr<const Module> module){
     // std::cout << __FILE__ << ":" << __LINE__ << ": Registering module " << module->name() << "\n";
@@ -30,33 +44,62 @@ bool ModuleFactory::instance_register_module(std::shared_ptr<const Module> modul
     return true;
 }
 
-std::shared_ptr<Module> ModuleFactory::instance_get_module(id_t id, version_t version, bool allow_unkowen){
+// Mirrors ModuleFactory.make_module in pip/skmap/src/skmap/module.py:
+// the id+version lookup is only accepted when the head checksum matches the
+// registered module's checksum, and the skmap library version the module was
+// generated with is compared against this library's version. On any failure
+// fall back to ModuleUnknown (allow_unkowen) or throw.
+std::shared_ptr<Module> ModuleFactory::instance_get_module(id_t id, version_t version, checksum_t checksum, bool allow_unkowen){
     static ModuleUnknown module_unkowen;
-    // std::cout << __FILE__ << ":" << __LINE__ << ": m_lookup = { ";
-    // for(const auto & k : m_lookup) { std::cout <<id_to_str(k.first)<<", "; }
-    // std::cout <<"}"<< std::endl;
 
-    if (not m_lookup.contains(id) ) {
-        if (allow_unkowen) {
-            std::cerr << "Could not find registered module with id. Return ModuleUnknown\n";
-            return module_unkowen.make_empty();
+    std::shared_ptr<const Module> registered;
+
+    auto it_id = m_lookup.find(id);
+    if (it_id == m_lookup.end()) {
+        std::cerr << "ERROR: Cannot find module, unknown ID (\"" << id_to_str_trimmed(id) << "\")\n";
+    } else {
+        auto & lookup_version = it_id->second;
+        auto it_version = lookup_version.find(version);
+        if (it_version == lookup_version.end()) {
+            std::cerr << "ERROR: Cannot find module \"" << id_to_str_trimmed(id)
+                      << "\" with version " << +version << "\n";
         } else {
-            throw std::runtime_error("Could not find registered module with id "+id_to_str(id));
+            registered = it_version->second;
+            if (registered->checksum() != checksum) {
+                std::cerr << "ERROR: Bad check sum for " << registered->name()
+                          << " v" << +version
+                          << ", module_head.checksum = 0x" << std::hex << +checksum
+                          << ", module_class.checksum = 0x" << +registered->checksum()
+                          << std::dec << "\n";
+                registered.reset();
+            }
         }
     }
-    auto & lookup_version = m_lookup[id];
-    if (not lookup_version.contains(version) ) {
-        std::cerr << "Could not find register module with  version "<<+version<<"\n";
-        if (allow_unkowen) {
-            std::cerr << "Could not find registered module with version. Return ModuleUnknown\n";
-            return module_unkowen.make_empty();
-        } else {
-            throw std::runtime_error("Could not find registered module with version");
+
+    if (registered) {
+        // SkMap library version checks (severity mirrors python).
+        if (registered->skmap_ver_major() != ver_major) {
+            std::cerr << "ERROR: SKMAP major version missmatch module has "
+                      << registered->skmap_ver_str() << ", expected " << ver_str << "\n";
         }
+        if (registered->skmap_ver_minor() > ver_minor) {
+            std::cerr << "ERROR: SKMAP minor version missmatch module has "
+                      << registered->skmap_ver_str() << ", expected " << ver_str << "\n";
+        } else if (registered->skmap_ver_minor() != ver_minor) {
+            std::cerr << "INFO: SKMAP minor version missmatch module has "
+                      << registered->skmap_ver_str() << ", expected " << ver_str << "\n";
+        }
+        if (registered->skmap_ver_patch() != ver_patch) {
+            // Logged at debug level in python - keep the console quiet here.
+        }
+        return registered->make_empty();
     }
-    return lookup_version[version]->make_empty();
 
-
+    if (allow_unkowen) {
+        std::cerr << "WARNING: Return unknown module - see previous errors\n";
+        return module_unkowen.make_empty();
+    }
+    throw std::runtime_error("Unknown modules not allowed, see previous errors");
 }
 
 
@@ -105,7 +148,15 @@ void Module::update_cache() {
 }
 
 void Module::update_cache(addr_t addr_off, addr_t update_size) {
-    addr_t size = align_byte(update_size);
+    // cache_only is handled centrally here (mirrors Module.read_bytes /
+    // use_cache in pip/skmap/src/skmap/module.py): the device is never
+    // touched in cache only mode.
+    if (m_cache_only) { return; }
+    // Transfer size is padded up to a multiple of the module byte alignment
+    // (mirrors Module._byte_align_size in python), clamped so the access
+    // never runs past the end of the cached module image.
+    addr_t size = std::min(ceil_multiple(update_size, m_byte_align),
+                           static_cast<addr_t>(m_cache.size() - addr_off));
     auto data = std::span(m_cache).subspan(addr_off, size);
     m_regio->read(m_base_addr + addr_off, data);
 }
@@ -116,7 +167,10 @@ void Module::write_cache() {
 }
 
 void Module::write_cache(addr_t addr_off, addr_t update_size) {
-    addr_t size = align_byte(update_size);
+    // see update_cache: cache_only and byte align padding are handled here
+    if (m_cache_only) { return; }
+    addr_t size = std::min(ceil_multiple(update_size, m_byte_align),
+                           static_cast<addr_t>(m_cache.size() - addr_off));
     auto data = std::span(m_cache).subspan(addr_off, size);
     m_regio->write(m_base_addr + addr_off, data);
 }
@@ -172,16 +226,20 @@ void Module::print_reg_map() {
     }
     for (const auto & mem : m_arr_external_mem) {
         std::string type_str;
+        std::string name_str = "(unnamed mem)";
+        std::string desc_str;
         if (mem->has_details()) {
             type_str = mem->value_type().str();
+            name_str = mem->name();
+            desc_str = mem->desc();
         }
         table.add_row({
             str_addr(mem->base_addr()),
-            mem->name(),
+            name_str,
             str(mem->acc()),
             type_str,
             "(Mem size:" + std::to_string(mem->size()) + " B)",
-            mem->desc()
+            desc_str
         });
     }
 
@@ -349,7 +407,8 @@ void Module::_print_tree_cached_walk(std::ostream & os, const std::string & pref
     std::vector<Entry> entries;
     for (const auto & mem : m_arr_external_mem) {
         Entry e;
-        e.text   = str_addr(mem->base_addr()) + " " + mem->name() + " " +
+        e.text   = str_addr(mem->base_addr()) + " " +
+                   (mem->has_details() ? mem->name() : std::string("(unnamed mem)")) + " " +
                    str(mem->acc()) + " " + std::to_string(mem->size()) + " B";
         e.is_kid = false;
         e.kid    = nullptr;
@@ -403,7 +462,7 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
     std::span<std::byte> data_span(data);
     regio->read(base_addr + head_size, data_span.subspan(head_size, data.size()-head_size));
 
-    auto module = ModuleFactory::get_module(head.id, head.version(), allow_unkowen);
+    auto module = ModuleFactory::get_module(head.id, head.version(), head.checksum, allow_unkowen);
     module->m_allow_unkowen = allow_unkowen;
     module->m_byte_align = 1;
     module->m_byte_idx = head_size;

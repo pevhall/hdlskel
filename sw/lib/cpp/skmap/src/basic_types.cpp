@@ -23,7 +23,6 @@ std::ostream& operator<<(std::ostream& os, hdlskel::skmap::Ass v) {
         case hdlskel::skmap::Ass::info    : return os << "info";
         case hdlskel::skmap::Ass::warn    : return os << "warn";
         case hdlskel::skmap::Ass::error   : return os << "error";
-        case hdlskel::skmap::Ass::crit    : return os << "crit";
         case hdlskel::skmap::Ass::fatal   : return os << "fatal";
     }
     return os << "<unknown Ass>";

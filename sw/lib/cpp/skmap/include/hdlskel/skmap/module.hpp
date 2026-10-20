@@ -29,15 +29,15 @@ public:
     static bool register_module(std::shared_ptr<const Module> module) {
         return get_instance()->instance_register_module(module);
     }
-    static std::shared_ptr<Module> get_module(id_t id, version_t version, bool allow_unkowen=false) {
-        return get_instance()->instance_get_module(id, version, allow_unkowen);
+    static std::shared_ptr<Module> get_module(id_t id, version_t version, checksum_t checksum, bool allow_unkowen=false) {
+        return get_instance()->instance_get_module(id, version, checksum, allow_unkowen);
     }
     ModuleFactory(const ModuleFactory &) = delete;
     void operator=(ModuleFactory const&)  = delete;
     ModuleFactory() {} //TODO: make private
 private:
     bool instance_register_module(std::shared_ptr<const Module> module);
-    std::shared_ptr<Module> instance_get_module(id_t id, version_t version, bool allow_unkowen);
+    std::shared_ptr<Module> instance_get_module(id_t id, version_t version, checksum_t checksum, bool allow_unkowen);
 
     std::map<id_t, std::map<version_t, std::shared_ptr<const Module>>> m_lookup;
 
@@ -51,6 +51,14 @@ public:
     virtual id_t        id()       const = 0;
     virtual version_t   version()  const = 0;
     virtual checksum_t  checksum() const = 0;
+
+    // SkMap library version this module was generated with. Mirrors the
+    // skmap_ver_* class methods of the python generated modules; the factory
+    // compares them against this library's version (ver_str in version.hpp).
+    virtual int skmap_ver_major() const { return ver_major; }
+    virtual int skmap_ver_minor() const { return ver_minor; }
+    virtual int skmap_ver_patch() const { return ver_patch; }
+    virtual std::string skmap_ver_str() const { return ver_str; }
 
     void print_reg_map();
 

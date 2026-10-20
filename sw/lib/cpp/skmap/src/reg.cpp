@@ -9,10 +9,25 @@
 
 namespace {
 
+using uint_t = hdlskel::skmap::uint_t;
 using sint_t = hdlskel::skmap::sint_t;
-inline sint_t sint_sign_extend_w(sint_t value, int w) {
-    sint_t mask = 1 << ( w - 1);
-    return (value & (mask - 1)) - (value & mask);
+
+// Keep only the low `width` bits (mirrors the masking done by
+// Reg.read_uint_cached / RegVec._bytes_to_list_uint in pip/skmap reg.py).
+inline uint_t mask_to_width(uint_t value, uint64_t width) {
+    if (width >= 8*sizeof(uint_t)) {
+        return value;
+    }
+    return value & ((uint_t{1} << width) - 1);
+}
+
+inline sint_t sint_sign_extend_w(uint64_t value, int w) {
+    if (w <= 0 || w >= 64) {
+        // No sign extension needed/possible for the full 64 bit range.
+        return static_cast<sint_t>(value);
+    }
+    uint64_t mask = uint64_t{1} << (w - 1);
+    return static_cast<sint_t>((value & (mask - 1)) - (value & mask));
 }
 
 }
@@ -51,26 +66,35 @@ void Reg::memcpy_to_cache(void* src) {
     std::memcpy(data.data(), src, data.size());
 }
 
-void Reg::update_cache() { module()->update_cache(m_addr_off, size()); }
+// Device access is centralized in Module::update_cache/write_cache which
+// honor cache_only(); here we additionally never read the device for
+// constants (mirrors Reg.read_bytes in pip/skmap/src/skmap/reg.py which
+// returns the cache directly for Acc.k).
+void Reg::update_cache() {
+    if (m_acc == Acc::k) { return; }
+    module()->update_cache(m_addr_off, size());
+}
 
 void Reg::write_cache() { module()->write_cache(m_addr_off, size()); }
 
 uint_t Reg::read_uint_cached() const {
     if ( size() > sizeof(uint_t) ) {
-        std::runtime_error("uint_t not large enough to fit register");
+        throw std::runtime_error("uint_t not large enough to fit register");
     }
     uint_t value = 0;
     memcpy_from_cache(&value);
-    return value;
+    // Mask off anything above the register bit width (neighbouring fields
+    // can share the same storage word).
+    return mask_to_width(value, elem_w());
 }
 
 sint_t Reg::read_sint_cached() const {
     if ( size() > sizeof(sint_t) ) {
-        std::runtime_error("sint_t not large enough to fit register");
+        throw std::runtime_error("sint_t not large enough to fit register");
     }
-    sint_t value;
+    sint_t value = 0;
     memcpy_from_cache(&value);
-    return sint_sign_extend_w(value, elem_w());
+    return sint_sign_extend_w(mask_to_width(static_cast<uint_t>(value), elem_w()), elem_w());
 }
 
 bool Reg::read_bool_cached() const {
@@ -78,30 +102,30 @@ bool Reg::read_bool_cached() const {
 }
 
 uint_t Reg::read_uint() {
-    if( not cache_only() ) { update_cache(); }
+    update_cache();
     return read_uint_cached();
 }
 
 sint_t Reg::read_sint() {
-    if( not cache_only() ) { update_cache(); }
+    update_cache();
     return read_sint_cached();
 }
 
 bool Reg::read_bool() {
-    if( not cache_only() ) { update_cache(); }
+    update_cache();
     return read_bool_cached();
 }
 
 void Reg::write_uint_cached(uint_t value) { 
     if ( size() > sizeof(uint_t) ) {
-        std::runtime_error("uint_t not large enough to fit register");
+        throw std::runtime_error("uint_t not large enough to fit register");
     }
     check_value_limit(static_cast<sint_t>(value));
     memcpy_to_cache(&value);
 }
 void Reg::write_sint_cached(sint_t value) { 
     if ( size() > sizeof(sint_t) ) {
-        std::runtime_error("sint_t not large enough to fit register");
+        throw std::runtime_error("sint_t not large enough to fit register");
     }
     check_value_limit(value);
     memcpy_to_cache(&value);
@@ -111,20 +135,24 @@ void Reg::write_bool_cached(bool v) {
 }
 void Reg::write_uint(uint_t value) { 
     write_uint_cached(value);
-    if( not cache_only() ) { write_cache(); }
+    write_cache();
 }
 void Reg::write_sint(sint_t value) { 
     write_sint_cached(value);
-    if( not cache_only() ) { write_cache(); }
+    write_cache();
 }
 void Reg::write_bool(bool v) {
     write_bool_cached(v);
-    if( not cache_only() ) { write_cache(); }
+    write_cache();
 }
 void Reg::write_zero() {
+    // Mirrors Reg.write_zero in pip/skmap/src/skmap/reg.py:
+    // write_zero_cached() followed by write_cache() (device write is
+    // skipped centrally by Module::write_cache when cache_only).
     check_value_limit(0);
     std::vector<std::byte> z(size(), std::byte{0});
     memcpy_to_cache(z.data());
+    write_cache();
 }
 std::vector<bool> Reg::read_vec_bool_cached() const {
     std::span<const std::byte> data = cache_data();
@@ -323,6 +351,7 @@ std::vector<uint_t> RegVec::read_vec_uint_cached() const {
     for(auto & v : vec) {
         v = 0;
         std::memcpy(&v, &data[v_off], elem_size());
+        v = mask_to_width(v, elem_w());
         v_off += elem_off();
     }
     return vec;
@@ -338,10 +367,11 @@ std::vector<sint_t> RegVec::read_vec_sint_cached() const {
     std::vector<sint_t> vec(vec_len());
     addr_t v_off = 0;
     for(auto & v : vec) {
-        v = 0;
-        std::memcpy(&v, &data[v_off], elem_size());
+        uint_t u = 0;
+        std::memcpy(&u, &data[v_off], elem_size());
+        u = mask_to_width(u, elem_w());
+        v = sint_sign_extend_w(u, elem_w());
         v_off += elem_off();
-        v = sint_sign_extend_w(v, elem_w());
     }
     return vec;
 }
@@ -437,6 +467,7 @@ void RegVec::memcpy_idx_to_cache(const void * src, addr_t idx) {
     std::memcpy(&data[idx*elem_off()], src, elem_size());
 }
 void RegVec::update_idx_cache(addr_t idx) {
+    if (acc() == Acc::k) { return; } // constants come from the cache (like py)
     addr_t addr = m_addr_off + idx*elem_off();
     module()->update_cache(addr, elem_size());
 }
@@ -444,7 +475,7 @@ void RegVec::update_idx_cache(addr_t idx) {
 uint_t RegVec::read_idx_uint_cached(addr_t idx) const {
     uint_t val = 0;
     memcpy_idx_from_cache(&val, idx);
-    return val;
+    return mask_to_width(val, elem_w());
 }
 
 uint_t RegVec::read_idx_uint(addr_t idx) {
@@ -455,7 +486,7 @@ uint_t RegVec::read_idx_uint(addr_t idx) {
 sint_t RegVec::read_idx_sint_cached(addr_t idx) const {
     uint_t val = 0;
     memcpy_idx_from_cache(&val, idx);
-    return sint_sign_extend_w(val, elem_w());
+    return sint_sign_extend_w(mask_to_width(val, elem_w()), elem_w());
 }
 
 sint_t RegVec::read_idx_sint(addr_t idx) {

@@ -10,6 +10,7 @@ from . import code_generator_py
 from . import code_generator_vhdl
 from . import code_generator_cpp
 from . import code_generator_all_hpp
+from . import code_generator_version_hpp
 from . import recipe_functions
 
 Head   = head.Head
@@ -40,3 +41,4 @@ generate_py_module   = code_generator_py.generate_py_module
 generate_vhdl_module = code_generator_vhdl.generate_vhdl_module
 generate_cpp_module  = code_generator_cpp.generate_cpp_module
 generate_all_hpp     = code_generator_all_hpp.generate_all_hpp
+generate_version_hpp = code_generator_version_hpp.generate_version_hpp
