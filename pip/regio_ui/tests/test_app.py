@@ -771,3 +771,109 @@ def test_clear_log():
         await fake.stop()
 
     _run(run())
+
+
+# ---------------------------------------------------------------------------
+# log capture (p key / capture=False when started through another app)
+# ---------------------------------------------------------------------------
+
+
+def test_capture_toggle_p_key():
+    """Started on its own, regio_ui captures from the start; `p`
+    stops / starts the capture (operations pass by unlogged while
+    off)."""
+
+    async def run():
+        fake = FakeUpstream()
+        await fake.start()
+        app = _make_app(fake)
+        async with app.run_test() as pilot:
+            await _wait_status(app, pilot, "listening on")
+            assert app.view.capture is True
+
+            # stop capturing, then send an operation: it reaches the
+            # backend but is not logged
+            app.ops.focus()
+            await pilot.press("p")
+            await pilot.pause()
+            assert app.view.capture is False
+            assert "capture: off" in app.status_text
+            app.addr_input.value = "0x1"
+            app.data_input.value = "0x1"
+            app.data_input.focus()
+            await pilot.press("enter")
+            await _wait(pilot, lambda: len(fake.requests) >= 1)
+            await pilot.pause()
+            assert app.ops.row_count == 0
+
+            # start capturing again: the same operation is now logged
+            app.ops.focus()
+            await pilot.press("p")
+            await pilot.pause()
+            assert app.view.capture is True
+            app.data_input.focus()
+            await pilot.press("enter")
+            await _wait(pilot, lambda: app.ops.row_count == 1)
+        await fake.stop()
+
+    _run(run())
+
+
+def test_capture_off_at_boot():
+    """capture=False (what skmap_ui uses when it embeds the view):
+    operations pass by without being logged until the capture is
+    started with `p`."""
+
+    async def run():
+        fake = FakeUpstream()
+        await fake.start()
+        app = RegioUiApp(
+            backend=RegioTcpClient(host="127.0.0.1", port=fake.port),
+            backend_desc=f"127.0.0.1:{fake.port}",
+            listen_host="127.0.0.1",
+            listen_port=_free_port(),
+            capture=False,
+        )
+        async with app.run_test() as pilot:
+            await _wait_status(app, pilot, "listening on")
+            assert app.view.capture is False
+
+            app.addr_input.value = "0x2"
+            app.data_input.value = "0x2"
+            app.data_input.focus()
+            await pilot.press("enter")
+            await _wait(pilot, lambda: len(fake.requests) >= 1)
+            await pilot.pause()
+            assert app.ops.row_count == 0
+
+            app.ops.focus()
+            await pilot.press("p")
+            await pilot.pause()
+            app.data_input.focus()
+            await pilot.press("enter")
+            await _wait(pilot, lambda: app.ops.row_count == 1)
+        await fake.stop()
+
+    _run(run())
+
+
+def test_view_embeddable_widget():
+    """The UI is the reusable RegioUiView widget (embedding apps, like
+    skmap_ui, host it directly and feed it through its op_started /
+    op_done callbacks)."""
+
+    async def run():
+        fake = FakeUpstream()
+        await fake.start()
+        app = _make_app(fake)
+        async with app.run_test() as pilot:
+            await _wait_status(app, pilot, "listening on")
+            view = app.view
+            # the view is the app's single content widget between the
+            # header and the footer
+            assert view.backend_desc == f"127.0.0.1:{fake.port}"
+            assert app.ops is view.ops
+            assert app.addr_input is view.addr_input
+        await fake.stop()
+
+    _run(run())

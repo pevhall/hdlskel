@@ -14,6 +14,13 @@ the backend options are shared with the regio CLI, see
 also send operations from the form, which go through the same
 backend and end up in the same log.
 
+The UI itself is the reusable :class:`~regio_ui.view.RegioUiView`
+widget (operations log + status line + form), so it can also be
+embedded in another Textual app — ``skmap_ui`` hosts it on a *Regio*
+tab (there it feeds the view from a :class:`~regio_ui.tap.RegioTap`
+on its own regio device and starts it **not capturing**, see
+``--no-capture`` here for the same option standalone).
+
 Layout::
 
     +------------------------------------------------------+
@@ -22,7 +29,8 @@ Layout::
     | operations log (DataTable)                           |
     | Time | Address | Op | Data                           |
     +------------------------------------------------------+
-    | status line (listening / upstream state, op count)   |
+    | status line (listening / backend state, op count,    |
+    |                capture on/off)                       |
     +------------------------------------------------------+
     | [wr]  [Address: 0x…]          [Size (B)]             |
     | [Write data: 0x… / 0b… / dec]  [Send]                |
@@ -46,6 +54,9 @@ Layout::
   decimal.  Without an explicit size the byte width is inferred from
   the digit count (``0x0A0`` -> 2 B, ``0b0101`` -> 1 B, ``3243`` ->
   4 B).
+* **Capture** (``p``): while on (the default — but see
+  ``--no-capture``) operations are logged; while off they pass by
+  without being logged.
 
 Run the TUI::
 
@@ -59,67 +70,27 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-from datetime import datetime
 from typing import Optional
 
 from regio import Regio
 from regio import cli_utils
-from regio.tcp import ADDR_MAX, PORT_DEFAULT, SIZE_MAX
+from regio.tcp import PORT_DEFAULT
 from regio.tcp_client import RegioTcpClient
-from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, DataTable, Footer, Header, Input, Static
+from textual.widgets import Footer, Header
 
-from regio_ui.proxy import RegioOp, RegioProxy, backend_kind
-from regio_ui.values import parse_num
+from regio_ui.proxy import RegioProxy, backend_kind
+from regio_ui.view import MAX_DATA_BYTES, MAX_ROWS, RegioUiView
 
-# operations log table column keys
-COL_TIME, COL_ADDR, COL_OP, COL_DATA = "time", "addr", "op", "data"
-
-#: how many operations the log table keeps (the oldest are dropped)
-MAX_ROWS = 2000
-
-#: how many payload bytes the Data column shows (longer payloads are
-#: truncated, the full length is shown)
-MAX_DATA_BYTES = 1024
-
-#: how many payload bytes are shown per (wrapped) line in the Data
-#: column
-DATA_LINE_BYTES = 16
-
-
-def _timestamp() -> str:
-    """Current local time, e.g. ``12:34:56.789``."""
-    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
-
-
-def _data_str(data: bytes, max_bytes: int = MAX_DATA_BYTES) -> str:
-    """Payload as space-separated hex bytes.
-
-    Wrapped to lines of at most ``DATA_LINE_BYTES`` bytes, so a long
-    payload becomes a tall, multi-line cell instead of one huge line;
-    the payload is truncated to ``max_bytes`` bytes (the total length
-    is shown then).
-    """
-    if not data:
-        return ""
-    shown_n = min(len(data), max_bytes)
-    lines = [
-        " ".join(f"{b:02X}" for b in data[ii:ii + DATA_LINE_BYTES])
-        for ii in range(0, shown_n, DATA_LINE_BYTES)
-    ]
-    text = "\n".join(lines)
-    if len(data) > max_bytes:
-        text += f"\n… ({len(data)} B)"
-    return text
-
-
-def _data_cell(data: bytes, max_bytes: int = MAX_DATA_BYTES) -> Text:
-    text = Text(_data_str(data, max_bytes))
-    text.stylize("bright_black")
-    return text
+__all__ = [
+    "RegioUiApp",
+    "RegioUiView",
+    "main",
+    "build_parser",
+    "make_backend",
+    "MAX_ROWS",
+    "MAX_DATA_BYTES",
+]
 
 
 def auto_int(s: str) -> int:
@@ -132,56 +103,16 @@ def auto_int(s: str) -> int:
 
 class RegioUiApp(App):
     """regio TCP proxy TUI: logs the operations that flow between a
-    regio TCP server and its clients, and sends new operations."""
+    regio TCP server and its clients, and sends new operations.
+
+    ``capture=False`` starts the log **not capturing** (the ``p`` key
+    toggles it) — used when regio_ui is started through another app
+    (``skmap_ui``) so its boot-time operations do not flood the log;
+    a directly started regio_ui captures from the beginning.
+    """
 
     TITLE = "regio_ui"
     SUB_TITLE = "regio TCP proxy"
-
-    CSS = """
-    #ops {
-        height: 1fr;
-        border: round $primary;
-    }
-    /* the row cursor spans the whole row: a subtle background tint so
-       the selected row (not just the selected cell) stands out */
-    #ops > .datatable--cursor {
-        background: $primary 25%;
-        color: $foreground;
-        text-style: bold;
-    }
-    #status {
-        height: 1;
-        padding: 0 1;
-        color: $text-muted;
-        text-style: italic;
-    }
-    #form-row {
-        height: 3;
-    }
-    #form-row > .input {
-        border: round $accent;
-    }
-    #op-toggle {
-        width: 8;
-    }
-    #addr {
-        width: 1fr;
-    }
-    #size {
-        width: 16;
-    }
-    #data {
-        width: 1fr;
-    }
-    #send {
-        width: 8;
-    }
-    """
-
-    BINDINGS = [
-        Binding("t", "toggle_op", "Toggle op", show=False),
-        Binding("c", "clear_log", "Clear log"),
-    ]
 
     def __init__(
         self,
@@ -190,6 +121,7 @@ class RegioUiApp(App):
         listen_host: str = "0.0.0.0",
         listen_port: int = PORT_DEFAULT,
         max_data_bytes: int = MAX_DATA_BYTES,
+        capture: bool = True,
     ) -> None:
         super().__init__()
         #: the regio device operations are forwarded to (a TCP client
@@ -201,6 +133,8 @@ class RegioUiApp(App):
         self.listen_port = listen_port
         #: maximum number of payload bytes shown in the Data column
         self.max_data_bytes = max_data_bytes
+        #: start the log capturing (True, default) or not (``p`` toggles)
+        self.capture = capture
 
         backend_part = (
             f"file {backend_desc}"
@@ -211,69 +145,42 @@ class RegioUiApp(App):
             f"{backend_part}  ·  listen {listen_host}:{listen_port}"
         )
 
+        self._view: Optional[RegioUiView] = None
         self._proxy: Optional[RegioProxy] = None
         self._tasks: list[asyncio.Task] = []
-        #: log table row key -> operation
-        self._row_ops: dict[str, RegioOp] = {}
-        self._row_keys: list[str] = []
-        self._n_ops = 0
-        self._status_base = ""
-        # the form's current op (True = wr, False = rd)
-        self._op_write = True
 
     # ------------------------------------------------------------------
     # layout
     # ------------------------------------------------------------------
     def compose(self) -> ComposeResult:
         yield Header()
-        yield DataTable(id="ops")
-        yield Static("", id="status")
-        with Vertical(id="form"):
-            with Horizontal(id="form-row"):
-                yield Button("wr", id="op-toggle", variant="error")
-                yield Input(placeholder="0x… / 0b… / decimal", id="addr")
-                yield Input(placeholder="size (B)", id="size")
-            with Horizontal(id="form-row2"):
-                yield Input(
-                    placeholder="write data (0x… / 0b… / decimal)",
-                    id="data",
-                )
-                yield Button("Send", id="send", variant="success")
+        yield RegioUiView(
+            backend_desc=self.backend_desc,
+            capture=self.capture,
+            max_data_bytes=self.max_data_bytes,
+        )
         yield Footer()
 
     def on_mount(self) -> None:
-        self.ops = self.query_one("#ops", DataTable)
-        self.status = self.query_one("#status", Static)
-        self.op_button = self.query_one("#op-toggle", Button)
-        self.addr_input = self.query_one("#addr", Input)
-        self.size_input = self.query_one("#size", Input)
-        self.data_input = self.query_one("#data", Input)
-        self.send_button = self.query_one("#send", Button)
-
-        self.ops.zebra_stripes = True
-        self.ops.cursor_type = "row"
-        self.ops.add_column("Time", key=COL_TIME, width=14)
-        self.ops.add_column("Address", key=COL_ADDR, width=12)
-        self.ops.add_column("Op", key=COL_OP, width=4)
-        self.ops.add_column("Data", key=COL_DATA)
-
+        self._view = view = self.query_one(RegioUiView)
         self._proxy = RegioProxy(
             backend=self.backend,
             backend_desc=self.backend_desc,
             listen_host=self.listen_host,
             listen_port=self.listen_port,
-            on_op=self._op_started,
-            on_done=self._op_done,
-            on_status=self._set_status_base,
+            on_op=view.op_started,
+            on_done=view.op_done,
+            on_status=view.set_status,
         )
+        # the form's operations go through the proxy (logged like all
+        # the rest)
+        view.sender = self._proxy
+        view.ops.focus()
         for coro in (
             self._start_local_server_safe(),
             self._proxy.watch_upstream(),
         ):
             self._tasks.append(asyncio.create_task(coro))
-
-        self._update_form()
-        self.ops.focus()
 
     async def on_unmount(self) -> None:
         if self._proxy is not None:
@@ -303,242 +210,67 @@ class RegioUiApp(App):
             )
 
     # ------------------------------------------------------------------
-    # status
+    # delegates to the view (stable app-level API)
     # ------------------------------------------------------------------
-    def _set_status_base(self, text: str) -> None:
-        self._status_base = text
-        self._update_status()
+    @property
+    def view(self) -> RegioUiView:
+        """The embedded :class:`~regio_ui.view.RegioUiView` widget."""
+        return self._view_or_raise
+
+    @property
+    def _view_or_raise(self) -> RegioUiView:
+        assert self._view is not None
+        return self._view
+
+    @property
+    def ops(self):
+        return self._view_or_raise.ops
+
+    @property
+    def status(self):
+        return self._view_or_raise.status
+
+    @property
+    def op_button(self):
+        return self._view_or_raise.op_button
+
+    @property
+    def addr_input(self):
+        return self._view_or_raise.addr_input
+
+    @property
+    def size_input(self):
+        return self._view_or_raise.size_input
+
+    @property
+    def data_input(self):
+        return self._view_or_raise.data_input
+
+    @property
+    def send_button(self):
+        return self._view_or_raise.send_button
 
     @property
     def status_text(self) -> str:
         """The full status line text."""
-        return f"{self._status_base}  ·  {self._n_ops} op(s)"
+        return self._view_or_raise.status_text
 
-    def _update_status(self) -> None:
-        self.status.update(self.status_text)
+    @property
+    def _row_ops(self):
+        return self._view_or_raise._row_ops
 
-    # ------------------------------------------------------------------
-    # proxy callbacks: log rows
-    # ------------------------------------------------------------------
-    def _op_started(self, op: RegioOp) -> str:
-        """Add a log row for a new operation (called by the proxy)."""
-        self._n_ops += 1
-        key = f"op{self._n_ops}"
-        # follow the log only when the cursor is already on the last
-        # row (don't yank it down while the user reads the history)
-        follow = self.ops.cursor_row == self.ops.row_count - 1
+    @property
+    def _op_write(self) -> bool:
+        return self._view_or_raise._op_write
 
-        self._row_ops[key] = op
-        self._row_keys.append(key)
-        if op.write:
-            data_cell = self._data_cell(op.data or b"")
-        else:
-            data_cell = Text("…", style="dim")
-        # height=None: the row grows to fit the (multi-line) data cell
-        self.ops.add_row(
-            Text(_timestamp()),
-            Text(f"0x{op.addr:08X}", style="cyan"),
-            Text(op.op_str, style="bold red" if op.write else "bold blue"),
-            data_cell,
-            key=key,
-            height=None,
-        )
-        while len(self._row_keys) > MAX_ROWS:
-            old = self._row_keys.pop(0)
-            self._row_ops.pop(old, None)
-            self.ops.remove_row(old)
-        if follow:
-            self.ops.move_cursor(row=self.ops.row_count - 1, column=0)
-        self._update_status()
-        return key
-
-    def _op_done(
-        self, key: str, data: Optional[bytes], error: Optional[str]
-    ) -> None:
-        """Update a log row when the forwarded operation has finished."""
-        op = self._row_ops.get(key)
-        if op is None:
-            return
-        if error is None:
-            # a write's row was complete from the start; a read's row
-            # gets its (response) data now
-            if data is not None and not op.write:
-                op.data = data
-                self.ops.update_cell(
-                    key, COL_DATA, self._data_cell(data), update_width=True
-                )
-            return
-        if op.write:
-            cell = Text(self._data_str(op.data or b"") + "  ")
-        else:
-            cell = Text()
-        cell.append(f"⚠ {error}", style="red")
-        self.ops.update_cell(key, COL_DATA, cell, update_width=True)
-
-    def _data_cell(self, data: bytes) -> Text:
-        """The Data cell for a payload (up to ``max_data_bytes``)."""
-        return _data_cell(data, self.max_data_bytes)
-
-    def _data_str(self, data: bytes) -> str:
-        """The Data text for a payload (up to ``max_data_bytes``)."""
-        return _data_str(data, self.max_data_bytes)
-
-    # ------------------------------------------------------------------
-    # form
-    # ------------------------------------------------------------------
     def action_toggle_op(self) -> None:
-        """Toggle the form's op between wr and rd (button / `t`)."""
-        self._op_write = not self._op_write
-        self._update_form()
+        self._view_or_raise.action_toggle_op()
 
-    def _update_form(self) -> None:
-        if self._op_write:
-            self.op_button.label = "wr"
-            self.op_button.variant = "error"
-            self.size_input.placeholder = "size (B, optional)"
-            self.data_input.placeholder = "write data (0x… / 0b… / decimal)"
-            self.data_input.disabled = False
-        else:
-            self.op_button.label = "rd"
-            self.op_button.variant = "primary"
-            self.size_input.placeholder = "size (B, required)"
-            self.data_input.placeholder = "(rd: no write data)"
-            self.data_input.disabled = True
+    def action_toggle_capture(self) -> None:
+        self._view_or_raise.action_toggle_capture()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "op-toggle":
-            self.action_toggle_op()
-        elif event.button.id == "send":
-            self._send()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id in ("addr", "size", "data"):
-            self._send()
-
-    def _fill_form(self, op: RegioOp) -> None:
-        """Autofill the form from a logged operation (the user can
-        still edit every field before sending it)."""
-        self._op_write = op.write
-        self.addr_input.value = f"0x{op.addr:08X}"
-        self.size_input.value = str(op.size)
-        if op.write:
-            value = int.from_bytes(op.data or b"0", "little")
-            self.data_input.value = f"0x{value:X}" if value else "0x0"
-        else:
-            self.data_input.value = ""
-        self._update_form()
-        self.addr_input.focus()
-
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """enter (or double click) on a log row: autofill the form."""
-        op = self._row_ops.get(event.row_key)
-        if op is None:
-            return
-        self._fill_form(op)
-
-    # ------------------------------------------------------------------
-    # sending
-    # ------------------------------------------------------------------
-    def _form_error(self, msg: str, focus: Input) -> None:
-        self.notify(msg, severity="warning", timeout=4)
-        focus.focus()
-
-    def _send(self) -> None:
-        """Validate the form and send the operation."""
-        parsed_addr = parse_num(self.addr_input.value)
-        if parsed_addr is None:
-            self._form_error(
-                "address: use 0x… (hex), 0b… (bin) or decimal",
-                self.addr_input,
-            )
-            return
-        addr = parsed_addr[0]
-        if not 0 <= addr <= ADDR_MAX:
-            self._form_error(
-                f"address must be in 0 .. 0x{ADDR_MAX:X}", self.addr_input
-            )
-            return
-
-        if self._op_write:
-            parsed = parse_num(self.data_input.value)
-            if parsed is None:
-                self._form_error(
-                    "write data: use 0x… (hex), 0b… (bin) or decimal",
-                    self.data_input,
-                )
-                return
-            value, inferred_size = parsed
-            size_text = self.size_input.value.strip()
-            if size_text:
-                parsed_size = parse_num(size_text)
-                if parsed_size is None:
-                    self._form_error(
-                        "size: use 0x… (hex), 0b… (bin) or decimal",
-                        self.size_input,
-                    )
-                    return
-                size = parsed_size[0]
-                if not 1 <= size <= SIZE_MAX:
-                    self._form_error(
-                        f"size must be in 1 .. {SIZE_MAX}", self.size_input
-                    )
-                    return
-                if value >= 256**size:
-                    self._form_error(
-                        f"write data does not fit in {size} byte(s)",
-                        self.data_input,
-                    )
-                    return
-            else:
-                # no explicit size: infer it from the digit count
-                size = inferred_size
-            payload = value.to_bytes(size, "little")
-            self.run_worker(
-                self._send_write(addr, payload),
-                name="send",
-                group="send",
-                exclusive=False,
-            )
-        else:
-            parsed_size = parse_num(self.size_input.value)
-            if parsed_size is None:
-                self._form_error(
-                    "size is required for a read (rd)", self.size_input
-                )
-                return
-            size = parsed_size[0]
-            if not 1 <= size <= SIZE_MAX:
-                self._form_error(
-                    f"size must be in 1 .. {SIZE_MAX}", self.size_input
-                )
-                return
-            self.run_worker(
-                self._send_read(addr, size),
-                name="send",
-                group="send",
-                exclusive=False,
-            )
-
-    async def _send_write(self, addr: int, payload: bytes) -> None:
-        assert self._proxy is not None
-        _, err = await self._proxy.relay_write(addr, payload)
-        if err is not None:
-            self.notify(f"write failed: {err}", severity="error", timeout=4)
-
-    async def _send_read(self, addr: int, size: int) -> None:
-        assert self._proxy is not None
-        _, _, err = await self._proxy.relay_read(addr, size)
-        if err is not None:
-            self.notify(f"read failed: {err}", severity="error", timeout=4)
-
-    # ------------------------------------------------------------------
-    # log clearing
-    # ------------------------------------------------------------------
     def action_clear_log(self) -> None:
-        self.ops.clear()
-        self._row_ops.clear()
-        self._row_keys.clear()
-        self._update_status()
+        self._view_or_raise.action_clear_log()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -573,6 +305,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=MAX_DATA_BYTES,
         help="Maximum number of payload bytes shown in the Data column "
         f"of each log row (default: {MAX_DATA_BYTES})",
+    )
+    parser.add_argument(
+        "--no-capture",
+        action="store_true",
+        help="Start with log capturing OFF: operations pass by "
+             "without being logged until the capture is started "
+             "(the 'p' key toggles it).  regio_ui started through "
+             "skmap_ui uses this so its boot-time operations are not "
+             "logged; started directly it captures from the start.",
     )
     return parser
 
@@ -622,6 +363,7 @@ def main() -> None:
             listen_host=args.listen_host,
             listen_port=args.listen_port,
             max_data_bytes=args.max_data_bytes,
+            capture=not args.no_capture,
         )
         await app.run_async()
 

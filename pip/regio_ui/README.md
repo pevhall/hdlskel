@@ -36,7 +36,7 @@ shared with the regio CLI (`regio.cli_utils`).
 | pane | content |
 |------|---------|
 | **operations log** (top) | one row per operation: `Time \| Address \| Op \| Data` — *Address* is hex, *Op* is `wr` / `rd`, *Data* is the payload as hex bytes, **up to `--max-data-bytes` per row (1024 by default)**, wrapped 16 bytes per line (a **read** shows its data once the upstream server replies — `…` while pending — a failed operation is marked with a red `⚠` warning) |
-| **status line** | `listening on <host>:<port> · upstream <host>:<port> (connected) · N op(s)` (the TCP connection is (re)tried automatically every 2 s) or `… · file <path> · N op(s)` when serving a cache file |
+| **status line** | `listening on <host>:<port> · upstream <host>:<port> (connected) · N op(s) · capture: on [p]` (the TCP connection is (re)tried automatically every 2 s) or `… · file <path> · …` when serving a cache file; `capture` reflects whether operations are being logged (`p` toggles) |
 | **operation form** (bottom) | the **Op** button toggles `wr` / `rd` (also the `t` key); *Address* (hex / bin / decimal), *Size* in bytes, *Write data* (only enabled for `wr`), **Send** button |
 
 | key / action | effect |
@@ -45,6 +45,7 @@ shared with the regio CLI (`regio.cli_utils`).
 | `enter` in a form field / `Send` button | validate and send the operation (goes through the upstream connection and is logged like any other) |
 | Op button / `t` | toggle the form's op between `wr` and `rd` (*Write data* is disabled for `rd`, *Size* becomes required) |
 | `c` | clear the operations log |
+| `p` | start / stop **capturing** the operations log (operations pass by, unlogged, while it is off — see *Log capture*) |
 | `q` | quit |
 
 The log keeps the most recent 2000 operations (the oldest are
@@ -75,6 +76,45 @@ click) fills the form with exactly that operation (the write data is
 filled as hex, the size as the operation's byte width, so a
 re-send is byte-identical) — every field can then be edited before
 sending.
+
+## Log capture
+
+The `p` key starts / stops **capturing**: while off, operations still
+flow through (and can still be sent from the form) but are **not
+logged**, so a busy device's traffic does not flood the log.  The
+status line shows the current state (`capture: on/off`).
+
+Whether regio_ui starts *capturing* depends on how it is started:
+
+* **started on its own** (`regio-ui …` / `python -m regio_ui`) it
+  **captures from the start** — pass `--no-capture` to start it with
+  capturing off instead (start it later with `p`);
+* **embedded in another app** (see below) the host decides —
+  `skmap_ui` hosts the view on its *regio* tab and starts it **not
+  capturing**, so the TUI's own boot-time traffic (tree build, first
+  read-all, assert check) does not flood the log; the user starts
+  capturing when they want to watch traffic.
+
+## Embedding the view (`RegioUiView`) / tapping a device (`RegioTap`)
+
+The whole UI (log table, status line and form) is the reusable widget
+`regio_ui.RegioUiView`, so another Textual app can host it as a tab
+instead of running the standalone `RegioUiApp`.  A host app that
+already owns a `regio.Regio` device feeds the view with
+`regio_ui.RegioTap`, which attaches to the device with regio's own
+read / write hooks — every operation the host performs is reported to
+the view (same `op_started` / `op_done` callbacks the TCP proxy uses)
+and the view's form sends through the same device:
+
+```python
+from regio_ui import RegioTap, RegioUiView
+
+view = RegioUiView(capture=False)                 # host starts it muted
+tap = RegioTap(host_regio, on_op=view.op_started, on_done=view.op_done)
+view.sender = tap
+```
+
+This is exactly how `skmap_ui` embeds regio_ui on its *regio* tab.
 
 ## Install
 
@@ -108,6 +148,7 @@ regio-ui -f cache.skelregio
 | `--listen-host` | host of the local (client-facing) regio TCP server (default `0.0.0.0`) |
 | `--listen-port` | port of the local (client-facing) regio TCP server (default `0x9AB0`) |
 | `--max-data-bytes` | maximum number of payload bytes shown in the Data column of each log row (default `1024`) |
+| `--no-capture` | start with log capturing **off** (operations pass by unlogged until `p` starts it); started through `skmap_ui` the view already starts not capturing |
 
 Notes:
 

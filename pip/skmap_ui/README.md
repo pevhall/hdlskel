@@ -15,6 +15,8 @@ Pass a real `skmap.Module` (e.g. built with `make_module`) and the app shows:
 | **right table** | the register map of the selected module — `Addr | T | Acc | Name | Value | Description` (mirrors `Module.print_reg_map_cached` / `RegMapTable`), flags expanded as sub-rows; vector registers can be expanded into one row per vector index (`e`) |
 | **bottom log** | an **event log** of the triggered register assets (asserts): every check that finds triggered asserts appends a **timestamped table** block (like `print_table_reg_list(list_reg, title='Asserts')`) — the log grows over time |
 
+The workspace is **tabbed**: alongside the register map (tree + table) there is a **regio tab** hosting the embedded [regio_ui](../regio_ui) log — every regio operation the TUI performs (reads, writes, clear-rc, periodic updates) is shown there and new operations can be sent (see *Regio tab*).
+
 Uses skmap's native vocabulary: `Acc` codes `na/k/ro/rc/rw/wt` in the *Acc*
 column, and skmap's notion of a **trigger** (register write).
 
@@ -40,6 +42,8 @@ currently displayed is **highlighted** (bold bright blue).
 | `e` | toggle **expanding vector registers** in the register map into one row per vector index (like the `ExternalMemVec` view, see *Display options*) |
 | `shift` + `up` / `down` | in the register map or the tree: move the selected row / the cursor **5** lines at a time (instead of one) |
 | `shift` + `left` / `right` | in the register map: scroll horizontally by **5×** the amount a plain `left` / `right` moves the cursor (the cursor does not move); in the tree: scroll horizontally by **5** cells (a plain `left` / `right` expands / collapses the cursor node there instead of scrolling) |
+| `g` | switch between the **register map** tab and the **regio** tab (the embedded regio_ui log — see *Regio tab*) |
+| `p` | on the **regio tab**: start / stop **capturing** the regio operation log (the regio_ui view's own key) |
 
 On start the top module is selected (its register map is shown right away)
 and the assert check runs automatically.
@@ -164,6 +168,32 @@ asserts of the whole tree (`clear_assert_tree()`) — the same clear
 step as `x`, only preceded by a device read + re-check — so the next
 update only logs new events.
 
+## Regio tab (embedded regio_ui)
+
+The workspace is tabbed: `g` switches between the register map and the
+**regio tab**, which embeds the [regio_ui](../regio_ui) view (the
+`Time | Address | Op | Data` operations log, a status line and the
+new-operation form).  No extra TCP hop is involved — a `regio_ui.RegioTap`
+attaches to the same regio device the TUI itself uses, so:
+
+* every operation the TUI performs (reads, writes, clear-rc, the
+  periodic update, …) shows up in the log, and
+* the form at the bottom of the tab sends **new** operations (a write,
+  a read, a peek at some address) through the same device, serialized
+  with the TUI's own traffic.
+
+**Capture**: skmap_ui starts the view **not capturing**, so the
+boot-time traffic (tree build, first read-all, assert check) does not
+flood the log.  Press `p` on the regio tab to start (and stop) the
+capture; the status line shows `capture: on/off`.  (regio_ui started
+on its own captures from the start — see its `--no-capture` flag.)
+
+On the regio tab the operations log has the focus: `t` toggles the
+form's `wr`/`rd` op, `c` clears the log, `p` toggles the capture, and
+`enter` on a log row autofills the form (see the regio_ui docs).  The
+register-map keys (`r`, `R`, `a`, `x`, …) keep working and act on the
+register map shown on the other tab; `g` switches back.
+
 ## Assert log
 
 The bottom log is an **event log, not a snapshot** (append-only): every
@@ -225,13 +255,14 @@ connection never sees concurrent requests. After every write the app
 performs a device **read-back**, so the *Value* cell always shows the
 true device state. Assets with `Acc.k` (hardwired) or `Acc.na` (no
 access) are never read back: reading them is redundant (or would fault
-the firmware).
+the firmware).  All of this device traffic is also what the **regio
+tab** taps into (see *Regio tab*).
 
 ## Install
 
 ```bash
 # siblings first (they live in this repo's pip/ dir)
-pip install ../regio ../skmap
+pip install ../regio ../skmap ../regio_ui
 pip install -e .
 ```
 

@@ -20,19 +20,43 @@ Run the TUI::
 
 Or programmatically::
 
+    import asyncio
+    from regio.tcp_client import RegioTcpClient
     from regio_ui import RegioUiApp
 
-    app = RegioUiApp(
-        upstream_host="127.0.0.1",
-        upstream_port=0x9AB0,
-        listen_host="0.0.0.0",
-        listen_port=0x9AB1,
-    )
-    app.run()
+    async def run():
+        backend = RegioTcpClient(host="127.0.0.1", port=0x9AB0)
+        await backend.connect()
+        app = RegioUiApp(
+            backend,
+            "127.0.0.1:0x9AB0",
+            listen_host="0.0.0.0",
+            listen_port=0x9AB1,
+        )
+        await app.run_async()
+
+    asyncio.run(run())
+
+The UI is also reusable as a plain widget (:class:`RegioUiView`) so
+another Textual app can host it as a tab — a host that already owns a
+``regio.Regio`` device feeds the view with :class:`RegioTap` (this is
+how ``skmap_ui`` embeds regio_ui on its *regio* tab).
+
+The log **capture** can be toggled at runtime (``p`` key) and started
+on or off (``--no-capture`` / ``RegioUiView(capture=...)``): while off
+operations pass by without being logged.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from regio_ui.app import RegioUiApp, main
+from regio_ui.tap import RegioTap
+from regio_ui.view import RegioUiView
 
-__all__ = ["RegioUiApp", "main", "__version__"]
+__all__ = [
+    "RegioUiApp",
+    "RegioUiView",
+    "RegioTap",
+    "main",
+    "__version__",
+]

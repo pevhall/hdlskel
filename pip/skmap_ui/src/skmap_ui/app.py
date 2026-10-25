@@ -17,6 +17,17 @@ Layout::
     | footer                                                    |
     +-----------------------------------------------------------+
 
+The workspace is **tabbed** (``g`` switches): the first tab is the
+register map above (tree + table), the second a **regio tab** hosting
+the embedded ``regio_ui`` view (its ``RegioUiView``).  A
+``regio_ui.RegioTap`` attaches to the same regio device this app uses,
+so every operation the TUI performs (reads / writes / clear-rc / the
+periodic update) is logged on that tab and its form can send new
+operations through the same device.  The view starts **not capturing**
+so the boot-time traffic does not flood it — the ``p`` key (the view's
+own binding) starts / stops the capture; regio_ui run on its own
+captures from the start.
+
 Pass a real ``skmap.Module`` (e.g. built with ``make_module``):
 
     from skmap import make_module
@@ -144,6 +155,8 @@ from typing import Union
 
 import regio.cli_utils
 import skmap.cli_utils
+from regio_ui.tap import RegioTap
+from regio_ui.view import RegioUiView
 from rich.table import Table
 from rich.text import Text
 from skmap import (
@@ -166,7 +179,16 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.message import Message
 from textual.timer import Timer
-from textual.widgets import DataTable, Footer, Header, Input, RichLog, Tree
+from textual.widgets import (
+    DataTable,
+    Footer,
+    Header,
+    Input,
+    RichLog,
+    TabbedContent,
+    TabPane,
+    Tree,
+)
 
 from skmap_ui import __version__
 
@@ -199,6 +221,17 @@ def _timestamp() -> str:
 def _hex(value: int, width: int) -> str:
     """Hex string with as many digits as the value width has bytes."""
     return f"0x{value:0{-(-width // 4)}X}"
+
+
+def _regio_desc(regio) -> str:
+    """Short human-readable description of a regio device (for the
+    regio tab's status line): ``tcp <host>:<port>`` for a TCP client,
+    otherwise the device's class name (e.g. a cache)."""
+    host = getattr(regio, "host", None)
+    port = getattr(regio, "port", None)
+    if host is not None and port is not None:
+        return f"tcp {host}:{port}"
+    return type(regio).__name__
 
 
 def _bits_str(value: int, width: int, kind: ValueKind) -> str:
@@ -451,6 +484,8 @@ class SkmapUiApp(App):
     SUB_TITLE = f"register map explorer v{__version__}"
 
     CSS = """
+    #tabs { height: 1fr; }
+    TabPane { height: 1fr; }
     #workspace { height: 80%; }
     #modules { width: 35%; border: round $primary; }
     #registers { width: 1fr; border: round $accent; }
@@ -479,6 +514,7 @@ class SkmapUiApp(App):
         ("x", "clear_triggered", "Clear RC"),
         ("v", "toggle_value_bits", "Value bits"),
         ("e", "toggle_expand_vec", "Expand vec"),
+        ("g", "toggle_regio_tab", "Regio"),
         Binding("enter", "edit_selected_value", "Edit value", show=False),
         # NB: tab / shift+tab are NOT app bindings — the screen's default
         # tab binding (checked with priority) would beat them and move the
@@ -556,6 +592,12 @@ class SkmapUiApp(App):
         # value display: False = int (decimal for uint / sint),
         # True = bits (hex, like the bits kind) — the 'v' key
         self._value_bits = False
+        # the currently shown tab (the first pane is active at boot);
+        # used to ignore the initial TabActivated message so it does not
+        # steal the initial table focus (see on_tabbed_content_tab_activated)
+        self._active_tab = "tab-registers"
+        # the embedded regio_ui view (the regio tab); set in compose
+        self._regio_view: RegioUiView | None = None
         # register map: expand vector registers into one row per vector
         # index (like the ExternalMemVec view) — the 'e' key
         self._expand_vec = False
@@ -566,19 +608,36 @@ class SkmapUiApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Horizontal(id="workspace"):
-            yield ModuleTree(self.top_module.name(), id="modules")
-            yield RegMapTable(id="registers")
-        with Horizontal(id="value-inputs"):
-            yield ValueInput(
-                id="value-input",
-                placeholder=(
-                    "enter: edit (rw/wt) / clear (rc) | l: assert level | "
-                    "u: update | R: read all | r: read | t: toggle bool | "
-                    "x: clear RC | tab: panels | a: check asserts | "
-                    "v: value bits | e: expand vec"
-                ),
-            )
+        # the embedded regio_ui view (the regio tab): a RegioTap
+        # watches this app's regio device, so every register operation
+        # the TUI performs shows up in its log (and its form can send
+        # operations of its own).  It starts **not capturing** so the
+        # boot-time traffic (tree build, first read-all, assert check)
+        # does not flood the log; the `p` key starts / stops capturing
+        # (regio_ui running on its own starts capturing right away)
+        self._regio_view = RegioUiView(
+            backend_desc=_regio_desc(self.top_module._regio),
+            capture=False,
+            id="regio-view",
+        )
+        with TabbedContent(id="tabs"):
+            with TabPane("registers", id="tab-registers"):
+                with Horizontal(id="workspace"):
+                    yield ModuleTree(self.top_module.name(), id="modules")
+                    yield RegMapTable(id="registers")
+                with Horizontal(id="value-inputs"):
+                    yield ValueInput(
+                        id="value-input",
+                        placeholder=(
+                            "enter: edit (rw/wt) / clear (rc) | l: assert "
+                            "level | u: update | R: read all | r: read | "
+                            "t: toggle bool | x: clear RC | tab: panels | "
+                            "a: check asserts | v: value bits | "
+                            "e: expand vec | g: regio view"
+                        ),
+                    )
+            with TabPane("regio", id="tab-regio"):
+                yield self._regio_view
         yield RichLog(id="log", markup=True, min_width=0)
         yield Footer()
 
@@ -591,6 +650,21 @@ class SkmapUiApp(App):
         self.workspace = self.query_one("#workspace", Horizontal)
         self.header = self.query_one(Header)
         self.footer = self.query_one(Footer)
+        self.tabs = self.query_one(TabbedContent)
+
+        # the regio tab's tap: reports every operation that flows
+        # through the app's regio device (register reads / writes,
+        # clear-rc, the periodic update) to the view, and sends the
+        # view's form operations through it (serialized on the app's
+        # regio lock)
+        self._regio_tap = RegioTap(
+            self.top_module._regio,
+            on_op=self._regio_view.op_started,
+            on_done=self._regio_view.op_done,
+            runner=self._regio,
+        )
+        self._regio_view.sender = self._regio_tap
+        self._regio_view.set_status("regio tap")
 
         self.table.zebra_stripes = True
         # highlight the whole row of the cursor cell (not just the cell)
@@ -609,8 +683,12 @@ class SkmapUiApp(App):
         self._force_lines()
         self._update_log_title()
         if root_node is not None:
-            # show the top module's register map right away
+            # show the top module's register map right away — directly,
+            # not via the select_node's (async) NodeSelected message:
+            # with the tab strip that message is processed a beat later,
+            # which would leave the table empty for a moment at boot
             self.tree_view.select_node(root_node)
+            self._show_module(self.top_module)
         # the table gets the initial focus (otherwise the value input
         # line swallows the single-key shortcuts l / r / x)
         self.table.focus()
@@ -678,6 +756,7 @@ class SkmapUiApp(App):
         if isinstance(data, Module):
             if (
                 self._restore_cursor_key is not None
+                and self._row_module is data
                 and self.tree_view.highlighted is not None
                 and event.node.data is self.tree_view.highlighted.data
             ):
@@ -688,7 +767,11 @@ class SkmapUiApp(App):
                 # worker remembered (this message is processed after
                 # the worker's own restore, so it must not be lost).
                 # NB: compare by module (data), not node identity — the
-                # rebuild creates fresh Tree.Node objects.
+                # rebuild creates fresh Tree.Node objects.  NB: also
+                # require the module to be the *shown* one: a restore
+                # key set by the boot assert check must not swallow
+                # the very first selection (which has to build the
+                # table).
                 self.tree_view.set_highlighted(event.node)
                 self._restore_table_cursor(self._restore_cursor_key)
                 return
@@ -1416,6 +1499,49 @@ class SkmapUiApp(App):
         self._expand_vec = not self._expand_vec
         self._reshow()
 
+    # ------------------------------------------------------------------
+    # regio tab (embedded regio_ui view)
+    # ------------------------------------------------------------------
+
+    def action_toggle_regio_tab(self) -> None:
+        """'g' key: switch between the register map and the regio tab."""
+        target = (
+            "tab-regio" if self.tabs.active != "tab-regio" else "tab-registers"
+        )
+        self._activate_tab(target)
+
+    def _activate_tab(self, pane_id: str) -> None:
+        """Show a tab and move the focus into it.
+
+        The focus must move into the newly shown pane synchronously:
+        TabbedContent follows the focus (a focus event in a pane sets
+        it active), so leaving the focus on a widget of the pane that
+        is about to be hidden would switch straight back.
+        """
+        self._focus_tab(pane_id)
+        self.tabs.active = pane_id
+        self._active_tab = pane_id
+
+    def _focus_tab(self, pane_id: str) -> None:
+        """Focus the main widget of a tab's pane."""
+        if pane_id == "tab-regio":
+            self._regio_view.ops.focus()
+        elif self.table.row_count:
+            self.table.focus()
+        else:
+            self.tree_view.focus()
+
+    def on_tabbed_content_tab_activated(
+        self, event: TabbedContent.TabActivated
+    ) -> None:
+        # keep _active_tab in sync (a tab clicked with the mouse does
+        # not go through _activate_tab); NB: the *tab* widget id is
+        # prefixed, compare the pane id
+        pane_id = event.pane.id
+        if pane_id is not None and pane_id != self._active_tab:
+            self._active_tab = pane_id
+            self._focus_tab(pane_id)
+
     def _reshow(self) -> None:
         """Rebuild the shown table with the current display options,
         keeping the cursor on the same row (when it still exists)."""
@@ -1746,14 +1872,12 @@ class SkmapUiApp(App):
                 pct = (event.screen_x - ws.x) / ws.width * 100
                 self.tree_view.styles.width = f"{min(max(pct, 10), 90):.1f}%"
         else:
-            avail = (
-                self.screen.size.height
-                - self.header.region.height
-                - self.footer.region.height
-            )
-            top = self.header.region.height
-            if avail > 0:
-                pct = (event.screen_y - top) / avail * 100
+            # the workspace lives inside a TabPane: its height percentage
+            # resolves against the pane's content area, so the drag math
+            # uses that too (not the screen height)
+            cont = self.workspace.parent.content_region
+            if cont.height > 0:
+                pct = (event.screen_y - cont.y) / cont.height * 100
                 self.workspace.styles.height = f"{min(max(pct, 20), 85):.1f}%"
 
     def on_mouse_up(self, event: events.MouseUp) -> None:
@@ -1777,6 +1901,10 @@ class SkmapUiApp(App):
     # ------------------------------------------------------------------
 
     async def action_edit_selected_value(self) -> None:
+        # enter in the regio tab submits its form; it must not also
+        # start editing the register-map row
+        if self.tabs.active != "tab-registers":
+            return
         await self._edit_cursor_row()
 
     async def on_reg_map_table_edit_requested(
@@ -1918,6 +2046,8 @@ class SkmapUiApp(App):
             await container.mount(self.value_input)
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
+        if not isinstance(event.input, ValueInput):
+            return  # the regio tab's form inputs (handled by the view)
         if self.table.row_count == 0:
             return
         row = self.table.cursor_row

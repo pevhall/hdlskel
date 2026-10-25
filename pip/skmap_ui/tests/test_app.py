@@ -250,18 +250,22 @@ def test_mouse_resize_dividers():
             assert pct(tree) > 35.0
 
             # --- horizontal divider (workspace | log) ---
-            avail = (
-                app.screen.size.height
-                - app.header.region.height
-                - app.footer.region.height
-            )
-            top = app.header.region.height
-            ws_height = ws.region.height
+            # the workspace's height percentage resolves against its
+            # container's content area (the tab pane), so the drag math
+            # (app and test) works in that frame, not the screen's
+            cont = app.workspace.parent.content_region
+            top = cont.y
+            avail = cont.height
+            ws_region = ws.region
+            ws_height = ws_region.height
             divider_y = ws_region.y + ws_height - 1
             x = ws_region.x + 5
             await pilot.mouse_down(None, (x, divider_y))
             await pilot.pause()
-            target_y = divider_y - 10
+            # 3 rows up: on the small test terminal the workspace sits
+            # low in its pane, and the resize clamps at 20 % — a bigger
+            # drag would hit the clamp and not mirror the drag position
+            target_y = divider_y - 3
             await pilot.hover(None, (x, target_y))
             await pilot.mouse_up(None, (x, target_y))
             await pilot.pause()
@@ -2531,4 +2535,117 @@ def test_x_clears_shown_module_rc_and_triggered_rc_asserts():
                     break
                 await pilot.pause()
             assert rsr.read_uint_cached() == 0
+    _run(run())
+
+
+# ---------------------------------------------------------------------------
+# regio tab (embedded regio_ui view, fed by a RegioTap)
+# ---------------------------------------------------------------------------
+
+
+def _view_cell(view, row, col):
+    """Plain text of a regio log table cell (columns: time, addr, op,
+    data)."""
+    cell = view.ops.get_cell_at(Coordinate(row, col))
+    return cell.plain if hasattr(cell, "plain") else str(cell)
+
+
+def test_regio_tab_embedded_capture_and_read():
+    async def run():
+        app = SkmapUiApp(make_demo())
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+
+            view = app._regio_view
+            # skmap_ui starts the embedded view **not** capturing: the
+            # boot-time traffic (tree build, first read-all, assert
+            # check) is not logged (regio_ui on its own captures from
+            # the start)
+            assert view.capture is False
+            assert view.ops.row_count == 0
+
+            # 'g' switches to the regio tab (focus: the operations log)
+            await pilot.press("g")
+            await pilot.pause()
+            assert app.tabs.active == "tab-regio"
+            assert app.app.focused is view.ops
+
+            # 'p' starts the capture (a view binding, so it acts while
+            # the regio tab is shown)
+            await pilot.press("p")
+            await pilot.pause()
+            assert view.capture is True
+
+            # switch back to the register map (focus: the table)
+            await pilot.press("g")
+            await pilot.pause()
+            assert app.tabs.active == "tab-registers"
+            assert app.app.focused is app.table
+
+            # read the selected register: it now flows through the tap
+            # and is logged on the (hidden) regio tab
+            key, vreset = next(
+                (k, o)
+                for k, o in app._row_objs.items()
+                if getattr(o, "name", "") == "V_RESET"
+            )
+            app.table.move_cursor(row=app._row_keys.index(key), column=0)
+            await pilot.pause()
+            await pilot.press("r")
+            for _ in range(500):
+                if view.ops.row_count:
+                    break
+                await pilot.pause()
+            assert view.ops.row_count == 1
+            assert int(_view_cell(view, 0, 1), 16) == vreset.addr
+            assert _view_cell(view, 0, 2) == "rd"
+
+            # 'p' (via the regio tab) stops the capture again
+            await pilot.press("g")
+            await pilot.pause()
+            await pilot.press("p")
+            await pilot.pause()
+            assert view.capture is False
+
+    _run(run())
+
+
+def test_regio_tab_form_write_reaches_device():
+    async def run():
+        app = SkmapUiApp(make_demo())
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            view = app._regio_view
+
+            await pilot.press("g")
+            await pilot.pause()
+            # start capturing so the write shows up in the log
+            await pilot.press("p")
+            await pilot.pause()
+
+            sysctrl = app.top_module.kids_cached()[0]
+            ctrl = next(r for r in sysctrl._arr_reg_var if r.name == "CTRL")
+            assert ctrl.read_uint_cached() == 0
+
+            # send a write from the form (enter in the data field);
+            # it goes through the tap onto the app's regio device
+            view.addr_input.value = hex(ctrl.addr)
+            view.data_input.value = "0x2A"
+            view.data_input.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            for _ in range(500):
+                if view.ops.row_count:
+                    break
+                await pilot.pause()
+            assert view.ops.row_count == 1
+            assert int(_view_cell(view, 0, 1), 16) == ctrl.addr
+            assert _view_cell(view, 0, 2) == "wr"
+            assert "2A" in _view_cell(view, 0, 3)
+            # the write reached the device (fresh read comes back 0x2A)
+            assert (await ctrl.read_uint()) == 0x2A
+            # enter on the regio tab must NOT start editing a register
+            # map row
+            assert app.value_input.value == ""
+
     _run(run())
