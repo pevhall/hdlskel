@@ -1,4 +1,3 @@
-import logging
 from abc import ABC, abstractmethod
 from typing import Optional, Callable
 
@@ -42,14 +41,14 @@ class Regio(ABC):
             for offset in range(0, len(data), self._mtu):
                 chunk = data[offset:offset + self._mtu]
                 if self.log_regio:
-                    logging.debug('0x%x <-- %s', addr + offset, chunk)
+                    print('0x%x <-- %s'%(addr + offset, chunk))
                 if self._pre_write_callback_func is not None:
                     self._pre_write_callback_func(addr + offset, chunk)
                 if not self._error_on_write:
                     await self.dev_write(addr + offset, chunk)
         else:
             if self.log_regio:
-                logging.debug('0x%x <-- %s', addr, data)
+                print('0x%x <-- %s' % (addr, data) )
             if self._pre_write_callback_func is not None:
                 self._pre_write_callback_func(addr, data)
             if not self._error_on_write:
@@ -63,14 +62,14 @@ class Regio(ABC):
                 chunk = await self.dev_read(addr + offset, chunk_size)
                 collected.extend(chunk)
                 if self.log_regio:
-                    logging.debug('0x%x --> %s', addr + offset, chunk)
+                    print('0x%x --> %s' % (addr + offset, chunk) )
                 if self._post_read_callback_func is not None:
                     self._post_read_callback_func(addr + offset, chunk)
             data = bytes(collected)
         else:
             data = await self.dev_read(addr, size)
             if self.log_regio:
-                logging.debug('0x%x --> %s', addr, data)
+                print('0x%x --> %s', (addr, data) )
             if self._post_read_callback_func is not None:
                 self._post_read_callback_func(addr, data)
         return data

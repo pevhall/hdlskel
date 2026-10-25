@@ -241,7 +241,7 @@ class RecipeFlagFw:
             rng = f"({to_vhdl_source(self.vec_len)}-1 downto 0)"
             self.vhdl_t = f'std_ulogic_vector{rng}'
         else:
-            self.vhdl_t = f'std_logic'
+            self.vhdl_t = f'std_ulogic'
 
     @property
     def is_vec(self) -> bool:
@@ -697,7 +697,7 @@ entity {recipe.fw_module} is
                         rng = f"({varv.t.vec_len}-1 downto 0)"
                         vhdl_t = f'std_ulogic_vector{rng}'
                     else:
-                        vhdl_t = f'std_logic'
+                        vhdl_t = f'std_ulogic'
                     if varv.acc == Acc.wt:
                         assert isinstance(varv.name_ext, str)
                         p_name = port_name_trig(varv.name_ext)
@@ -866,8 +866,8 @@ architecture rtl of {recipe.fw_module} is
                 #             name = f"to_sint16({name})"
                 #     vhdl_f.write(f" + {name} *2**{(addr_byte % 4)*8}")
         vhdl_f.write(f"""    return k_vec_int;
-    end function;
-    constant REGS_K_INT : integer_vector := get_REGS_K_INT;
+  end function;
+  constant REGS_K_INT : integer_vector := get_REGS_K_INT;
 
   constant HEAD_AND_K_LEN : natural := skmap_module_ipkg.head_and_k_len(
     SKMAP_BYTE_ALIGN => SKMAP_BYTE_ALIGN,
@@ -1028,7 +1028,7 @@ begin
                 vhdl_f.write(f'    variable {varv.name_ext} : {vhdl_t};\n')
                 if varv.acc == Acc.wt:
                     assert not varv.t.is_vec
-                    vhdl_f.write(f'    variable {var_name_trig(varv.name_ext)} : std_logic;\n')
+                    vhdl_f.write(f'    variable {var_name_trig(varv.name_ext)} : std_ulogic;\n')
         vhdl_f.write("""
   begin
     byte_idx_v := HEAD_AND_K_LEN*4;\n\n""");
