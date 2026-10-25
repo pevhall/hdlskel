@@ -1,6 +1,6 @@
 """Textual TUI for browsing a real ``skmap.Module`` register map.
 
-Layout (registers tab)::
+Layout (skmap tab)::
 
     +-----------------------------------------------------------+
     | header                                                    |
@@ -17,9 +17,9 @@ Layout (registers tab)::
     | footer                                                    |
     +-----------------------------------------------------------+
 
-The workspace is **tabbed** (``g`` switches): the first tab is the
-register map above (tree + table + assert log), the second a **regio
-tab** hosting the embedded ``regio_ui`` view (its ``RegioUiView``),
+The workspace is **tabbed** (``g`` switches): the first tab (``skmap``)
+is the register map above (tree + table + assert log), the second (``regio``)
+a **regio tab** hosting the embedded ``regio_ui`` view (its ``RegioUiView``),
 which then uses the **full page** (the assert log belongs to the
 register-map tab and is not shown on the regio tab).  A
 ``regio_ui.RegioTap`` attaches to the same regio device this app uses,
@@ -151,6 +151,7 @@ import asyncio
 import importlib.util
 import logging
 import random
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Union
@@ -627,7 +628,7 @@ class SkmapUiApp(App):
             id="regio-view",
         )
         with TabbedContent(id="tabs"):
-            with TabPane("registers", id="tab-registers"):
+            with TabPane("skmap", id="tab-registers"):
                 with Horizontal(id="workspace"):
                     yield ModuleTree(self.top_module.name(), id="modules")
                     yield RegMapTable(id="registers")
@@ -1522,6 +1523,62 @@ class SkmapUiApp(App):
         )
         self._activate_tab(target)
 
+    #: skmap-specific actions, disabled while the regio tab is shown
+    #: (see check_action): the regio tab footer keeps only 'c' (clear,
+    #: that tab's own log) and 'p' (capture); 'g' keeps working to
+    #: switch back but stays out of the footer too (_apply_tab_footer)
+    _SKMAP_ACTIONS = frozenset(
+        {
+            "check_asserts",
+            "cycle_asserts_level",
+            "read_all_modules",
+            "read_selected",
+            "toggle_bool",
+            "cycle_refresh",
+            "clear_triggered",
+            "toggle_value_bits",
+            "toggle_expand_vec",
+            "edit_selected_value",
+        }
+    )
+
+    def check_action(
+        self, action: str, parameters: tuple[object, ...] | None
+    ) -> bool | None:
+        # while the regio tab is shown all skmap actions are disabled:
+        # a False action state both hides the binding from the footer
+        # and blocks the key (Textual checks the state on dispatch)
+        if (
+            getattr(self, "_active_tab", None) == "tab-regio"
+            and action in self._SKMAP_ACTIONS
+        ):
+            return False
+        return super().check_action(action, parameters)
+
+    def _apply_tab_footer(self) -> None:
+        """Curate the footer for the shown tab.
+
+        The skmap tab shows the full keymap; the regio tab only shows
+        'c' (clear log) and 'p' (capture) — the skmap actions are
+        disabled there (check_action hides them) and 'g' must keep
+        working to switch back, so it is hidden by *replacing* its
+        (frozen) binding with a show=False copy in this app's own
+        bindings map (restored when the skmap tab is shown again).
+        """
+        shown = self._active_tab != "tab-regio"
+        bindings = self._bindings.key_to_bindings.get("g")
+        if bindings:
+            # NB: replace the list in *this app's* dict instead of
+            # mutating the entries — BindingsMap.copy() is shallow, so
+            # the list itself is shared with the class-level map
+            self._bindings.key_to_bindings["g"] = [
+                replace(b, show=shown)
+                if b.action == "toggle_regio_tab" and b.show != shown
+                else b
+                for b in bindings
+            ]
+        self.refresh_bindings()
+
     def _activate_tab(self, pane_id: str) -> None:
         """Show a tab and move the focus into it.
 
@@ -1533,6 +1590,7 @@ class SkmapUiApp(App):
         self._focus_tab(pane_id)
         self.tabs.active = pane_id
         self._active_tab = pane_id
+        self._apply_tab_footer()
 
     def _focus_tab(self, pane_id: str) -> None:
         """Focus the main widget of a tab's pane."""
@@ -1553,6 +1611,7 @@ class SkmapUiApp(App):
         if pane_id is not None and pane_id != self._active_tab:
             self._active_tab = pane_id
             self._focus_tab(pane_id)
+            self._apply_tab_footer()
 
     def _reshow(self) -> None:
         """Rebuild the shown table with the current display options,
@@ -1905,6 +1964,14 @@ class SkmapUiApp(App):
         self.run_worker(self._check_asserts(), name="check_asserts", exclusive=False)
 
     def action_clear_log(self) -> None:
+        # 'c' clears the log of the *shown* tab: on the regio tab that
+        # is the regio operations log (the focused regio view normally
+        # consumes 'c' through its own binding — this also covers the
+        # focus sitting outside the view, e.g. on the tab strip), on
+        # the skmap tab the assert log
+        if self._active_tab == "tab-regio" and self._regio_view is not None:
+            self._regio_view.action_clear_log()
+            return
         self._log_lines.clear()
         self.log_view.clear()
 

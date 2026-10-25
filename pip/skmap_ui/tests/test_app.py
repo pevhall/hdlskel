@@ -31,7 +31,7 @@ from skmap_ui.demo import (
 )
 from rich.text import Text
 from textual.css.scalar import Unit
-from textual.widgets import DataTable, RichLog, Tree
+from textual.widgets import DataTable, RichLog, Tabs, Tree
 from textual.widgets._data_table import Coordinate
 
 
@@ -2647,5 +2647,86 @@ def test_regio_tab_form_write_reaches_device():
             # enter on the regio tab must NOT start editing a register
             # map row
             assert app.value_input.value == ""
+
+    _run(run())
+
+
+def test_regio_tab_footer_and_clear():
+    """Regio tab: footer shows only c/p, skmap keys are disabled there,
+    'c' clears only the shown tab's log, and the register-map tab is
+    named 'skmap'."""
+
+    async def run():
+        app = SkmapUiApp(make_demo())
+        async with app.run_test(size=(140, 36)) as pilot:
+            await _wait_asserts(app, pilot)
+
+            # the register-map tab is named 'skmap' (the Tab widget id
+            # is prefixed by TabbedContent)
+            tab = app.query_one(Tabs).get_tab("--content-tab-tab-registers")
+            assert tab is not None and str(tab.render()).strip() == "skmap"
+
+            def shown() -> set[str]:
+                # footer keys (bindings with show=True in the chain)
+                return {
+                    k
+                    for k, ab in app.screen.active_bindings.items()
+                    if ab.binding.show
+                }
+
+            # skmap tab: the full keymap is shown
+            assert {"R", "r", "a", "x", "g"} <= shown()
+
+            view = app._regio_view
+            # switch to the regio tab and start capturing
+            await pilot.press("g")
+            await pilot.pause()
+            assert app.app.focused is view.ops
+            await pilot.press("p")
+            await pilot.pause()
+            assert view.capture is True
+
+            # regio tab footer: only 'c' (clear) and 'p' (capture) —
+            # the skmap actions are disabled (and hidden), 'g' keeps
+            # working while staying out of the footer
+            assert shown() == {"c", "p"}
+
+            # 'c' clears the log of the *shown* tab: the regio log goes
+            # empty while the assert log (skmap tab) is untouched
+            await pilot.press("g")
+            await pilot.pause()
+            key = next(
+                k
+                for k, o in app._row_objs.items()
+                if getattr(o, "name", "") == "V_RESET"
+            )
+            app.table.move_cursor(row=app._row_keys.index(key), column=0)
+            await pilot.press("r")
+            for _ in range(500):
+                if view.ops.row_count:
+                    break
+                await pilot.pause()
+            assert view.ops.row_count == 1
+            await pilot.press("g")
+            await pilot.pause()
+            n_assert_lines = len(app._log_lines)
+            assert n_assert_lines > 0
+            await pilot.press("c")
+            await pilot.pause()
+            assert view.ops.row_count == 0
+            assert len(app._log_lines) == n_assert_lines
+
+            # the skmap keys are disabled on the regio tab: 'r' starts
+            # no read (capture on, still no new op)
+            await pilot.press("r")
+            await pilot.pause()
+            assert view.ops.row_count == 0
+
+            # 'g' switches back (hidden but working) and the keymap is
+            # restored
+            await pilot.press("g")
+            await pilot.pause()
+            assert app.tabs.active == "tab-registers"
+            assert {"R", "r", "a", "x", "g"} <= shown()
 
     _run(run())

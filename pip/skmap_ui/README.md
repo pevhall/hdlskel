@@ -15,14 +15,15 @@ Pass a real `skmap.Module` (e.g. built with `make_module`) and the app shows:
 | **right table** | the register map of the selected module — `Addr | T | Acc | Name | Value | Description` (mirrors `Module.print_reg_map_cached` / `RegMapTable`), flags expanded as sub-rows; vector registers can be expanded into one row per vector index (`e`) |
 | **bottom log** | an **event log** of the triggered register assets (asserts): every check that finds triggered asserts appends a **timestamped table** block (like `print_table_reg_list(list_reg, title='Asserts')`) — the log grows over time |
 
-The workspace is **tabbed**: alongside the register map (tree + table + assert log) there is a **regio tab** hosting the embedded [regio_ui](../regio_ui) log — every regio operation the TUI performs (reads, writes, clear-rc, periodic updates) is shown there and new operations can be sent (see *Regio tab*).  Switching to the regio tab uses the **full page** for it (the register map, value input and assert log all belong to the *registers* tab and are hidden while the regio tab is shown).
+The workspace is **tabbed**: alongside the **skmap** tab (register map:
+tree + table + assert log) there is a **regio tab** hosting the embedded [regio_ui](../regio_ui) log — every regio operation the TUI performs (reads, writes, clear-rc, periodic updates) is shown there and new operations can be sent (see *Regio tab*).  Switching to the regio tab uses the **full page** for it (the register map, value input and assert log all belong to the *skmap* tab and are hidden while the regio tab is shown).
 
 Uses skmap's native vocabulary: `Acc` codes `na/k/ro/rc/rw/wt` in the *Acc*
 column, and skmap's notion of a **trigger** (register write).
 
 ## Layout & controls
 
-The three panes (on the **registers** tab) are resizable by **dragging a divider with the mouse**
+The three panes (on the **skmap** tab) are resizable by **dragging a divider with the mouse**
 (between tree/table, and between workspace/log). The tree starts
 **fully expanded**, and the tree node of the module whose register map is
 currently displayed is **highlighted** (bold bright blue).
@@ -170,12 +171,13 @@ update only logs new events.
 
 ## Regio tab (embedded regio_ui)
 
-The workspace is tabbed: `g` switches between the register map and the
-**regio tab**, which embeds the [regio_ui](../regio_ui) view (the
+The workspace is tabbed: `g` switches between the **skmap** tab (the
+register map) and the **regio tab**, which embeds the
+[regio_ui](../regio_ui) view (the
 `Time | Address | Op | Data` operations log, a status line and the
 new-operation form).  The regio tab uses the **full page** — the
 register map, value input and the assert log all belong to the
-*registers* tab and are hidden while it is shown.  No extra TCP hop is
+*skmap* tab and are hidden while it is shown.  No extra TCP hop is
 involved — a `regio_ui.RegioTap` attaches to the same regio device the
 TUI itself uses, so:
 
@@ -194,8 +196,10 @@ on its own captures from the start — see its `--no-capture` flag.)
 On the regio tab the operations log has the focus: `t` toggles the
 form's `wr`/`rd` op, `c` clears the log, `p` toggles the capture, and
 `enter` on a log row autofills the form (see the regio_ui docs).  The
-register-map keys (`r`, `R`, `a`, `x`, …) keep working and act on the
-register map shown on the other tab; `g` switches back.
+footer there shows only `c` (clear — clears the log of the **shown**
+tab) and `p` (capture): the register-map keys (`r`, `R`, `a`, `x`, …)
+are *disabled* on the regio tab, and `g` — which switches back — keeps
+working while staying out of the footer.
 
 ## Assert log
 
