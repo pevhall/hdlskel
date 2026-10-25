@@ -1,6 +1,6 @@
 """Textual TUI for browsing a real ``skmap.Module`` register map.
 
-Layout::
+Layout (registers tab)::
 
     +-----------------------------------------------------------+
     | header                                                    |
@@ -18,8 +18,10 @@ Layout::
     +-----------------------------------------------------------+
 
 The workspace is **tabbed** (``g`` switches): the first tab is the
-register map above (tree + table), the second a **regio tab** hosting
-the embedded ``regio_ui`` view (its ``RegioUiView``).  A
+register map above (tree + table + assert log), the second a **regio
+tab** hosting the embedded ``regio_ui`` view (its ``RegioUiView``),
+which then uses the **full page** (the assert log belongs to the
+register-map tab and is not shown on the regio tab).  A
 ``regio_ui.RegioTap`` attaches to the same regio device this app uses,
 so every operation the TUI performs (reads / writes / clear-rc / the
 periodic update) is logged on that tab and its form can send new
@@ -486,7 +488,11 @@ class SkmapUiApp(App):
     CSS = """
     #tabs { height: 1fr; }
     TabPane { height: 1fr; }
-    #workspace { height: 80%; }
+    /* the registers pane stacks workspace / value inputs / assert log:
+       3fr + 1fr (the log keeps min-height rows) — fractional units so
+       the stack always fills the pane exactly (a fixed % of the pane
+       plus the log's min-height would overflow on short terminals) */
+    #workspace { height: 3fr; }
     #modules { width: 35%; border: round $primary; }
     #registers { width: 1fr; border: round $accent; }
     /* the cursor_type="row" cursor spans the whole row: a subtle
@@ -636,9 +642,15 @@ class SkmapUiApp(App):
                             "e: expand vec | g: regio view"
                         ),
                     )
+                # the assert log lives inside the registers pane (not
+                # below the tabs): the regio tab then uses the full
+                # page and shows no assert log
+                yield RichLog(id="log", markup=True, min_width=0)
             with TabPane("regio", id="tab-regio"):
+                # the embedded regio_ui view fills the whole page
+                # (the registers pane's workspace / inputs / log are
+                # all hidden while this tab is shown)
                 yield self._regio_view
-        yield RichLog(id="log", markup=True, min_width=0)
         yield Footer()
 
     def on_mount(self) -> None:
