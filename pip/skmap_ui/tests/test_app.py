@@ -861,6 +861,26 @@ def test_parse_value():
     assert parse(s8, "128") is None
     assert parse(s8, "-129") is None
 
+    # sint hex is a bit pattern: any hex value that fits the width is
+    # accepted; with the width-MSB set the value is negative (static
+    # cast: 0xFF -> -1, 0x80 -> -128 for an 8-bit sint)
+    assert parse(s8, "0xFF") == -1
+    assert parse(s8, "0x80") == -128
+    assert parse(s8, "0x7F") == 127
+    assert parse(s8, "0x100") is None  # does not fit the 8-bit width
+    # non-byte width: only the elem_w MSB (bit w-1) is the sign bit
+    s12 = _RegStub(ValueKind.sint, 12)
+    assert parse(s12, "0xF8") == 248  # bit 11 clear: stays positive
+    assert parse(s12, "0xFF8") == -8
+    assert parse(s12, "0xFFF") == -1
+    assert parse(s12, "0x1000") is None  # does not fit the 12-bit width
+    assert parse(s12, "4056") is None  # decimal still needs the signed range
+    assert parse(s12, "-8") == -8
+    # hex values below the sint range are not bit patterns (rejected)
+    assert parse(s8, "-0x81") is None
+    # uint: unchanged (hex only wraps within the width, never negative)
+    assert parse(r32, "-0x1") is None
+
 
 # ---------------------------------------------------------------------------
 # value editing: prefill, vector lane inputs, value-cell wrapping
@@ -1347,6 +1367,94 @@ def test_bits_display_sign_extends_sint():
             assert app.value_input.value == "0xFD8"
             await pilot.press("escape")
             await pilot.pause()
+    _run(run())
+
+
+def test_edit_scalar_sint_negative_decimal():
+    """A sint scalar accepts a negative decimal: the value is written
+    with Reg.write_sint and the device holds the two's-complement bits
+    (12-bit -8 -> 0xFF8), read back as the signed value."""
+    async def run():
+        top = make_sintw_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            s12 = top.arr_reg_var[1]
+            assert s12.read_sint_cached() == -40
+            app.table.focus()
+            app.table.move_cursor(row=1, column=0)  # S12
+            await pilot.press("enter")
+            await pilot.pause()
+            # int mode: prefilled with the signed decimal
+            assert app.value_input.value == "-40"
+            app.value_input.value = "-8"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.app.focused is app.table
+            for _ in range(500):
+                if s12.read_sint_cached() == -8:
+                    break
+                await pilot.pause()
+            assert s12.read_sint_cached() == -8
+            # the device holds the 12-bit two's-complement pattern
+            assert s12.read_uint_cached() == 0xFF8
+            await _wait_cell(app, pilot, 1, VALUE, "-8")
+    _run(run())
+
+
+def test_edit_scalar_sint_hex_is_bit_pattern():
+    """A sint scalar accepts a hex value as a raw bit pattern of the
+    value width: it only has to fit 12 bits, and with the elem_w MSB
+    set it is negative (static cast: 0xFF8 -> -8); hex that does not
+    fit the width is rejected (the write aborts, input kept)."""
+    async def run():
+        top = make_sintw_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            s12 = top.arr_reg_var[1]
+            assert s12.read_sint_cached() == -40
+            app.table.focus()
+            app.table.move_cursor(row=1, column=0)  # S12
+            await pilot.press("enter")
+            await pilot.pause()
+            # hex with the 12-bit MSB set: written as the negative value
+            app.value_input.value = "0xFF8"
+            await pilot.press("enter")
+            await pilot.pause()
+            for _ in range(500):
+                if s12.read_sint_cached() == -8:
+                    break
+                await pilot.pause()
+            assert s12.read_sint_cached() == -8
+            assert s12.read_uint_cached() == 0xFF8
+
+            # hex without the MSB: a positive value (0xF8 -> 248)
+            app.table.move_cursor(row=1, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            app.value_input.value = "0xF8"
+            await pilot.press("enter")
+            await pilot.pause()
+            for _ in range(500):
+                if s12.read_sint_cached() == 248:
+                    break
+                await pilot.pause()
+            assert s12.read_sint_cached() == 248
+
+            # hex that does not fit the 12-bit width: rejected, the
+            # input stays open and the device value is unchanged
+            app.table.move_cursor(row=1, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            app.value_input.value = "0xFFF8"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.app.focused is app.value_input
+            assert app.value_input.value == "0xFFF8"
+            assert s12.read_sint_cached() == 248
     _run(run())
 
 

@@ -53,10 +53,21 @@ edited in place; input accepts decimal or `0x`-hex:
 
 | row's `Acc` | `enter` does |
 |------|--------|
-| `rw` / `wt` | focuses the input bar and prefills the current value; `enter` writes it to the **device** via `Reg.write_uint`; `escape` cancels |
+| `rw` / `wt` | focuses the input bar and prefills the current value; `enter` writes it to the **device** via `Reg.write_uint` (or `Reg.write_sint` for a `sint` reg); `escape` cancels |
 | `rc` | **clears** the register immediately (writes zero to the device) |
 | `ro` | nothing (read-only; use `r` (read) to read it from the device) |
 | `k` / `na` | nothing — the value is hardwired / has no access, so it is never read back |
+
+**`sint` values may be negative**: a signed register / lane accepts a
+negative decimal (`-8`) **and** a hex *bit pattern* — a hex value only
+has to fit the element width (`elem_w`), and if the MSB of the width
+is set the value is negative, like a static cast from unsigned to
+signed (a 12-bit `sint`: `0xFF8` → `-8`, `0xFFF` → `-1`; `0xF8` has
+the 12-bit MSB clear, so it is `+248`).  Hex that does not fit the
+width (`0xFFF8` in 12 bits) or decimal outside the signed range is
+rejected in the input bar (it stays open for a fix).  Signed values
+are written with `Reg.write_sint` / `write_idx_sint` (the device
+holds the two's-complement bits).
 
 **Vector registers** open one input column per vector index instead of
 a single input line; each column is prefilled with its current lane
@@ -101,12 +112,14 @@ are shown in the table's border title, e.g.
 * **`v` — value display**: off (the default) shows `uint` / `sint`
   values as **int** (decimal, `sint` signed); on shows them as
   **bits** (hex, the same zero-padded hex the `bits` kind uses — `sint`
-  values sign-extended to the type's byte width — the same digit count
-  as skmap's `Reg._str_num(v, 16)`, dependent on `value_type.width`,
-  e.g. an 8-bit `-85` as `0xAB`, a 12-bit `-40` as `0xFFD8` (not
-  `0xFD8`), a 4-bit `-1` as `0xFF` (not `0xF`)).  `bits`
+  values sign-extended; the same digit count as skmap's
+  `Reg._str_num(v, 16)` = `ceil_div(value_type.width, 4)` hex digits,
+  e.g. an 8-bit `-85` as `0xAB`, a 12-bit `-40` as `0xFD8`, a 4-bit
+  `-1` as `0xF`).  `bits`
   / `flag` / `char` kinds are unaffected.  The input prefill follows
-  the display; the input still accepts both hex and decimal.
+  the display; the input still accepts both hex and decimal (a
+  sign-extended sint hex prefill like `0xFD8` parses back to the
+  negative value — see *Editing register values*).
 * **`e` — expand vector registers**: off (the default) shows a vector
   register as one row (its value cell shows all lanes); on expands it
   **the same way an `ExternalMemVec` view is shown** — the register's

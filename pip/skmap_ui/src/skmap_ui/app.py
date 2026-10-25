@@ -88,7 +88,11 @@ horizontally by 5 cells (the register-map cursor is unchanged; in the
 tree a plain ``left`` / ``right`` still expands / collapses the node).  ``enter`` on a table row edits the
 value of ``rw`` / ``wt`` registers: the input line is prefilled with
 the *current* value and can be edited in place (``enter`` to write,
-``escape`` to cancel, both hex and decimal accepted); a *vector*
+``escape`` to cancel, both hex and decimal accepted; a ``sint`` value
+may be negative — decimal ``-8`` or hex *bit pattern*, where a hex
+value only has to fit the value width and the width-MSB set makes it
+negative, like a static cast (``0xFF8`` -> ``-8`` for a 12-bit sint,
+written with ``Reg.write_sint``)); a *vector*
 register opens one input column per vector index (each prefilled with
 the current lane value via ``Reg.read_idx_value_cached``), written
 lane by lane with ``Reg.write_idx_uint`` / ``Reg.write_idx_sint``;
@@ -218,6 +222,12 @@ def _assert_value_str(obj: Union[Reg, RFlag]) -> str:
     if isinstance(obj, RFlag):
         return Text.from_markup(obj._value_rich_str()).plain
     return Text.from_markup(obj.read_rich_str_cached()).plain
+
+
+def _is_hex_literal(text: str) -> bool:
+    """True if ``text`` is a 0x-prefixed integer literal (``int(t, 0)``
+    with a hex prefix, optionally signed)."""
+    return text.strip().lower().lstrip("+-").startswith("0x")
 
 
 class ModuleTree(Tree):
@@ -1796,7 +1806,10 @@ class SkmapUiApp(App):
                 self._edit_lane = (key, lane_idx)
                 self.value_input.placeholder = (
                     f"{obj.name}[{lane_idx}]: "
-                    f"{obj.value_type.width}-bit value (0x-hex or decimal)"
+                    f"{obj.value_type.width}-bit value "
+                    "(0x-hex or decimal"
+                    + (", sint may be negative)" if obj.value_type.kind
+                    is ValueKind.sint else ")")
                 )
                 # prefill with the current lane value, editable in place
                 self.value_input.value = self._value_str(obj, lane_idx)
@@ -1824,7 +1837,10 @@ class SkmapUiApp(App):
                 self._edit_lane = (key, idx)
                 self.value_input.placeholder = (
                     f"{mem.name}[{idx}]: "
-                    f"{mem.value_type.width}-bit value (0x-hex or decimal)"
+                    f"{mem.value_type.width}-bit value "
+                    "(0x-hex or decimal"
+                    + (", sint may be negative)" if mem.value_type.kind
+                    is ValueKind.sint else ")")
                 )
                 # prefill with the current lane value, editable in place
                 self.value_input.value = self._value_str(mem, idx)
@@ -1867,7 +1883,10 @@ class SkmapUiApp(App):
             await self._open_vector_inputs(reg)
             return
         self.value_input.placeholder = (
-            f"{reg.name}: {vt.width}-bit value (0x-hex or decimal)"
+            f"{reg.name}: {vt.width}-bit value "
+            "(0x-hex or decimal"
+            + (", sint may be negative)"
+               if vt.kind is ValueKind.sint else ")")
         )
         # prefill with the current value so it can be edited in place
         self.value_input.value = self._value_str(reg)
@@ -1987,20 +2006,35 @@ class SkmapUiApp(App):
         """Parse a value for ``asset`` (Reg or ExternalMemVec): decimal
         or 0x-prefixed hex.
 
+        A ``sint`` value may be negative as decimal (``-8``) or as a hex
+        *bit pattern*: a hex value only has to fit the value width, and
+        if the MSB of the width is set the value is negative (like a
+        static cast from unsigned to signed, e.g. ``0xF8`` -> ``-8`` for
+        a 12-bit sint).  Plain decimal outside the signed range is
+        rejected.
+
         Returns ``None`` if the text does not fit the value kind / width
-        (sint values may be negative) or, for a Reg, outside its
-        configured min / max limits — the same condition
-        ``Reg.check_value_limit()`` would raise on, so the write is
-        aborted before it reaches the device.
+        or, for a Reg, outside its configured min / max limits — the
+        same condition ``Reg.check_value_limit()`` would raise on, so
+        the write is aborted before it reaches the device.
         """
         vt = asset.value_type
+        t = text.strip()
         try:
-            v = int(text.strip(), 0)
+            v = int(t, 0)
         except ValueError:
             return None
         if vt.kind is ValueKind.sint:
-            if not -(1 << (vt.width - 1)) <= v < (1 << (vt.width - 1)):
-                return None
+            if v < 0:
+                if v < -(1 << (vt.width - 1)):
+                    return None
+            elif v >= (1 << (vt.width - 1)):
+                # a hex value is a raw bit pattern of the value width:
+                # it only needs to fit elem_w bits, and the elem_w MSB
+                # is the sign bit (static cast: 0xF8 -> -8 for 12 bits)
+                if not _is_hex_literal(t) or v >= (1 << vt.width):
+                    return None
+                v -= 1 << vt.width
         elif not 0 <= v < (1 << vt.width):
             return None
         if (
@@ -2100,6 +2134,8 @@ class SkmapUiApp(App):
                     await self._regio(reg.write_list_sint(value))
                 else:
                     await self._regio(reg.write_list_uint(value))
+            elif reg.value_type.kind is ValueKind.sint:
+                await self._regio(reg.write_sint(value))
             else:
                 await self._regio(reg.write_uint(value))
         except Exception as err:  # noqa: BLE001
