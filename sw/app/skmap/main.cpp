@@ -1,3 +1,4 @@
+#include "hdlskel/skmap/log.hpp"
 #include "hdlskel/skmap/module.hpp"
 #include "hdlskel/regio/tcp/regio_cli_utils.hpp"
 #include "hdlskel/regio/tcp/regio_tcp.hpp"
@@ -73,6 +74,13 @@ int skmap_main(int argc, char** argv) {
     app.add_flag("-v", verbose, "Increase logging verbosity (repeat up to -vv)");
 
     CLI11_PARSE(app, argc, argv);
+
+    // Mirrors setup_logger(verbose) in pip/skmap/src/skmap/cli_utils.py:
+    // default shows errors and warnings, -v adds info, -vv adds debug.
+    hdlskel::skmap::set_log_verbosity(
+        verbose >= 2 ? hdlskel::skmap::LogVerbosity::debug
+      : verbose == 1 ? hdlskel::skmap::LogVerbosity::info
+                     : hdlskel::skmap::LogVerbosity::error);
 
     auto regio = hdlskel::regio::cli::make_regio_from_args(regio_args);
 

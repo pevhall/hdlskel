@@ -389,6 +389,22 @@ class Recipe:
         self._checksum = self._caculate_checksum()
 
     def _caculate_checksum(self):
+        """Checksum of the recipe, embedded in the generated py / cpp / vhdl
+        and in the module head, so a module image and the code that parses it
+        can be checked against each other (ModuleFactory.make_module refuses a
+        checksum mismatch).
+
+        Note: everything that changes the layout is hashed (names, access
+        types, value kind and width) but the vector length, the assert level
+        and the value limits are NOT, so changing those does not change the
+        checksum. They are read from the sub header / module data at runtime
+        for variables, but for constants they are baked into the generated
+        code, so a stale generated file is not detected for those fields.
+        They are left out deliberately: the checksum is checked against images
+        produced by the firmware and against cached regio files, so extending
+        it is a breaking change that needs every generated file (and every
+        cached image) to be regenerated together.
+        """
         m = hashlib.md5()
         m.update(SKMAP_VER_MAJOR.to_bytes(1))
         # m.update(SKMAP_VER_MINOR.to_bytes(1))

@@ -4,11 +4,13 @@ hdlskel_skmap_lib = library(
   'hdlskel_skmap',
   [
     './src/basic_types.cpp'
+  , './src/log.cpp'
   , './src/head.cpp'
   , './src/reg.cpp'
   , './src/module.cpp'
   , './src/external_mem.cpp'
   , './include/hdlskel/skmap/basic_types.hpp'
+  , './include/hdlskel/skmap/log.hpp'
   , './include/hdlskel/skmap/head.hpp'
   , './include/hdlskel/skmap/reg.hpp'
   , './include/hdlskel/skmap/module.hpp'

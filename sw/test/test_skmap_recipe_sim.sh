@@ -56,6 +56,11 @@ fi
 echo "simulation server is up;"
 
 meson compile -C ../build -v
-../build/app/skmap/skmap -p $PORT
+# -m -s so the app actually reads the whole module (reg map + asserts)
+../build/app/skmap/skmap -p $PORT -m -s
+# Raw regio access over tcp, exercises the same client the cache file tests
+# cover offline
+../build/app/regio_op/regio_op -p $PORT -a 0 -s 16
+../build/app/regio_op/regio_op -p $PORT -a 0 -s 16 --mtu 4
 
 

@@ -1,4 +1,4 @@
-# Executable: hdlskel_regio_tcp_op
+# Executable: skmap
 
 executable(
   'skmap',

@@ -68,7 +68,9 @@ class RegioTcpServer:
 
             try:
                 rqst_head = unpack_rqst_head(rqst_head_bytes)
-            except struct.error or ValueError:
+            except (struct.error, ValueError):
+                # `except struct.error or ValueError` would only ever catch
+                # struct.error
                 print("Malformed header; closing connection")
                 return
 
@@ -89,8 +91,10 @@ class RegioTcpServer:
                 if not isinstance(rd_data, (bytes, bytearray)):
                     raise TypeError("Regio.read must return bytes")
                 if len(rd_data) != rqst_head.size:
-                    # treat mismatch as error
-                    raise TypeError(f"Regio.read returned {len(rd_data)} bytes but requested {rqst_head.size}")
+                    # Reply with the error flag set (the size in the reply
+                    # head always echoes the request, the client checks it),
+                    # instead of raising and dropping the connection.
+                    print(f"Regio.read returned {len(rd_data)} bytes but requested {rqst_head.size}")
                     flag_error = True
                     rd_data = b""
                 else:

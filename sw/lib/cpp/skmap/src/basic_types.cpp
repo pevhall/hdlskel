@@ -1,4 +1,4 @@
-#include "include/hdlskel/skmap/basic_types.hpp"
+#include "hdlskel/skmap/basic_types.hpp"
 
 #include <sstream>
 
@@ -45,12 +45,25 @@ std::ostream& operator<<(std::ostream& os, hdlskel::skmap::ValueKind v) {
 
 namespace hdlskel::skmap {
 
+// Mirrors ValueType.char_str in pip/skmap/src/skmap/basic_types.py
+char ValueType::char_str() const {
+    switch (m_kind) {
+        case ValueKind::bits_: return 'x';
+        case ValueKind::uint_: return 'u';
+        case ValueKind::sint_: return 's';
+        case ValueKind::char_: return 'c';
+        case ValueKind::flag_: return 'b';
+    }
+    return '?';
+}
+
+// Mirrors ValueType.__repr__: "[3]s12", "u8", "x32"
 std::string ValueType::str() const {
     std::ostringstream os;
-    ::operator<<(os, m_kind) << elem_width();
     if (m_vec_len) {
         os << "[" << *m_vec_len << "]";
     }
+    os << char_str() << elem_width();
     return os.str();
 }
 

@@ -49,7 +49,8 @@ inline addr_t ceil_div(addr_t n, addr_t d) {
 inline addr_t ceil_multiple(addr_t n, addr_t mult) {
     return ceil_div(n,mult)*mult;
 }
-// Helper: round up `v` to the next power of two (returns v itself if already a power of two)
+// Helper: number of bits needed to represent `x`, i.e. ceiling of log2(x)
+// for x > 1 (0 for x <= 1). Matches python `(x - 1).bit_length()`.
 inline unsigned int ceil_log2(addr_t x) noexcept {
     if (x == 0) return 0;
     // Position of the highest set bit (0 based)
@@ -60,10 +61,30 @@ inline unsigned int ceil_log2(addr_t x) noexcept {
     // Otherwise we need one extra step.
     return (x & (x - 1)) ? msb + 1 : msb;
 }
+// Bytes/width a value of `w` bits occupies in the software view of the map:
+// `w` rounded up to a multiple of 8, then up to a power of two, minimum 8.
+// Mirrors promote_to_sw_w in pip/skmap/src/skmap/basic.py (power of two
+// first, then a minimum of 8, gives the same result).
 inline addr_t promote_to_sw_w(addr_t w) {
-    // w = ceil_multiple(w, 8);
     w = (1<<ceil_log2(w));
     return std::max(w, (addr_t)(8));
+}
+// Keep only the low `width` bits (mirrors the masking in Reg.read_uint_cached
+// and RegVec._bytes_to_list_uint in pip/skmap/src/skmap/reg.py).
+inline uint64_t mask_to_width(uint64_t value, uint64_t width) {
+    if (width >= 8*sizeof(uint64_t)) {
+        return value;
+    }
+    return value & ((uint64_t{1} << width) - 1);
+}
+// Interpret the low `width` bits of `value` as a two's complement number
+// (mirrors cast_uint_to_sint in pip/skmap/src/skmap/basic.py).
+inline int64_t sint_sign_extend(uint64_t value, uint64_t width) {
+    if (width == 0 || width >= 8*sizeof(uint64_t)) {
+        return static_cast<int64_t>(value);
+    }
+    uint64_t mask = uint64_t{1} << (width - 1);
+    return static_cast<int64_t>((mask_to_width(value, width) & (mask - 1)) - (value & mask));
 }
 enum class Acc {
     na = 0,
@@ -113,6 +134,12 @@ public:
     addr_t sw_elem_size() const { return sw_elem_width()/8; }
     addr_t sw_elem_offset() const { return m_sw_elem_offset; }
     ValueKind kind() const { return m_kind; }
+    // Mirrors ValueType.is_bool in pip/skmap/src/skmap/basic_types.py
+    bool is_bool() const { return m_kind == ValueKind::flag_ && m_width == 1; }
+    // Single character type code, mirrors ValueType.char_str():
+    // bits 'x', uint 'u', sint 's', char 'c', flag 'b'
+    char char_str() const;
+    // Rendered like ValueType.__repr__ in python: "[3]s12", "u8", "x32"
     std::string str() const;
     std::optional<uint32_t> vec_len() const { return m_vec_len; }
     bool is_vec() const { return m_vec_len.has_value(); }
@@ -136,13 +163,17 @@ inline id_t id_str_to_id(const std::string & s) {
         throw std::runtime_error("size of id_str too large");
     }
     id_t id{};
-    std::memcpy(&id, &s[0], s.size());
+    std::memcpy(id.data(), s.data(), s.size());
     return id;
 }
+// Like get_id_str in pip/skmap/src/skmap/head.py: the fixed width id is
+// zero padded, trim the padding so the result is a normal std::string.
 inline std::string id_to_str(id_t id) {
-    std::string s(id_size, '\0');
-    std::memcpy(&s[0], &id, id_size);
-    return s;
+    size_t len = id_size;
+    while (len > 0 && id[len-1] == '\0') {
+        len--;
+    }
+    return std::string(id.data(), len);
 }
 }
 std::ostream& operator<<(std::ostream& os, hdlskel::skmap::Acc v);

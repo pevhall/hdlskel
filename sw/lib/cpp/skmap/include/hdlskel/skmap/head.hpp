@@ -35,13 +35,13 @@ struct __attribute__((packed)) Head {
         return sync == hdlskel::skmap::sync;
     }
     uint8_t version() const {
-        static uint8_t VERSION_MASK = (1<<VERSION_BITS)-1;
+        constexpr uint8_t VERSION_MASK = (1<<VERSION_BITS)-1;
         return _version_flags & (VERSION_MASK);
     }
     // Upper nibble: reserved for future use, must currently be zero
-    // (asserted in Module::make_module).
+    // (checked in Module::make_module).
     uint8_t flags() const {
-        static uint8_t FLAGS_MASK = (1<<FLAGS_BITS)-1;
+        constexpr uint8_t FLAGS_MASK = (1<<FLAGS_BITS)-1;
         return (_version_flags >> VERSION_BITS) & (FLAGS_MASK);
     }
     size_t module_len() const {
@@ -67,7 +67,6 @@ struct __attribute__((packed)) Head {
         ) * word_size;
     }
 
-    // std::string id_str() const;
     std::string checksum_str() const;
     std::string id_str() const;
 
@@ -75,6 +74,8 @@ struct __attribute__((packed)) Head {
 };
 static_assert (sizeof(Head) == head_size);
 
+// Unpack a head from `head_size` bytes. Throws if the span is too short
+// (a corrupt image must not be silently accepted in release builds).
 const Head unpack_head(std::span<const std::byte> head_bytes);
 
 

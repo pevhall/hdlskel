@@ -269,7 +269,8 @@ class RegVec(Reg):
 
     def _bytes_to_list_uint(self, b:bytes) -> list[int]:
         value_vec_int = bytes_to_list_int(b, self.elem_offset)
-        if self.elem_size != (self.value_type.width*8):
+        # elem_size is in bytes, value_type.width in bits
+        if self.elem_size*8 != self.value_type.width:
             mask = (1<<self.value_type.width)-1
             for ii in range(len(value_vec_int)):
                 value_vec_int[ii] &= mask
@@ -339,7 +340,10 @@ class RegVec(Reg):
     def read_idx_uint_cached(self, idx : int) -> int:
         b = self.read_idx_bytes_cached(idx)
         value_int = int.from_bytes(b, byteorder='little')
-        return value_int
+        # Mask to the value width, an element can be wider than the value
+        # (e.g. 12 bit values in 2 byte elements, 8 bit chars in 4 byte
+        # elements). read_idx_sint_cached() sign extends from this value.
+        return value_int & ((1 << self.value_type.width) - 1)
 
     async def read_idx_uint(self, idx : int) -> int:
         _ = await self.read_idx_bytes(idx)
@@ -371,7 +375,9 @@ class RegVec(Reg):
             case ValueKind.bits: return self.read_idx_uint_cached(idx)
             case ValueKind.flag:
                 assert self.value_type.is_bool
-                return self.read_list_bool_cached()
+                # A single flag, read_idx_value_cached() must return the same
+                # type (int/bool) as every other kind, not the whole vector.
+                return self.read_idx_bool_cached(idx)
             case ValueKind.char: return self.read_idx_char_cached(idx)
 
     def write_idx_uint_cached(self, idx : int, val : int):
@@ -391,11 +397,12 @@ class RegVec(Reg):
         await self.write_idx_cache(idx)
 
     def read_str_cached(self)  -> str:
-        assert self.elem_size==8
-        assert self.elem_offset==8
-        value_list_uint = self.read_list_uint_cached()
-        value_str = ''.join([chr(uint) for uint in value_list_uint])
-        return value_str
+        # Every element holds one char, only the low byte of each element is
+        # used (mirrors RegVec::read_str_cached in the C++ library). This also
+        # works for 8 bit char vectors, which the previous element size check
+        # rejected.
+        b = self.read_bytes_cached()
+        return ''.join(chr(b[ii*self.elem_offset]) for ii in range(self.vec_len))
 
     async def read_str(self)  -> str:
         _ = await self.read_bytes()
@@ -454,7 +461,8 @@ class RegVec(Reg):
         else:
             value = self.read_idx_bool_cached(idx)
             ass = self.ass if value else Ass.passed
-        if log_ass != Ass.none and self.ass >= log_ass:
+        # Log on the assert of the checked flag, not on the register default
+        if log_ass != Ass.none and ass >= log_ass:
             log_f.append(self)
         return ass
 
@@ -587,8 +595,6 @@ class RFlag:
         # print(f'b[{ii_byte}] = {b[ii_byte]}')
         self.reg_flags.write_bytes_cached(bytes(b))
 
-        d = self.reg_flags.read_bytes_cached()
-
     async def write_bool(self, v : bool):
         self.write_bool_cached(v)
         await self.reg_flags.write_cache()
@@ -673,7 +679,9 @@ class RegFlags(Reg):
 
     def has_ass(self) -> bool:
         for f in self.flags:
-            if f.ass != None:
+            # RFlag.ass defaults to Ass.none (not None), so comparing against
+            # None is always true
+            if f.ass != Ass.none:
                 return True
         return False
 

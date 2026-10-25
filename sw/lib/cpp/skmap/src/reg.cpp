@@ -12,22 +12,12 @@ namespace {
 using uint_t = hdlskel::skmap::uint_t;
 using sint_t = hdlskel::skmap::sint_t;
 
-// Keep only the low `width` bits (mirrors the masking done by
-// Reg.read_uint_cached / RegVec._bytes_to_list_uint in pip/skmap reg.py).
-inline uint_t mask_to_width(uint_t value, uint64_t width) {
-    if (width >= 8*sizeof(uint_t)) {
-        return value;
-    }
-    return value & ((uint_t{1} << width) - 1);
-}
-
+// mask_to_width() and sint_sign_extend_w() live in basic_types.hpp so the
+// external memory helpers can use them too.
+using hdlskel::skmap::mask_to_width;
+using hdlskel::skmap::sint_sign_extend;
 inline sint_t sint_sign_extend_w(uint64_t value, int w) {
-    if (w <= 0 || w >= 64) {
-        // No sign extension needed/possible for the full 64 bit range.
-        return static_cast<sint_t>(value);
-    }
-    uint64_t mask = uint64_t{1} << (w - 1);
-    return static_cast<sint_t>((value & (mask - 1)) - (value & mask));
+    return sint_sign_extend(value, static_cast<uint64_t>(w));
 }
 
 }
@@ -101,6 +91,16 @@ bool Reg::read_bool_cached() const {
     return read_uint_cached() != 0;
 }
 
+// Mirrors Reg.read_char_cached in pip/skmap/src/skmap/reg.py
+char Reg::read_char_cached() const {
+    if (elem_w() != 8) {
+        throw std::runtime_error("Char must be 8 bits, reg \"" + m_name + "\" is " + std::to_string(elem_w()));
+    }
+    unsigned char c = 0;
+    memcpy_from_cache(&c);
+    return static_cast<char>(c);
+}
+
 uint_t Reg::read_uint() {
     update_cache();
     return read_uint_cached();
@@ -116,22 +116,64 @@ bool Reg::read_bool() {
     return read_bool_cached();
 }
 
+char Reg::read_char() {
+    update_cache();
+    return read_char_cached();
+}
+
+// A value must fit in the register's bytes, mirroring python's
+// int.to_bytes(self.size) which raises OverflowError. Note python checks
+// against the register *size* (rounded up to the byte alignment), not the
+// declared bit width.
+void Reg::check_value_fits(uint_t value) const {
+    if (size() >= sizeof(uint_t)) {
+        return;
+    }
+    uint_t limit = uint_t{1} << (8*size());
+    if (value >= limit) {
+        throw std::runtime_error("Value " + std::to_string(value) + " does not fit in reg \"" + m_name + "\" (" + std::to_string(8*size()) + " bits)");
+    }
+}
+
+void Reg::check_value_fits(sint_t value) const {
+    if (size() >= sizeof(sint_t)) {
+        return;
+    }
+    sint_t bits = sint_t{8*size()};
+    sint_t max = (sint_t{1} << (bits-1)) - 1;
+    sint_t min = -(sint_t{1} << (bits-1));
+    if (value < min || value > max) {
+        throw std::runtime_error("Value " + std::to_string(value) + " does not fit in reg \"" + m_name + "\" (" + std::to_string(bits) + " bits signed)");
+    }
+}
+
 void Reg::write_uint_cached(uint_t value) { 
     if ( size() > sizeof(uint_t) ) {
         throw std::runtime_error("uint_t not large enough to fit register");
     }
-    check_value_limit(static_cast<sint_t>(value));
+    check_value_fits(value);
+    check_value_limit_u(value);
     memcpy_to_cache(&value);
 }
 void Reg::write_sint_cached(sint_t value) { 
     if ( size() > sizeof(sint_t) ) {
         throw std::runtime_error("sint_t not large enough to fit register");
     }
+    check_value_fits(value);
     check_value_limit(value);
     memcpy_to_cache(&value);
 }
 void Reg::write_bool_cached(bool v) {
     write_uint_cached(static_cast<uint_t>(v));
+}
+// Mirrors Reg.write_char_cached added for the char accessors the code
+// generators emit (python packs the character through write_bytes).
+void Reg::write_char_cached(char v) {
+    if (elem_w() != 8) {
+        throw std::runtime_error("Char must be 8 bits, reg \"" + m_name + "\" is " + std::to_string(elem_w()));
+    }
+    unsigned char c = static_cast<unsigned char>(v);
+    memcpy_to_cache(&c);
 }
 void Reg::write_uint(uint_t value) { 
     write_uint_cached(value);
@@ -145,13 +187,23 @@ void Reg::write_bool(bool v) {
     write_bool_cached(v);
     write_cache();
 }
+void Reg::write_char(char v) {
+    write_char_cached(v);
+    write_cache();
+}
+// Mirrors Reg.write_zero_cached in pip/skmap/src/skmap/reg.py: zeros in the
+// cache only. write_zero() is this followed by a device write.
+void Reg::write_zero_cached() {
+    check_value_limit(0);
+    std::vector<std::byte> z(size(), std::byte{0});
+    memcpy_to_cache(z.data());
+}
+
 void Reg::write_zero() {
     // Mirrors Reg.write_zero in pip/skmap/src/skmap/reg.py:
     // write_zero_cached() followed by write_cache() (device write is
     // skipped centrally by Module::write_cache when cache_only).
-    check_value_limit(0);
-    std::vector<std::byte> z(size(), std::byte{0});
-    memcpy_to_cache(z.data());
+    write_zero_cached();
     write_cache();
 }
 std::vector<bool> Reg::read_vec_bool_cached() const {
@@ -209,6 +261,40 @@ Ass Reg::ass_check_value_limit(sint_t value) const {
     return (ass_min > ass_max) ? ass_min : ass_max;
 }
 
+// Unsigned variants, see the comment in reg.hpp. A negative configured limit
+// can never be violated by an unsigned value (min) and always is (max).
+Ass Reg::ass_check_value_limit_min_u(uint_t value) const {
+    if (!m_min.has_value()) {
+        return Ass::none;
+    }
+    if (*m_min <= 0 || static_cast<uint_t>(*m_min) <= value) {
+        return Ass::none;
+    }
+    if (m_ass != Ass::none) {
+        return m_ass;
+    }
+    return Ass::error;
+}
+
+Ass Reg::ass_check_value_limit_max_u(uint_t value) const {
+    if (!m_max.has_value()) {
+        return Ass::none;
+    }
+    if (*m_max < 0 || value <= static_cast<uint_t>(*m_max)) {
+        return Ass::none;
+    }
+    if (m_ass != Ass::none) {
+        return m_ass;
+    }
+    return Ass::error;
+}
+
+Ass Reg::ass_check_value_limit_u(uint_t value) const {
+    Ass ass_min = ass_check_value_limit_min_u(value);
+    Ass ass_max = ass_check_value_limit_max_u(value);
+    return (ass_min > ass_max) ? ass_min : ass_max;
+}
+
 void Reg::check_value_limit(sint_t value) const {
     if (ass_check_value_limit(value) >= Ass::error) {
         std::ostringstream oss;
@@ -227,11 +313,26 @@ bool Reg::has_limit() const {
         && (m_min.has_value() || m_max.has_value());
 }
 
+void Reg::check_value_limit_u(uint_t value) const {
+    if (ass_check_value_limit_u(value) >= Ass::error) {
+        std::ostringstream oss;
+        oss << "for reg " << m_name << " value " << value
+            << " is not in range [";
+        oss << (m_min.has_value() ? std::to_string(*m_min) : std::string("-inf"));
+        oss << " , ";
+        oss << (m_max.has_value() ? std::to_string(*m_max) : std::string("+inf"));
+        oss << "]";
+        throw std::runtime_error(oss.str());
+    }
+}
+
 Ass Reg::ass_check_limit_cached() const {
-    sint_t value = (m_value_type.kind() == ValueKind::sint_)
-        ? read_sint_cached()
-        : static_cast<sint_t>(read_uint_cached());
-    return ass_check_value_limit(value);
+    // Signed registers are compared as signed, everything else as unsigned
+    // (python gets this for free with arbitrary precision ints).
+    if (m_value_type.kind() == ValueKind::sint_) {
+        return ass_check_value_limit(read_sint_cached());
+    }
+    return ass_check_value_limit_u(read_uint_cached());
 }
 
 Ass Reg::ass_check_cached(Ass log_ass, std::vector<std::shared_ptr<RFlag>> * log_flags) const {
@@ -288,8 +389,8 @@ std::string Reg::str_value_cached() const {
             break;
         }
         case ValueKind::char_: {
-            assert(false);
-            return "ERROR";
+            value_str = std::string(1, read_char_cached());
+            break;
         }
         case ValueKind::bits_: {
             value_int = static_cast<sint_t>(read_uint_cached());
@@ -299,8 +400,8 @@ std::string Reg::str_value_cached() const {
         }
         case ValueKind::flag_: {
             // A single bit flag reads as a bool, a wider one as binary (like py).
-            if (m_value_type.elem_width() <= 1) {
-                value_str = (read_uint_cached() != 0) ? "true" : "false";
+            if (is_bool()) {
+                value_str = read_bool_cached() ? "True" : "False";
             } else {
                 value_int = static_cast<sint_t>(read_uint_cached());
                 have_int = true;
@@ -416,7 +517,22 @@ std::string RegVec::read_str() {
     return read_str_cached();
 }
 
+void RegVec::check_idx(addr_t idx) const {
+    // Mirrors the `assert idx < len(self)` in the python index accessors.
+    if (idx >= vec_len()) {
+        throw std::runtime_error("Index " + std::to_string(idx) + " out of range for vector reg \"" + name() + "\" (len " + std::to_string(vec_len()) + ")");
+    }
+}
+
+void RegVec::check_vec_len(size_t len) const {
+    // Mirrors `assert len(b) == self.size` in python write_bytes_cached.
+    if (len != static_cast<size_t>(vec_len())) {
+        throw std::runtime_error("Vector of length " + std::to_string(len) + " does not match vector reg \"" + name() + "\" (len " + std::to_string(vec_len()) + ")");
+    }
+}
+
 void RegVec::write_vec_uint_cached(const  std::vector<uint_t> & vec) {
+    check_vec_len(vec.size());
     std::span<std::byte> data = cache_data();
     addr_t ii = 0;
     for(const uint_t v : vec) {
@@ -426,6 +542,7 @@ void RegVec::write_vec_uint_cached(const  std::vector<uint_t> & vec) {
 }
 
 void RegVec::write_vec_sint_cached(const  std::vector<sint_t> & vec) {
+    check_vec_len(vec.size());
     std::span<std::byte> data = cache_data();
     addr_t ii = 0;
     for(const sint_t v : vec) {
@@ -436,6 +553,7 @@ void RegVec::write_vec_sint_cached(const  std::vector<sint_t> & vec) {
 }
 
 void RegVec::write_vec_bool_cached(const  std::vector<bool> & vec) {
+    check_vec_len(vec.size());
     std::span<std::byte> data = cache_data();
     addr_t ii = 0;
     for(const bool v : vec) {
@@ -457,17 +575,40 @@ void RegVec::write_vec_bool(const std::vector<bool> & vec) {
     write_cache();
 }
 
+// Character vectors: the code generators emit these for rw char vectors on
+// both python and C++.
+void RegVec::write_str_cached(const std::string & str) {
+    if (elem_w() != 8) {
+        throw std::runtime_error("Only ASCII strings/characters are supported");
+    }
+    check_vec_len(str.size());
+    std::span<std::byte> data = cache_data();
+    addr_t ii = 0;
+    for(const char c : str) {
+        data[ii] = static_cast<std::byte>(static_cast<unsigned char>(c));
+        ii += elem_off();
+    }
+}
+
+void RegVec::write_str(const std::string & str) {
+    write_str_cached(str);
+    write_cache();
+}
+
 void RegVec::memcpy_idx_from_cache(void * dest, addr_t idx) const {
+    check_idx(idx);
     std::span<const std::byte> data = cache_data();
     std::memcpy(dest, &data[idx*elem_off()], elem_size());
 }
 
 void RegVec::memcpy_idx_to_cache(const void * src, addr_t idx) {
+    check_idx(idx);
     std::span<std::byte> data = cache_data();
     std::memcpy(&data[idx*elem_off()], src, elem_size());
 }
 void RegVec::update_idx_cache(addr_t idx) {
     if (acc() == Acc::k) { return; } // constants come from the cache (like py)
+    check_idx(idx);
     addr_t addr = m_addr_off + idx*elem_off();
     module()->update_cache(addr, elem_size());
 }
@@ -495,6 +636,7 @@ sint_t RegVec::read_idx_sint(addr_t idx) {
 }
 
 void RegVec::write_idx_cache(addr_t idx) {
+    check_idx(idx);
     addr_t addr = m_addr_off + idx*elem_off();
     module()->write_cache(addr, elem_size());
 }
@@ -505,13 +647,15 @@ void RegVec::write_idx_sint_cached(addr_t idx, sint_t val) {
     memcpy_idx_to_cache(&val, idx);
 }
 
+// Only the written element reaches the device (mirrors python
+// RegVec.write_idx_uint / write_idx_sint awaiting write_idx_cache(idx)).
 void RegVec::write_idx_uint(addr_t idx, uint_t val) {
     write_idx_uint_cached(idx, val);
-    write_cache();
+    write_idx_cache(idx);
 }
 void RegVec::write_idx_sint(addr_t idx, sint_t val) {
     write_idx_sint_cached(idx, val);
-    write_cache();
+    write_idx_cache(idx);
 }
 std::string RegVec::str_value_cached() const {
     // Mirrors RegVec.read_rich_str_cached in pip/skmap/src/skmap/reg.py (minus colour):
@@ -580,13 +724,10 @@ std::string RegVec::str_value_cached() const {
             const auto vec = read_vec_bool_cached();
             for (size_t ii = 0; ii < vec.size(); ii++) {
                 if (ii) { ss << ", "; }
-                ss << (vec[ii] ? "true" : "false");
+                ss << (vec[ii] ? "True" : "False");
             }
             break;
         };
-        case ValueKind::char_: {
-            ss << __FILE__ << ":" << __LINE__ << ": ERROR";
-        }
     }
     ss << " ]";
     return ss.str();
@@ -595,10 +736,10 @@ std::string RegVec::str_value_cached() const {
 Ass RegVec::ass_check_limit_cached() const {
     Ass ass = Ass::none;
     for (addr_t idx = 0; idx < vec_len(); idx++) {
-        sint_t v = (m_value_type.kind() == ValueKind::sint_)
-            ? read_idx_sint_cached(idx)
-            : static_cast<sint_t>(read_idx_uint_cached(idx));
-        Ass v_ass = ass_check_value_limit(v);
+        // Signed registers compare as signed, the rest as unsigned.
+        Ass v_ass = (m_value_type.kind() == ValueKind::sint_)
+            ? ass_check_value_limit(read_idx_sint_cached(idx))
+            : ass_check_value_limit_u(read_idx_uint_cached(idx));
         if (v_ass > ass) { ass = v_ass; }
     }
     return ass;
@@ -627,18 +768,37 @@ RFlag::RFlag(const std::string & name, uint32_t bit, Ass ass, const std::string 
 
 }
 
-void RFlag::update_reg_cache() { m_reg_flags->update_cache(); }
-void RFlag::write_reg_cache() { m_reg_flags->write_cache();}
+void RFlag::update_reg_cache() { reg_flags_ref().update_cache(); }
+void RFlag::write_reg_cache() { reg_flags_ref().write_cache();}
 
+// Flags are owned by a RegFlags which assigns itself in the RegFlags
+// constructor; using a flag before that would dereference a null pointer.
+const RegFlags & RFlag::reg_flags() const {
+    return reg_flags_ref();
+}
+
+const RegFlags & RFlag::reg_flags_ref() const {
+    if (!m_reg_flags) {
+        throw std::runtime_error("RFlag \"" + m_name + "\" is not assigned to a RegFlags");
+    }
+    return *m_reg_flags;
+}
+
+RegFlags & RFlag::reg_flags_ref() {
+    if (!m_reg_flags) {
+        throw std::runtime_error("RFlag \"" + m_name + "\" is not assigned to a RegFlags");
+    }
+    return *m_reg_flags;
+}
 
 bool RFlag::read_bool_at_cached(uint32_t bit) const {
-    std::span<const std::byte> data = m_reg_flags->cache_data();
+    std::span<const std::byte> data = reg_flags_ref().cache_data();
     uint32_t byte = bit / 8;
     bit  = bit % 8;
     return (static_cast<uint8_t>(data[byte]) & (1<<bit)) != 0;
 }
 void RFlag::write_bool_at_cache(uint32_t bit, bool v) {
-    std::span<std::byte> data = m_reg_flags->cache_data();
+    std::span<std::byte> data = reg_flags_ref().cache_data();
     uint32_t byte = bit / 8;
     uint8_t b  = bit % 8;
     // uint8_t b = v<<bit;
@@ -657,6 +817,10 @@ bool RFlag::read_bool() {
 void RFlag::write_bool_cached(bool v) {
     write_bool_at_cache(m_bit, v);
 }
+void RFlag::write_bool(bool v) {
+    write_bool_cached(v);
+    write_reg_cache();
+}
 Ass RFlag::ass_check_value(bool value) const {
     if (m_ass == Ass::none) { return Ass::none; }
     if (!value) { return Ass::passed; }
@@ -671,13 +835,28 @@ std::string RFlag::str_value_cached() const {
     if (m_ass != Ass::none) {
         ::operator<<(oss, m_ass) << ": ";
     }
-    oss << (read_bool_cached() != 0 ? "true" : "false");
+    // python prints the bool, i.e. True / False
+    oss << (read_bool_cached() ? "True" : "False");
     return oss.str();
 }
+void RFlagVec::check_idx(addr_t idx) const {
+    if (idx >= m_vec_size) {
+        throw std::runtime_error("Index " + std::to_string(idx) + " out of range for flag vec \"" + name() + "\" (len " + std::to_string(m_vec_size) + ")");
+    }
+}
+
+void RFlagVec::check_vec_len(size_t len) const {
+    if (len != static_cast<size_t>(m_vec_size)) {
+        throw std::runtime_error("Vector of length " + std::to_string(len) + " does not match flag vec \"" + name() + "\" (len " + std::to_string(m_vec_size) + ")");
+    }
+}
+
 bool RFlagVec::read_idx_bool_cached(addr_t idx) const {
+    check_idx(idx);
     return read_bool_at_cached(m_bit + idx);
 }
 void RFlagVec::write_idx_bool_cached(addr_t idx, bool v) {
+    check_idx(idx);
     return write_bool_at_cache(m_bit + idx, v);
 }
 std::vector<bool> RFlagVec::read_vec_bool_cached() const {
@@ -692,6 +871,7 @@ std::vector<bool> RFlagVec::read_vec_bool() {
     return read_vec_bool_cached();
 }
 void RFlagVec::write_vec_bool_cached(const std::vector<bool> & vec) {
+    check_vec_len(vec.size());
     for(addr_t ii = 0; ii < m_vec_size; ii++) {
         write_idx_bool_cached(ii, vec[ii]);
     }
@@ -740,12 +920,10 @@ Ass RegFlags::ass_check_cached(Ass log_ass, std::vector<std::shared_ptr<RFlag>> 
 }
 
 std::string RegFlags::str_value_cached() const {
-    std::ostringstream oss;
-    oss << "0b";
-    for( bool v : read_vec_bool_cached() ) {
-        oss << static_cast<int>(v);
-    }
-    return oss.str();
+    // Inherited from Reg, which renders a non bool flag register as
+    // 0b<width bits, most significant bit first>, exactly like
+    // Reg.read_rich_str_cached() in python (RegFlags has no override there).
+    return Reg::str_value_cached();
 }
 
 Ass RegFlags::ass_check() {

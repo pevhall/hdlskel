@@ -99,7 +99,7 @@ check "recipe written file re-reads identically" diff -q "$TMP/recipe.txt" "$TMP
 echo "--- skmap: unknown modules ---"
 # Every module in these files is registered by the autogen library, so make a
 # copy whose module id nothing knows about. Without -x the app must fail; with
-# -x it must parse the whole tree as ModuleUnknown (allow_unkowen propagates
+# -x it must parse the whole tree as unknown modules (allow_unkowen propagates
 # from the top level module to every kid).
 python3 - "$TREE" "$TMP/unknown_tree.skmap" <<'PY'
 import sys
@@ -116,7 +116,8 @@ else
 fi
 
 $SKMAP -f "$TMP/unknown_tree.skmap" -t -x  > "$TMP/unk_x.txt" 2>/dev/null
-unk=$(grep -ac "ModuleUnknown" "$TMP/unk_x.txt" || true)
+# Unknown modules print as "Unkowen" (same name python uses)
+unk=$(grep -acE "Unkowen \{" "$TMP/unk_x.txt" || true)
 if [ "$unk" -eq 30 ]; then
     echo "PASS: -x parsed all 30 unknown modules"
 else
@@ -126,7 +127,39 @@ fi
 
 # Every unknown module still gets a generic register map.
 $SKMAP -f "$TMP/unknown_tree.skmap" -x -m  > "$TMP/unk_map.txt" 2>/dev/null
-check_has "unknown module reg map" "Unkowen_var\[0\]" "$TMP/unk_map.txt"
+check_has "unknown module reg map" "UNKOWN_VAR_0" "$TMP/unk_map.txt"
+check_has "unknown module reg map" "UNKOWN_K_0" "$TMP/unk_map.txt"
+
+echo
+echo "--- skmap: clearing read clear registers ---"
+# -c writes zeros to every `read clear` register. The cleared tree must
+# re-read with the rc registers at zero and the other registers untouched
+# (this is the write cache -> regio -> file path).
+$SKMAP -f "$RECIPE" -c -w "$TMP/cleared.skmap"     > /dev/null 2>&1
+$SKMAP -f "$TMP/cleared.skmap" -m                  > "$TMP/cleared.txt"
+check_has "rc flags cleared"             "flags.*0b00000000" "$TMP/cleared.txt"
+check_has "rc vector cleared"            "regs_rc.*\[ 0, 0, 0 \]" "$TMP/cleared.txt"
+check_has "constants untouched by clear" "RO_LEN.*3" "$TMP/cleared.txt"
+check_has "read only registers untouched" "regs_ro.*debug: \[ 0, 1, 2 \]" "$TMP/cleared.txt"
+
+echo
+echo "--- skmap: python output parity ---"
+# The cpp printing mirrors the python library: `0xADDR name {id, vN, c=XXXX
+# l=..}` with a zero padded upper case checksum, and python spelling for
+# bools. Column widths and the box drawing differ (tabulate vs rich).
+check_has "upper case checksum in info line" "c=1AD7" "$TMP/tree.txt"
+check_has "bools print as python True"       "True" "$TMP/recipe.txt"
+check_has "bools print as python False"      "False" "$TMP/recipe.txt"
+check_has "value types print like python"    "\[3\]s12" "$TMP/recipe.txt"
+check_has "flags value type like python"     "b21" "$TMP/recipe.txt"
+
+echo
+echo "--- skmap: -v logging ---"
+# Mirrors python's `--verbose` levels: warnings by default, info with -v.
+$SKMAP -f "$RECIPE" -m                             > "$TMP/quiet.txt" 2>&1
+$SKMAP -f "$RECIPE" -m -vv                         > "$TMP/vv.txt" 2>&1
+check_absent "no info logging without -v" "Creating module" "$TMP/quiet.txt"
+check_has    "info logging with -vv"      "Creating module" "$TMP/vv.txt"
 
 echo
 echo "--- error handling ---"

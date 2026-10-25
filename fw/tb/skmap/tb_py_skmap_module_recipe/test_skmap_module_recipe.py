@@ -172,7 +172,7 @@ async def test_skmap_module_test_acc_types(dut):
     _ = module.check_assert_tree_cached(skmap.Ass.debug, list_reg)
     skmap.print_table_reg_list(list_reg, title=f'Asserts')
 
-    module.mem_rw_inst._regio.log_regio = True
+    module.mem_rw_inst._regio.log_regio = False
     rw_data = [0] * (dut.MEM_RW_LEN.value)
     for ii in range(len(rw_data)):
         rw_data[ii] = ii + MEM_RW_OFFSET

@@ -13,8 +13,8 @@ Implements Cache, a Regio-derived sparse memory cache.
   binary file format:
 
     Header:
-        ascii "skRegCch"      (8 bytes, no null terminator)
-                           (short for hdlskel register file map)
+        ascii "skelregi"      (8 bytes, no null terminator)
+                           (short for skel regio)
     Then, repeated until EOF, one entry per stored region:
         uint32_t address           (little-endian)
         uint32_t size              (little-endian)
@@ -87,18 +87,24 @@ class RegioCache(Regio):
         read_start = addr
         read_end = addr + size
 
+        # Regions are sorted and never overlap or even touch (any touching
+        # regions are merged by _merge_write), so a gap between two regions
+        # is a hole: the whole read must fit inside a single region.
         starts = [r[0] for r in self._regions]
         idx = bisect_left(starts, read_start)
-        # i = bisect.bisect_left(a, x)
-        if idx == len(starts) or idx > 0 and starts[idx] != read_start:
+        if idx == len(starts) or starts[idx] != read_start:
             idx -= 1
+        if idx < 0:
+            # Nothing is cached below read_start
+            raise ValueError(f"Not all data has been previously written "
+                             f"(0x{read_start:x} is not cached)")
 
         rstart, rdata = self._regions[idx]
 
         rend = rstart + len(rdata)
         if read_end > rend or read_start < rstart:
-            print(f'{read_end} > {rend} or {read_start} < {rstart}')
-            raise ValueError(f"Not all data has been previously written")
+            raise ValueError(f"Not all data has been previously written "
+                             f"({read_end} > {rend} or {read_start} < {rstart})")
 
         result = rdata[read_start - rstart : read_end - rstart]
         return bytes(result)
@@ -135,7 +141,6 @@ class RegioCache(Regio):
         # ...then overlay the new write so it takes precedence on
         # overlapping bytes.
         off = new_start - merged_start
-        print([hex(a) for a in data])
         merged_buf[off:off + len(data)] = data
 
         remaining.append((merged_start, merged_buf))
@@ -169,8 +174,8 @@ class RegioCache(Regio):
     # ------------------------------------------------------------------
 
     def save_to_file(self, path: Path) -> None:
-        f"""Serialize the current cache contents to `path` using the
-        {FILE_HEADER} binary format."""
+        """Serialize the current cache contents to `path` using the
+        b'skelregi' binary format."""
         with open(path, "wb") as f:
             f.write(FILE_HEADER)
             for addr, data in self._regions:

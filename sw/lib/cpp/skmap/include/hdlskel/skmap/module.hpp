@@ -19,6 +19,9 @@ namespace hdlskel::skmap {
 
 class Module;
 
+// Format an address like python's hex(): "0x0", "0x2c"
+std::string str_addr(addr_t addr);
+
 class ModuleFactory {
 public:
     static std::shared_ptr<ModuleFactory> get_instance() {
@@ -29,15 +32,15 @@ public:
     static bool register_module(std::shared_ptr<const Module> module) {
         return get_instance()->instance_register_module(module);
     }
-    static std::shared_ptr<Module> get_module(id_t id, version_t version, checksum_t checksum, bool allow_unkowen=false) {
-        return get_instance()->instance_get_module(id, version, checksum, allow_unkowen);
+    static std::shared_ptr<Module> get_module(const Head & head, bool allow_unkowen=false) {
+        return get_instance()->instance_get_module(head, allow_unkowen);
     }
     ModuleFactory(const ModuleFactory &) = delete;
     void operator=(ModuleFactory const&)  = delete;
     ModuleFactory() {} //TODO: make private
 private:
     bool instance_register_module(std::shared_ptr<const Module> module);
-    std::shared_ptr<Module> instance_get_module(id_t id, version_t version, checksum_t checksum, bool allow_unkowen);
+    std::shared_ptr<Module> instance_get_module(const Head & head, bool allow_unkowen);
 
     std::map<id_t, std::map<version_t, std::shared_ptr<const Module>>> m_lookup;
 
@@ -74,30 +77,12 @@ public:
     // Return the kid at idx, creating it from the regio if not yet made.
     std::shared_ptr<Module> kid_at(size_t ii);
 
-    template<typename T>
-    std::vector<std::shared_ptr<T>> all_kids_type() {
-        std::vector<std::shared_ptr<T>> vec_k_t;
-        for(auto k : m_kids) {
-            auto k_t = std::dynamic_pointer_cast<T>(k);
-            if (k_t) {
-                vec_k_t.push_back(k_t);
-            }
-        }
-        return vec_k_t;
-    }
-
-    template<typename T>
-    std::shared_ptr<T> single_kids_type() {
-        auto vec_k_t = all_kids_type<T>();
-        if (vec_k_t.size() != 1) {
-            throw std::runtime_error("Expected signel kid got "+std::to_string(vec_k_t.size()));
-        }
-        return vec_k_t[0];
-    }
     // Create all kids.
     std::vector<std::shared_ptr<Module>> & kids();
+    // Kids that have already been created (nullptr when not yet made).
     const std::vector<std::shared_ptr<Module>> & kids_cached() const { return m_kids; }
-    template <class T>
+
+    template<typename T>
     std::vector<std::shared_ptr<T>> kids_with_class_cached() const {
         std::vector<std::shared_ptr<T>> out;
         for (const auto & k : m_kids) {
@@ -109,11 +94,14 @@ public:
     template <class T>
     std::shared_ptr<T> only_kid_with_class_cached() const {
         auto k = kids_with_class_cached<T>();
-        assert(k.size() == 1);
+        if (k.size() != 1) {
+            throw std::runtime_error("Expected single kid of this type, got " + std::to_string(k.size()));
+        }
         return k[0];
     }
     // Recursively create all modules in the tree.
-    void make_tree();    // Read the var region (and optionally external mem caches) of this module.
+    void make_tree();
+    // Read the var region (and optionally external mem caches) of this module.
     void read_all(bool read_external_mem_cache, bool skip_self = false);
     // read_all of this module and all its kids (recursively).
     void read_all_tree(bool read_external_mem_cache, bool skip_self = false);
@@ -127,6 +115,14 @@ public:
     // Clear (write zero) all read-clear regs of this module / the whole tree.
     void clear_reg_rc();
     void clear_reg_rc_tree();
+    // Clear the asserts of this module / tree: write zero every rc reg whose
+    // assert is currently raised (mirrors clear_assert / clear_assert_tree).
+    void clear_assert();
+    void clear_assert_tree();
+    // Write zero to all var regs in the cache (device write for the rc ones).
+    // Names match python, note write_zero_all_rc_cached covers *all* var regs.
+    void write_zero_all_rc_cached();
+    void write_zero_all_rc();
     // Regs that have an ass level or min/max limits (checked by check_assert_*).
     const std::vector<std::shared_ptr<Reg>> & arr_reg_var_ass() const { return m_arr_reg_var_ass; }
 
@@ -184,16 +180,24 @@ public:
     addr_t align_byte(addr_t val_size);
     size_t len_external_mem() const { return m_arr_external_mem.size(); }
     std::shared_ptr<ExternalMem> external_mem_at(size_t idx) { return m_arr_external_mem[idx]; }
+    // External memories larger than this are not cached (mirrors the
+    // maximum_external_mem_cache_size argument of Module.__init__ in python).
+    // Must be set before make_module() to affect module creation.
+    addr_t maximum_external_mem_cache_size() const { return m_maximum_external_mem_cache_size; }
+    void maximum_external_mem_cache_size(addr_t size) { m_maximum_external_mem_cache_size = size; }
 
 private:
     void align_byte_idx(addr_t size);
     void add_reg(std::shared_ptr<Reg> reg);
 
     void initalise(std::shared_ptr<regio::Regio> regio, addr_t base_addr);
-    bool m_cache_only;
+    // Must default to false: modules are created by make_shared<>() in the
+    // generated code, so an uninitialised flag made device access random.
+    bool m_cache_only = false;
     addr_t m_base_addr;
     addr_t m_byte_idx;
     addr_t m_byte_align;
+    addr_t m_maximum_external_mem_cache_size = maximum_external_mem_cache_size_default;
     std::shared_ptr<regio::Regio> m_regio;
     std::vector<std::byte> m_cache;
     std::vector<std::shared_ptr<Reg>> m_vec_k;
@@ -213,12 +217,13 @@ void print_table_reg_list(const std::vector<RegOrFlag> & list, const std::string
 
 class ModuleUnknown : public Module {
 public:
-    // constexpr static std::string class_name = "ModuleUnknown";
-    // std::string name()     const override { return ModuleUnknown::class_name; }
-    std::string name()     const override { return "ModuleUnknown"; }
+    // Mirrors ModuleUnkowen in pip/skmap/src/skmap/module.py
+    std::string name()     const override { return "Unkowen"; }
+    // The id of an unknown module comes from the head that was read (python
+    // keeps the head for exactly this reason).
     id_t        id()       const override ;
-    version_t   version()  const override { assert(false); return 0;};
-    checksum_t  checksum() const override { assert(false); return 0;};
+    version_t   version()  const override { return head().version(); };
+    checksum_t  checksum() const override { return head().checksum; };
 
 public:
     virtual std::shared_ptr<Module> make_empty() const override {

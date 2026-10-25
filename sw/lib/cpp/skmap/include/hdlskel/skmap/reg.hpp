@@ -44,16 +44,23 @@ public:
     uint_t read_uint_cached() const;
     sint_t read_sint_cached() const;
     bool read_bool_cached() const;
+    char read_char_cached() const;
     uint_t read_uint();
     sint_t read_sint();
     bool read_bool();
+    char read_char();
     void write_uint_cached(uint_t value);
     void write_sint_cached(sint_t value);
     void write_bool_cached(bool v);
+    void write_char_cached(char v);
     void write_uint(uint_t value);
     void write_sint(sint_t value);
     void write_bool(bool v);
+    void write_char(char v);
     void write_zero();
+    // Zeros in the cache only, mirrors Reg.write_zero_cached in python
+    // (write_zero() is this followed by a device write).
+    void write_zero_cached();
 
     // Asserts and limits (mirrors Reg in pip/skmap/src/skmap/reg.py).
     // ass_check_cached computes the assert status of this reg from the cache:
@@ -68,11 +75,23 @@ public:
     Ass ass_check_value_limit_max(sint_t value) const;
     Ass ass_check_value_limit(sint_t value) const;
     void check_value_limit(sint_t value) const;
+    // Unsigned variants, used for uint/bits/flag regs. The value can use the
+    // full 64 bit range, so comparing it against a signed limit (as the
+    // python code does with arbitrary precision ints) needs unsigned math.
+    Ass ass_check_value_limit_min_u(uint_t value) const;
+    Ass ass_check_value_limit_max_u(uint_t value) const;
+    Ass ass_check_value_limit_u(uint_t value) const;
+    void check_value_limit_u(uint_t value) const;
     virtual bool has_ass() const { return m_ass != Ass::none || has_limit(); }
     bool has_limit() const;
+    // True if the value fits in the register's bytes, mirrors python raising
+    // OverflowError from int.to_bytes(self.size).
+    void check_value_fits(uint_t value) const;
+    void check_value_fits(sint_t value) const;
     Ass ass() const { return m_ass; }
     std::optional<sint_t> max() const { return m_max; }
     std::optional<sint_t> min() const { return m_min; }
+    bool is_bool() const { return m_value_type.is_bool(); }
     std::vector<bool> read_vec_bool_cached() const;
     std::vector<bool> read_vec_bool();
 
@@ -131,6 +150,9 @@ public:
     void write_vec_sint(const  std::vector<sint_t> & vec);
     void write_vec_bool_cached(const  std::vector<bool> & vec);
     void write_vec_bool(const std::vector<bool> & vec);
+    // For char vectors (mirrors the string accessors the code generators emit)
+    void write_str_cached(const std::string & str);
+    void write_str(const std::string & str);
  
     void update_idx_cache(addr_t idx);
     uint_t read_idx_uint_cached(addr_t idx) const;
@@ -156,6 +178,8 @@ public:
 private:
     void memcpy_idx_from_cache(void * dest, addr_t idx) const;
     void memcpy_idx_to_cache(const void * src, addr_t idx);
+    void check_idx(addr_t idx) const;
+    void check_vec_len(size_t len) const;
 
 };
 
@@ -176,7 +200,8 @@ public:
     uint32_t bit() const {return m_bit;}
     Ass ass() const {return m_ass;}
     std::string desc() const {return m_desc;}
-    const RegFlags * reg_flags() const { return m_reg_flags; }
+    // Throws if this flag was never assigned to a RegFlags
+    const RegFlags & reg_flags() const;
 
     virtual std::string value_type_str() const { return "b"; }
 
@@ -187,8 +212,11 @@ protected:
     Ass ass_check_value(bool value) const;
 private:
     void assign(RegFlags * reg_flags) { m_reg_flags = reg_flags; }
+    // Non throwing accessor used by the read/write helpers
+    const RegFlags & reg_flags_ref() const;
+    RegFlags & reg_flags_ref();
 
-    RegFlags * m_reg_flags;
+    RegFlags * m_reg_flags = nullptr;
 protected:
     uint32_t m_bit;
     Ass m_ass;
@@ -216,8 +244,11 @@ public:
     Ass ass_check_cached() const override;
     std::string str_value_cached() const override;
 
-    std::string value_type_str() const override { return "b"+std::to_string(m_vec_size); }
+    std::string value_type_str() const override { return "b"; }
+    addr_t vec_len() const { return m_vec_size; }
 private:
+    void check_idx(addr_t idx) const;
+    void check_vec_len(size_t len) const;
     addr_t m_vec_size;
 };
 

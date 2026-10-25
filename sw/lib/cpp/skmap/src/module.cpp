@@ -2,6 +2,7 @@
 #include "hdlskel/skmap/head.hpp"
 #include "hdlskel/skmap/reg.hpp"
 #include "hdlskel/skmap/module.hpp"
+#include "hdlskel/skmap/log.hpp"
 #include "hdlskel/regio/cache.hpp"
 #include <algorithm>
 #include <iomanip>
@@ -16,19 +17,6 @@
 namespace hdlskel::skmap {
 
 // std::shared_ptr<ModuleFactorv> ModuleFactory::instance = std::make_shared<ModuleFactory>();
-
-namespace {
-
-// id_t is fixed width and zero padded - trim the trailing nulls for messages.
-std::string id_to_str_trimmed(id_t id) {
-    std::string s = id_to_str(id);
-    while (not s.empty() and s.back() == '\0') {
-        s.pop_back();
-    }
-    return s;
-}
-
-}
 
 bool ModuleFactory::instance_register_module(std::shared_ptr<const Module> module){
     // std::cout << __FILE__ << ":" << __LINE__ << ": Registering module " << module->name() << "\n";
@@ -49,28 +37,28 @@ bool ModuleFactory::instance_register_module(std::shared_ptr<const Module> modul
 // registered module's checksum, and the skmap library version the module was
 // generated with is compared against this library's version. On any failure
 // fall back to ModuleUnknown (allow_unkowen) or throw.
-std::shared_ptr<Module> ModuleFactory::instance_get_module(id_t id, version_t version, checksum_t checksum, bool allow_unkowen){
+std::shared_ptr<Module> ModuleFactory::instance_get_module(const Head & head, bool allow_unkowen){
     static ModuleUnknown module_unkowen;
 
     std::shared_ptr<const Module> registered;
 
-    auto it_id = m_lookup.find(id);
+    auto it_id = m_lookup.find(head.id);
     if (it_id == m_lookup.end()) {
-        std::cerr << "ERROR: Cannot find module, unknown ID (\"" << id_to_str_trimmed(id) << "\")\n";
+        // python: 'Cannot find module, Unkowen ID (head: %s)'
+        log_error("Cannot find module, Unkowen ID (head: " + head.to_str() + ")");
     } else {
         auto & lookup_version = it_id->second;
-        auto it_version = lookup_version.find(version);
+        auto it_version = lookup_version.find(head.version());
         if (it_version == lookup_version.end()) {
-            std::cerr << "ERROR: Cannot find module \"" << id_to_str_trimmed(id)
-                      << "\" with version " << +version << "\n";
+            // python logs nothing here, which makes the "see previous errors"
+            // below rather unhelpful, so report it.
+            log_error("Cannot find module \"" + id_to_str(head.id) + "\" with version " + std::to_string(+head.version()));
         } else {
             registered = it_version->second;
-            if (registered->checksum() != checksum) {
-                std::cerr << "ERROR: Bad check sum for " << registered->name()
-                          << " v" << +version
-                          << ", module_head.checksum = 0x" << std::hex << +checksum
-                          << ", module_class.checksum = 0x" << +registered->checksum()
-                          << std::dec << "\n";
+            if (registered->checksum() != head.checksum) {
+                log_error("Bad check sum for " + registered->name() + " v" + std::to_string(+head.version())
+                          + ", module_head.checksum = "  + str_addr(head.checksum)
+                          + ", module_class.checksum = " + str_addr(registered->checksum()));
                 registered.reset();
             }
         }
@@ -79,27 +67,25 @@ std::shared_ptr<Module> ModuleFactory::instance_get_module(id_t id, version_t ve
     if (registered) {
         // SkMap library version checks (severity mirrors python).
         if (registered->skmap_ver_major() != ver_major) {
-            std::cerr << "ERROR: SKMAP major version missmatch module has "
-                      << registered->skmap_ver_str() << ", expected " << ver_str << "\n";
+            log_error("SKMAP major version missmatch module has " + registered->skmap_ver_str() + ", expected " + ver_str);
         }
         if (registered->skmap_ver_minor() > ver_minor) {
-            std::cerr << "ERROR: SKMAP minor version missmatch module has "
-                      << registered->skmap_ver_str() << ", expected " << ver_str << "\n";
+            log_error("SKMAP minor version missmatch module has " + registered->skmap_ver_str() + ", expected " + ver_str);
         } else if (registered->skmap_ver_minor() != ver_minor) {
-            std::cerr << "INFO: SKMAP minor version missmatch module has "
-                      << registered->skmap_ver_str() << ", expected " << ver_str << "\n";
+            log_info("SKMAP minor version missmatch module has " + registered->skmap_ver_str() + ", expected " + ver_str);
         }
         if (registered->skmap_ver_patch() != ver_patch) {
-            // Logged at debug level in python - keep the console quiet here.
+            log_debug("SKMAP patch version missmatch module has " + registered->skmap_ver_str() + ", expected " + ver_str);
         }
+        log_info("Creating module (head =  " + head.to_str() + ")");
         return registered->make_empty();
     }
 
     if (allow_unkowen) {
-        std::cerr << "WARNING: Return unknown module - see previous errors\n";
+        log_warning("Return Unkowen module - see previous errors");
         return module_unkowen.make_empty();
     }
-    throw std::runtime_error("Unknown modules not allowed, see previous errors");
+    throw std::runtime_error("Unkowen modules not allowed, raising error, see previous errors");
 }
 
 
@@ -176,50 +162,110 @@ void Module::write_cache(addr_t addr_off, addr_t update_size) {
 }
 
 std::string str_addr(addr_t addr) {
+    // Mirrors python's hex(addr): "0x0", "0x2c"
     std::stringstream ss;
-    ss << "" << std::setfill('0') << std::setw(sizeof(addr_t)*2) 
-       << std::hex << addr;
+    ss << "0x" << std::hex << addr;
     return ss.str();
 }
 
-void Module::print_reg_map() {
-    std::cout << "Base Addr:" << base_addr() << ", head: "<<head().to_str()<<"\n";
+namespace {
 
-    tabulate::Table table;
-    table.format()
-    .border_left("│")
-    .border_right("│")
-    .border_top("─")
-    .border_bottom("─")
-    .corner_top_left("┼") // ("┌")
-    .corner_top_right("┼") // ("┐")
-    .corner_bottom_left("┼") // ("└")
-    .corner_bottom_right("┼"); // ("┘")
+// All skmap tables use the same columns as RegMapTable in
+// pip/skmap/src/skmap/reg_map_table.py:
+//   Addr | T | Acc | Name | Value | Description
+// with flag rows putting the bit number in the "Acc" column (like python's
+// add_flag()).
+//
+// Column widths are left for tabulate to compute from the cell contents,
+// which is what python's rich table does. Explicit widths must not be used:
+// tabulate wraps (instead of truncating) cells that do not fit, and its
+// word_wrap() then loops forever allocating memory whenever the width minus
+// the cell padding is smaller than 2 (observed as std::bad_alloc).
+class RegMapTable {
+public:
+    static constexpr size_t num_cols = 6;
 
-    table.add_row({"Addr(0x)", "Name", "Ac", "Type", "Value", "Description"});
-    size_t rows = 1;
-    auto add_row_reg = [&table, &rows](const std::shared_ptr<const Reg> reg, bool hide_border_top) {
-        table.add_row({str_addr(reg->addr()), reg->name(), str(reg->acc()), reg->value_type().str(), reg->str_value_cached(), reg->desc()});
-        if (hide_border_top) {
-            table.row(rows).format().hide_border_top();
+    RegMapTable() {
+        m_table.format()
+        .border_left("│")
+        .border_right("│")
+        .border_top("─")
+        .border_bottom("─")
+        .corner_top_left("┼")
+        .corner_top_right("┼")
+        .corner_bottom_left("┼")
+        .corner_bottom_right("┼");
+        add_row({"Addr", "T", "Acc", "Name", "Value", "Description"});
+    }
+
+    void add_row(const std::vector<std::string> & cells) {
+        tabulate::Table::Row_t row(cells.begin(), cells.end());
+        m_table.add_row(row);
+        m_rows++;
+    }
+
+    // Draw no line above the row that was added last (used to group a flags
+    // register with the rows of its individual flags).
+    void join_row_with_previous() {
+        if (m_rows >= 2) {
+            m_table.row(m_rows-1).format().hide_border_top();
         }
-        rows++;
+    }
+
+    void print(std::ostream & os) {
+        // python column justification: Addr right, T right, Acc left,
+        // Name left, Value right, Description left
+        const tabulate::FontAlign align[num_cols] = {
+            tabulate::FontAlign::right, tabulate::FontAlign::right, tabulate::FontAlign::left,
+            tabulate::FontAlign::left,  tabulate::FontAlign::right, tabulate::FontAlign::left,
+        };
+        for (size_t ii = 0; ii < num_cols; ii++) {
+            m_table.column(ii).format().font_align(align[ii]);
+        }
+        os << m_table << "\n";
+    }
+
+private:
+    tabulate::Table m_table;
+    size_t m_rows = 0;
+};
+
+// One register row, mirrors RegMapTable.add_reg()
+void add_reg_row(RegMapTable & table, const Reg & reg) {
+    table.add_row({str_addr(reg.addr()), reg.value_type().str(), str(reg.acc()), reg.name(), reg.str_value_cached(), reg.desc()});
+}
+
+// One flag row, mirrors RegMapTable.add_flag()
+void add_flag_row(RegMapTable & table, const RFlag & f) {
+    table.add_row({"-", "b", std::to_string(f.bit()), f.name(), f.str_value_cached(), f.desc()});
+}
+
+} // namespace
+
+void Module::print_reg_map() {
+    // python passes info_line_str() as the table title
+    std::cout << info_line_str() << "\n";
+
+    RegMapTable table;
+
+    auto add_row_reg = [&table](const std::shared_ptr<const Reg> reg, bool join_with_previous) {
+        add_reg_row(table, *reg);
+        if (join_with_previous) {
+            table.join_row_with_previous();
+        }
         if (reg->is_flags()) {
             const std::shared_ptr<const RegFlags> reg_flags = static_pointer_cast<const RegFlags>(reg);
             for (size_t ii = 0; ii < reg_flags->flags_size(); ii++) {
                 const auto & f = reg_flags->flag_at(ii);
-                table.add_row({"-", f->name(), std::to_string(f->bit()), f->value_type_str(), f->str_value_cached(), f->desc()});
-                table.row(rows).format().hide_border_top();
-                rows++;
+                add_flag_row(table, *f);
+                table.join_row_with_previous();
             }
         }
     };
-    // for (const auto & reg : m_vec_k) {
     for (size_t ii = 0; ii <  m_vec_k.size(); ii++) {
         const std::shared_ptr<const Reg> & reg = m_vec_k[ii];
         add_row_reg(reg, ii != 0);
     }
-    // for (const auto & reg : m_vec_var) {
     for (size_t ii = 0; ii <  m_vec_var.size(); ii++) {
         const std::shared_ptr<const Reg> & reg = m_vec_var[ii];
         add_row_reg(reg, ii != 0);
@@ -233,67 +279,45 @@ void Module::print_reg_map() {
             name_str = mem->name();
             desc_str = mem->desc();
         }
+        // Mirrors RegMapTable.add_mem()
         table.add_row({
             str_addr(mem->base_addr()),
-            name_str,
-            str(mem->acc()),
             type_str,
+            str(mem->acc()),
+            name_str,
             "(Mem size:" + std::to_string(mem->size()) + " B)",
             desc_str
         });
+        table.join_row_with_previous();
     }
 
-    table.column(0).format().width(10);
-    table.column(1).format().width(18);
-    table.column(2).format().width(4);
-    table.column(3).format().width(12);
-    table.column(4).format().width(20);
-    table.column(5).format().width(26);
-
-    table.column(4).format().font_align(tabulate::FontAlign::right);
-    std::cout << table << "\n";
-    // tabular::render(table.str() + '\n', stdout);
+    table.print(std::cout);
 }
 
 void print_table_reg_list(const std::vector<RegOrFlag> & list, const std::string & title) {
     std::cout << title << "\n";
-    tabulate::Table table;
-    table.format()
-    .border_left("│")
-    .border_right("│")
-    .border_top("─")
-    .border_bottom("─")
-    .corner_top_left("┼")
-    .corner_top_right("┼")
-    .corner_bottom_left("┼")
-    .corner_bottom_right("┼");
-
-    table.add_row({"Addr(0x)", "T", "Bit", "Name", "Value", "Description"});
+    RegMapTable table;
     const Reg * reg_prev = nullptr;
     for (const auto & v : list) {
         if (const auto * f_sp = std::get_if<std::shared_ptr<RFlag>>(&v)) {
             const std::shared_ptr<RFlag> & f = *f_sp;
-            const Reg * reg = f->reg_flags();
-            if (reg != reg_prev) {
-                table.add_row({str_addr(reg->addr()), reg->value_type().str(), str(reg->acc()), reg->name(), reg->str_value_cached(), reg->desc()});
-                reg_prev = reg;
+            const Reg & reg = f->reg_flags();
+            if (&reg != reg_prev) {
+                add_reg_row(table, reg);
+                table.join_row_with_previous();
+                reg_prev = &reg;
             }
-            table.add_row({"-", "b", std::to_string(f->bit()), f->name(), f->str_value_cached(), f->desc()});
+            add_flag_row(table, *f);
+            table.join_row_with_previous();
         } else {
             const std::shared_ptr<Reg> & reg = std::get<std::shared_ptr<Reg>>(v);
-            table.add_row({str_addr(reg->addr()), reg->value_type().str(), str(reg->acc()), reg->name(), reg->str_value_cached(), reg->desc()});
+            add_reg_row(table, *reg);
+            table.join_row_with_previous();
             reg_prev = nullptr;
         }
     }
 
-    table.column(0).format().width(10);
-    table.column(1).format().width(18);
-    table.column(2).format().width(5);
-    table.column(3).format().width(12);
-    table.column(4).format().width(20);
-    table.column(5).format().width(26);
-    table.column(4).format().font_align(tabulate::FontAlign::right);
-    std::cout << table << "\n";
+    table.print(std::cout);
 }
 
 // --- Tree of modules ---
@@ -327,7 +351,12 @@ void Module::read_all(bool read_external_mem_cache, bool skip_self) {
     }
     if (read_external_mem_cache) {
         for (auto & mem : m_arr_external_mem) {
-            mem->read(0, mem->size());
+            // Only cached memories are read (python checks
+            // isinstance(mem, ExternalMemCached)); large ones are read on
+            // demand instead.
+            if (mem->is_cached()) {
+                mem->read(0, mem->size());
+            }
         }
     }
 }
@@ -389,6 +418,39 @@ void Module::clear_reg_rc_tree() {
     }
 }
 
+// Write zero to every var reg whose assert is currently raised, only rc regs
+// can actually be cleared (mirrors Module.clear_assert in python).
+void Module::clear_assert() {
+    for (const auto & reg : m_arr_reg_var_ass) {
+        if (reg->ass_check_cached(Ass::none, nullptr) >= Ass::debug && reg->acc() == Acc::rc) {
+            reg->write_zero();
+        }
+    }
+}
+
+void Module::clear_assert_tree() {
+    clear_assert();
+    for (auto & k : kids()) {
+        k->clear_assert_tree();
+    }
+}
+
+// Names match python; note write_zero_all_rc_cached covers *all* var regs
+// (python does not filter on Acc.rc there, only the device version does).
+void Module::write_zero_all_rc_cached() {
+    for (const auto & reg : m_vec_var) {
+        reg->write_zero_cached();
+    }
+}
+
+void Module::write_zero_all_rc() {
+    for (const auto & reg : m_vec_var) {
+        if (reg->acc() == Acc::rc) {
+            reg->write_zero();
+        }
+    }
+}
+
 // --- Printing ---
 
 std::string Module::info_line_str() const {
@@ -429,9 +491,10 @@ void Module::_print_tree_cached_walk(std::ostream & os, const std::string & pref
         bool last = (ii + 1 == entries.size());
         const std::string & conn = last ? "┗" : "┣";
         const std::string & cont = last ? " " : "┃";
-        os << prefix << conn << "━ " << entries[ii].text << "\n";
+        // rich's Tree guides are "┗━━ ", "┣━━ ", "┃   " and "    "
+        os << prefix << conn << "━━ " << entries[ii].text << "\n";
         if (entries[ii].kid != nullptr) {
-            entries[ii].kid->_print_tree_cached_walk(os, prefix + cont + "  ");
+            entries[ii].kid->_print_tree_cached_walk(os, prefix + cont + "   ");
         }
     }
 }
@@ -456,27 +519,34 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
     std::vector<std::byte> data(head_size);
     regio->read(base_addr, data);
     Head head = unpack_head(data);
-    // std::cout << __FILE__ << ":" << __LINE__ << ": head: "<<head.to_str()<<"\n";
-    assert(head.flags() == 0); // Flags are not currently supported
+    // python asserts head.sync == SYNC and head.flags == 0; throw instead of
+    // asserting so a corrupt image is caught in release builds too.
+    if (!head.valid_sync()) {
+        throw std::runtime_error("make_module: bad sync " + head.to_str());
+    }
+    if (head.flags() != 0) {
+        throw std::runtime_error("make_module: head flags are not currently supported");
+    }
     data.resize(head.module_size());
     std::span<std::byte> data_span(data);
     regio->read(base_addr + head_size, data_span.subspan(head_size, data.size()-head_size));
 
-    auto module = ModuleFactory::get_module(head.id, head.version(), head.checksum, allow_unkowen);
+    auto module = ModuleFactory::get_module(head, allow_unkowen);
     module->m_allow_unkowen = allow_unkowen;
     module->m_byte_align = 1;
     module->m_byte_idx = head_size;
 
 
     // Read the kid addresses from the cache (they come right after the sub heads)
-    // std::cout << __FILE__ << ":" << __LINE__ << ": head.len_kids = " << +head.len_kids << std::endl;
     module->m_kid_addrs.reserve(head.len_kids);
     for (uint8_t ii = 0; ii < head.len_kids; ii++) {
         addr_t kid_addr = 0;
         std::memcpy(&kid_addr, &data[module->m_byte_idx], sizeof(addr_t));
         module->m_byte_idx += 4;
-        assert(kid_addr != 0); // addr 0 should never be a kid
-        // std::cout << __FILE__ << ":" << __LINE__ << ": kid_addr = " << kid_addr << std::endl;
+        // python: assert kid_addr != 0, addr 0 should never be a kid
+        if (kid_addr == 0) {
+            throw std::runtime_error("make_module: kid address 0 is not valid");
+        }
         module->m_kid_addrs.push_back(kid_addr);
 
     }
@@ -488,19 +558,23 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
         EXTERNAL_MEM = 0x3B,
     };
 
-    addr_t var_byte_align = 1;
+    addr_t var_byte_align = module->m_byte_align;
 
     addr_t byte_idx_sub_end = module->m_byte_idx + head.len_sub*word_size;
-    while (module->m_byte_idx != byte_idx_sub_end) {
+    while (module->m_byte_idx < byte_idx_sub_end) {
         uint8_t sub_id = static_cast<uint8_t>(data[module->m_byte_idx]);
-        // std::cout << __FILE__ << ":" << __LINE__ << ": sub_id = " << +sub_id << ", m_byte_idx = "<<+module->m_byte_idx<<"\n";
         switch (sub_id) {
             case static_cast<uint8_t>(SubID::PAD):
+                // python breaks out of the sub header loop on padding
                 module->m_byte_idx = byte_idx_sub_end;
                 break;
             case static_cast<uint8_t>(SubID::BYTE_ALIGN):
                 var_byte_align = static_cast<addr_t>(data[module->m_byte_idx+1]);
-                // std::cout << "Sub Head: Byte Align "<<var_byte_align<<"\n";
+                // python asserts the alignment is a power of 2
+                if ((var_byte_align & (var_byte_align-1)) != 0) {
+                    throw std::runtime_error("make_module: byte align " + std::to_string(var_byte_align) + " is not a power of 2");
+                }
+                log_info("sub_head BYTE_ALIGN = " + std::to_string(var_byte_align));
                 module->m_byte_idx += word_size;
                 break;
             case static_cast<uint8_t>(SubID::EXTERNAL_MEM): {
@@ -509,8 +583,18 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
                 addr_t ext_size;
                 std::memcpy(&ext_base_addr, &data[module->m_byte_idx + 4], sizeof(addr_t));
                 std::memcpy(&ext_size, &data[module->m_byte_idx + 8], sizeof(addr_t));
-                // std::cout << "Sub Head: EXTERNAL_MEM base="<<ext_base_addr<<" size="<<ext_size<<" acc="<<acc<<"\n";
-                module->m_arr_external_mem.push_back(std::make_shared<ExternalMem>(regio, ext_base_addr, ext_size, acc));
+                // Only cache memories up to the configured limit (python
+                // creates an ExternalMemCached, else a plain ExternalMem).
+                if (ext_size > module->m_maximum_external_mem_cache_size) {
+                    log_warning(module->name() + " at addr " + std::to_string(base_addr)
+                                + ", will not cache external mem " + std::to_string(module->m_arr_external_mem.size())
+                                + ", as size to large, got " + std::to_string(ext_size) + " B");
+                } else {
+                    log_info("sub_head EXTERNAL_MEM: base_addr=" + str_addr(ext_base_addr)
+                             + ", size_bytes=" + std::to_string(ext_size) + ", acc=" + str(acc));
+                }
+                module->m_arr_external_mem.push_back(std::make_shared<ExternalMem>(
+                    regio, ext_base_addr, ext_size, acc, module->m_maximum_external_mem_cache_size));
                 module->m_byte_idx += 3 * word_size;
                 break;
             }
@@ -519,8 +603,11 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
                 oss << "Unkowen sub_id 0x" << std::hex<< +sub_id << std::dec;
                 throw std::runtime_error(oss.str());
         }
-    } 
-
+    }
+    // python forces the index to the end of the sub header region
+    if (module->m_byte_idx < byte_idx_sub_end) {
+        module->m_byte_idx = byte_idx_sub_end;
+    }
 
     module->init_first(regio, base_addr, std::move(data));
 
@@ -561,9 +648,10 @@ void Module::write_cache_to_regio_cache(regio::RegioCache & r_cache, bool includ
     if (include_external_mem) {
         for (auto & mem : m_arr_external_mem) {
             if (!mem->cache_loaded()) {
-                std::cerr << "WARNING: " << name() << " at " << m_base_addr
-                          << ", mem interface has not yet been read;\n"
-                          << "   needs to be read first before extracting the cache.\n";
+                // Mirrors the python warning for memories that are not cached
+                // (too large) or have not been read yet.
+                log_warning(name() + " at " + std::to_string(m_base_addr)
+                            + ", mem interface has not cached cached (probably too large)");
                 continue;
             }
             r_cache.cache_write(mem->base_addr(), mem->read_cached(0, mem->size()));
@@ -576,8 +664,7 @@ void Module::write_cache_to_regio_cache_tree(regio::RegioCache & r_cache, bool i
 
     for (auto & k : m_kids) {
         if (k == nullptr) {
-            std::cerr << "WARNING: " << name() << " at " << m_base_addr
-                      << ", kid not yet initalised wil not write to cache\n";
+            log_warning(name() + " at " + std::to_string(m_base_addr) + ", kid not yet initalised wil not write to cache");
             continue;
         }
         k->write_cache_to_regio_cache_tree(r_cache);
@@ -590,26 +677,31 @@ void Module::write_cache_tree_to_file(const std::string & path) {
     r_cache.save_to_file(path);
 }
 
+// The id comes from the head that was read for this module (python's
+// ModuleUnkowen keeps the head around for the same reason).
 id_t ModuleUnknown::id() const {
-    assert(false);
-    id_t id;
-    id.fill('\0');
-    return id;
+    if (cache().size() < head_size) {
+        id_t id;
+        id.fill('\0');
+        return id;
+    }
+    return head().id;
 }
 
 
 ValueType value_type_x32(ValueKind::bits_, 32);
 
+// Mirrors ModuleUnkowen.initalise_reg_map_k/var in python
 void ModuleUnknown::init_reg_map_k() {
     for(uint8_t ii = 0; ii < head().len_k; ii++) {
         std::string ii_str = std::to_string(ii);
-        add_reg_k(make_reg_k("Unkowen_k["+ii_str+"]", value_type_x32, "Unkowen Generic "+ii_str));
+        add_reg_k(make_reg_k("UNKOWN_K_"+ii_str, value_type_x32, "Unkowen constant "+ii_str));
     }
 }
 void ModuleUnknown::init_reg_map_var() {
     for(uint8_t ii = 0; ii < head().len_var; ii++) {
         std::string ii_str = std::to_string(ii);
-        add_reg_var(make_reg("Unkowen_var["+ii_str+"]", Acc::ro, value_type_x32, "Unkowen variable "+ii_str));
+        add_reg_var(make_reg("UNKOWN_VAR_"+ii_str, Acc::na, value_type_x32, "Unkowen variable "+ii_str));
     }
 }
 
