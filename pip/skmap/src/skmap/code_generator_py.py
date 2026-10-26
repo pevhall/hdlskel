@@ -231,6 +231,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     return s
 
 def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
+    assert reg.flags is not None
     assert reg.t.kind == ValueKind.flag
     reg_name = reg_to_inst_str(reg)
 
@@ -243,17 +244,15 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
         s += f'        return {reg_name} \n\n'
         s += f'    async def {reg.name}_update_cache(self):\n'
         s += f'        _ = await {reg_name}.read_bytes() \n\n'
+        s += f'    async def {reg.name}_write_cache(self):\n'
+        s += f'        await {reg_name}.write_cache() \n\n'
 
         if reg.acc == Acc.rc:
             s += f'    async def {reg.name}_clear(self):\n'
             s += f'        await {reg_name}.write_zero()\n\n'
 
 
-    if reg.flags is not None:
-        flags = reg.flags
-    else:
-        flags = [reg]
-    for f in flags:
+    for f in reg.flags:
         if isinstance(reg, RecipeK):
             f_name =  name_to_reg_k(f.name)
         else:

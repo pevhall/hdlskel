@@ -55,13 +55,10 @@ public:
     virtual version_t   version()  const = 0;
     virtual checksum_t  checksum() const = 0;
 
-    // SkMap library version this module was generated with. Mirrors the
-    // skmap_ver_* class methods of the python generated modules; the factory
-    // compares them against this library's version (ver_str in version.hpp).
-    virtual int skmap_ver_major() const { return ver_major; }
-    virtual int skmap_ver_minor() const { return ver_minor; }
-    virtual int skmap_ver_patch() const { return ver_patch; }
-    virtual std::string skmap_ver_str() const { return ver_str; }
+    virtual int skmap_ver_major() const  = 0;
+    virtual int skmap_ver_minor() const  = 0;
+    virtual int skmap_ver_patch() const  = 0;
+    virtual std::string skmap_ver_str() const  = 0;
 
     void print_reg_map();
 
@@ -224,6 +221,11 @@ public:
     id_t        id()       const override ;
     version_t   version()  const override { return head().version(); };
     checksum_t  checksum() const override { return head().checksum; };
+
+    int skmap_ver_major() const override { return ver_major; }
+    int skmap_ver_minor() const override { return ver_minor; }
+    int skmap_ver_patch() const override { return ver_patch; }
+    std::string skmap_ver_str() const override { return ver_str; }
 
 public:
     virtual std::shared_ptr<Module> make_empty() const override {

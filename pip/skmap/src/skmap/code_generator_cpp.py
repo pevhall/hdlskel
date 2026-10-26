@@ -186,6 +186,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     return s
 
 def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
+    assert reg.flags is not None
     assert reg.t.kind == ValueKind.flag
     reg_name = reg_to_inst_str(reg)
 
@@ -194,15 +195,12 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
     if reg.acc != Acc.k:
         s += f'    std::shared_ptr<{reg_inst_type_str(reg)}> {reg.name}_inst() const {{ return {reg_name}; }}\n'
         s += f'    void {reg.name}_update_cache() {{ {reg_name}->update_cache(); }}\n'
+        # flush the whole flag register (all flags written with *_write_cached) in one regio write
+        s += f'    void {reg.name}_write_cache() {{ {reg_name}->write_cache(); }}\n'
         if reg.acc == Acc.rc:
             s += f'    void {reg.name}_clear() {{ {reg_name}->write_zero(); }}\n'
 
-    if reg.flags is not None:
-        flags = reg.flags
-    else:
-        # a flag register without an explicit flag list is a single flag of its own
-        flags = [reg]
-    for f in flags:
+    for f in reg.flags:
         if isinstance(reg, RecipeK):
             f_name =  name_to_reg_k(f.name)
         else:

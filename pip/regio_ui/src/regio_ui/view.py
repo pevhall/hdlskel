@@ -119,10 +119,20 @@ class RegioUiView(Vertical):
         color: $text-muted;
         text-style: italic;
     }
+    /* the form takes only its own rows: Vertical defaults to
+       height: 1fr, which would make it steal space from the log and
+       leave empty space below the Send button */
+    RegioUiView #form {
+        height: auto;
+    }
     RegioUiView #form-row {
         height: 3;
     }
-    RegioUiView #form-row > .input {
+    RegioUiView #form-row2 {
+        height: 3;
+    }
+    RegioUiView #form-row > .input,
+    RegioUiView #form-row2 > .input {
         border: round $accent;
     }
     RegioUiView #op-toggle {
