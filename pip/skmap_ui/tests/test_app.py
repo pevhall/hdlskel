@@ -2564,8 +2564,8 @@ def test_regio_tab_embedded_capture_and_read():
             assert view.capture is False
             assert view.ops.row_count == 0
 
-            # 'g' switches to the regio tab (focus: the operations log)
-            await pilot.press("g")
+            # '2' switches to the regio tab (focus: the operations log)
+            await pilot.press("2")
             await pilot.pause()
             assert app.tabs.active == "tab-regio"
             assert app.app.focused is view.ops
@@ -2576,8 +2576,8 @@ def test_regio_tab_embedded_capture_and_read():
             await pilot.pause()
             assert view.capture is True
 
-            # switch back to the register map (focus: the table)
-            await pilot.press("g")
+            # '1' switches back to the register map (focus: the table)
+            await pilot.press("1")
             await pilot.pause()
             assert app.tabs.active == "tab-registers"
             assert app.app.focused is app.table
@@ -2601,7 +2601,7 @@ def test_regio_tab_embedded_capture_and_read():
             assert _view_cell(view, 0, 2) == "rd"
 
             # 'p' (via the regio tab) stops the capture again
-            await pilot.press("g")
+            await pilot.press("2")
             await pilot.pause()
             await pilot.press("p")
             await pilot.pause()
@@ -2617,7 +2617,7 @@ def test_regio_tab_form_write_reaches_device():
             await _wait_asserts(app, pilot)
             view = app._regio_view
 
-            await pilot.press("g")
+            await pilot.press("2")
             await pilot.pause()
             # start capturing so the write shows up in the log
             await pilot.press("p")
@@ -2653,18 +2653,21 @@ def test_regio_tab_form_write_reaches_device():
 
 def test_regio_tab_footer_and_clear():
     """Regio tab: footer shows only c/p, skmap keys are disabled there,
-    'c' clears only the shown tab's log, and the register-map tab is
-    named 'skmap'."""
+    'c' clears only the shown tab's log, the tabs are labeled
+    '1 skmap' / '2 regio' and 1/2 switch between them."""
 
     async def run():
         app = SkmapUiApp(make_demo())
         async with app.run_test(size=(140, 36)) as pilot:
             await _wait_asserts(app, pilot)
 
-            # the register-map tab is named 'skmap' (the Tab widget id
-            # is prefixed by TabbedContent)
-            tab = app.query_one(Tabs).get_tab("--content-tab-tab-registers")
-            assert tab is not None and str(tab.render()).strip() == "skmap"
+            # the tabs are labeled '1 skmap' / '2 regio' (the Tab
+            # widget ids are prefixed by TabbedContent)
+            tabs = app.query_one(Tabs)
+            tab = tabs.get_tab("--content-tab-tab-registers")
+            assert tab is not None and str(tab.render()).strip() == "1 skmap"
+            tab = tabs.get_tab("--content-tab-tab-regio")
+            assert tab is not None and str(tab.render()).strip() == "2 regio"
 
             def shown() -> set[str]:
                 # footer keys (bindings with show=True in the chain)
@@ -2675,11 +2678,11 @@ def test_regio_tab_footer_and_clear():
                 }
 
             # skmap tab: the full keymap is shown
-            assert {"R", "r", "a", "x", "g"} <= shown()
+            assert {"R", "r", "a", "x", "1", "2"} <= shown()
 
             view = app._regio_view
-            # switch to the regio tab and start capturing
-            await pilot.press("g")
+            # '2' switches to the regio tab; start capturing
+            await pilot.press("2")
             await pilot.pause()
             assert app.app.focused is view.ops
             await pilot.press("p")
@@ -2687,13 +2690,13 @@ def test_regio_tab_footer_and_clear():
             assert view.capture is True
 
             # regio tab footer: only 'c' (clear) and 'p' (capture) —
-            # the skmap actions are disabled (and hidden), 'g' keeps
-            # working while staying out of the footer
+            # the skmap actions are disabled (and hidden), the tab
+            # keys 1/2 keep working while staying out of the footer
             assert shown() == {"c", "p"}
 
             # 'c' clears the log of the *shown* tab: the regio log goes
             # empty while the assert log (skmap tab) is untouched
-            await pilot.press("g")
+            await pilot.press("1")
             await pilot.pause()
             key = next(
                 k
@@ -2707,7 +2710,7 @@ def test_regio_tab_footer_and_clear():
                     break
                 await pilot.pause()
             assert view.ops.row_count == 1
-            await pilot.press("g")
+            await pilot.press("2")
             await pilot.pause()
             n_assert_lines = len(app._log_lines)
             assert n_assert_lines > 0
@@ -2722,11 +2725,11 @@ def test_regio_tab_footer_and_clear():
             await pilot.pause()
             assert view.ops.row_count == 0
 
-            # 'g' switches back (hidden but working) and the keymap is
+            # '1' switches back (hidden but working) and the keymap is
             # restored
-            await pilot.press("g")
+            await pilot.press("1")
             await pilot.pause()
             assert app.tabs.active == "tab-registers"
-            assert {"R", "r", "a", "x", "g"} <= shown()
+            assert {"R", "r", "a", "x", "1", "2"} <= shown()
 
     _run(run())

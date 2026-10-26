@@ -17,9 +17,10 @@ Layout (skmap tab)::
     | footer                                                    |
     +-----------------------------------------------------------+
 
-The workspace is **tabbed** (``g`` switches): the first tab (``skmap``)
-is the register map above (tree + table + assert log), the second (``regio``)
-a **regio tab** hosting the embedded ``regio_ui`` view (its ``RegioUiView``),
+The workspace is **tabbed** (keys ``1`` / ``2`` switch, the strip
+shows them as ``1 skmap`` / ``2 regio``): the first tab (``1 skmap``)
+is the register map above (tree + table + assert log), the second
+(``2 regio``) a **regio tab** hosting the embedded ``regio_ui`` view (its ``RegioUiView``),
 which then uses the **full page** (the assert log belongs to the
 register-map tab and is not shown on the regio tab).  A
 ``regio_ui.RegioTap`` attaches to the same regio device this app uses,
@@ -521,7 +522,8 @@ class SkmapUiApp(App):
         ("x", "clear_triggered", "Clear RC"),
         ("v", "toggle_value_bits", "Value bits"),
         ("e", "toggle_expand_vec", "Expand vec"),
-        ("g", "toggle_regio_tab", "Regio"),
+        ("1", "show_skmap_tab", "skmap tab"),
+        ("2", "show_regio_tab", "regio tab"),
         Binding("enter", "edit_selected_value", "Edit value", show=False),
         # NB: tab / shift+tab are NOT app bindings — the screen's default
         # tab binding (checked with priority) would beat them and move the
@@ -628,7 +630,7 @@ class SkmapUiApp(App):
             id="regio-view",
         )
         with TabbedContent(id="tabs"):
-            with TabPane("skmap", id="tab-registers"):
+            with TabPane("1 skmap", id="tab-registers"):
                 with Horizontal(id="workspace"):
                     yield ModuleTree(self.top_module.name(), id="modules")
                     yield RegMapTable(id="registers")
@@ -640,14 +642,14 @@ class SkmapUiApp(App):
                             "level | u: update | R: read all | r: read | "
                             "t: toggle bool | x: clear RC | tab: panels | "
                             "a: check asserts | v: value bits | "
-                            "e: expand vec | g: regio view"
+                            "e: expand vec | 2: regio view"
                         ),
                     )
                 # the assert log lives inside the registers pane (not
                 # below the tabs): the regio tab then uses the full
                 # page and shows no assert log
                 yield RichLog(id="log", markup=True, min_width=0)
-            with TabPane("regio", id="tab-regio"):
+            with TabPane("2 regio", id="tab-regio"):
                 # the embedded regio_ui view fills the whole page
                 # (the registers pane's workspace / inputs / log are
                 # all hidden while this tab is shown)
@@ -1516,17 +1518,18 @@ class SkmapUiApp(App):
     # regio tab (embedded regio_ui view)
     # ------------------------------------------------------------------
 
-    def action_toggle_regio_tab(self) -> None:
-        """'g' key: switch between the register map and the regio tab."""
-        target = (
-            "tab-regio" if self.tabs.active != "tab-regio" else "tab-registers"
-        )
-        self._activate_tab(target)
+    def action_show_skmap_tab(self) -> None:
+        """'1' key: show the skmap (register map) tab."""
+        self._activate_tab("tab-registers")
+
+    def action_show_regio_tab(self) -> None:
+        """'2' key: show the regio tab."""
+        self._activate_tab("tab-regio")
 
     #: skmap-specific actions, disabled while the regio tab is shown
     #: (see check_action): the regio tab footer keeps only 'c' (clear,
-    #: that tab's own log) and 'p' (capture); 'g' keeps working to
-    #: switch back but stays out of the footer too (_apply_tab_footer)
+    #: that tab's own log) and 'p' (capture); the tab-switch keys '1'
+    #: / '2' keep working but stay out of the footer too
     _SKMAP_ACTIONS = frozenset(
         {
             "check_asserts",
@@ -1555,28 +1558,33 @@ class SkmapUiApp(App):
             return False
         return super().check_action(action, parameters)
 
+    #: keys that switch tabs; their footer entries are hidden while
+    #: the regio tab is shown but the keys keep working (a 'show'
+    #: swap, see _apply_tab_footer)
+    _TAB_KEYS = {"1": "show_skmap_tab", "2": "show_regio_tab"}
+
     def _apply_tab_footer(self) -> None:
         """Curate the footer for the shown tab.
 
         The skmap tab shows the full keymap; the regio tab only shows
         'c' (clear log) and 'p' (capture) — the skmap actions are
-        disabled there (check_action hides them) and 'g' must keep
-        working to switch back, so it is hidden by *replacing* its
-        (frozen) binding with a show=False copy in this app's own
-        bindings map (restored when the skmap tab is shown again).
+        disabled there (check_action hides them) and the tab-switch
+        keys must keep working to get back, so their (frozen)
+        bindings are swapped for show=False copies in this app's own
+        bindings map (the class-level list is never mutated —
+        BindingsMap.copy is shallow).
         """
         shown = self._active_tab != "tab-regio"
-        bindings = self._bindings.key_to_bindings.get("g")
-        if bindings:
-            # NB: replace the list in *this app's* dict instead of
-            # mutating the entries — BindingsMap.copy() is shallow, so
-            # the list itself is shared with the class-level map
-            self._bindings.key_to_bindings["g"] = [
-                replace(b, show=shown)
-                if b.action == "toggle_regio_tab" and b.show != shown
-                else b
-                for b in bindings
-            ]
+        key_to_bindings = self._bindings.key_to_bindings
+        for key, action in self._TAB_KEYS.items():
+            bindings = key_to_bindings.get(key)
+            if bindings:
+                key_to_bindings[key] = [
+                    replace(b, show=shown)
+                    if b.action == action and b.show != shown
+                    else b
+                    for b in bindings
+                ]
         self.refresh_bindings()
 
     def _activate_tab(self, pane_id: str) -> None:

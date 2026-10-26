@@ -43,7 +43,7 @@ currently displayed is **highlighted** (bold bright blue).
 | `e` | toggle **expanding vector registers** in the register map into one row per vector index (like the `ExternalMemVec` view, see *Display options*) |
 | `shift` + `up` / `down` | in the register map or the tree: move the selected row / the cursor **5** lines at a time (instead of one) |
 | `shift` + `left` / `right` | in the register map: scroll horizontally by **5×** the amount a plain `left` / `right` moves the cursor (the cursor does not move); in the tree: scroll horizontally by **5** cells (a plain `left` / `right` expands / collapses the cursor node there instead of scrolling) |
-| `g` | switch between the **register map** tab and the **regio** tab (the embedded regio_ui log — see *Regio tab*) |
+| `1` / `2` | switch to the **skmap** tab (register map) / the **regio** tab (the embedded regio_ui log — see *Regio tab*); the tab strip shows the labels `1 skmap` / `2 regio` |
 | `p` | on the **regio tab**: start / stop **capturing** the regio operation log (the regio_ui view's own key) |
 
 On start the top module is selected (its register map is shown right away)
@@ -171,7 +171,8 @@ update only logs new events.
 
 ## Regio tab (embedded regio_ui)
 
-The workspace is tabbed: `g` switches between the **skmap** tab (the
+The workspace is tabbed (the strip shows `1 skmap` / `2 regio`, keys
+`1` / `2` switch): between the **skmap** tab (the
 register map) and the **regio tab**, which embeds the
 [regio_ui](../regio_ui) view (the
 `Time | Address | Op | Data` operations log, a status line and the
@@ -198,8 +199,8 @@ form's `wr`/`rd` op, `c` clears the log, `p` toggles the capture, and
 `enter` on a log row autofills the form (see the regio_ui docs).  The
 footer there shows only `c` (clear — clears the log of the **shown**
 tab) and `p` (capture): the register-map keys (`r`, `R`, `a`, `x`, …)
-are *disabled* on the regio tab, and `g` — which switches back — keeps
-working while staying out of the footer.
+are *disabled* on the regio tab; the tab keys `1` / `2` — which switch
+between the tabs — keep working while staying out of the footer.
 
 ## Assert log
 
