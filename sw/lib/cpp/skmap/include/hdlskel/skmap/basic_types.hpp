@@ -116,13 +116,15 @@ enum class ValueKind {
 };
 
 // Type of the `v` of the recipe options `v_check` / `v_convert`, mirrors
-// VType in pip/skmap/src/skmap/basic_types.py. 'f' is a double in c++, an
-// integer in python (the recipe has no float constants).
+// VType in pip/skmap/src/skmap/basic_types.py. 'f'
 enum class VType {
-    u,   // unsigned integer
-    s,   // signed integer
-    f    // float
+    u,   // unsigned integer (uses: uint_t)
+    s,   // signed integer   (uses: sint_t)
+    f    // float            (uses: float_t)
 };
+using uint_t = uint64_t;
+using sint_t = int64_t;
+using float_t = double;
 std::string str(VType v);
 // Default v_type of a register: the signedness of its value type
 VType value_kind_to_v_type(ValueKind kind);
@@ -130,8 +132,6 @@ VType value_kind_to_v_type(ValueKind kind);
 std::string str(Acc v);
 std::string str(Ass v);
 std::string str(ValueKind v);
-using uint_t = uint64_t;
-using sint_t = int64_t;
 class ValueType {
 public:
     ValueType(ValueKind kind, uint32_t width, std::optional<uint32_t> vec_len = {})

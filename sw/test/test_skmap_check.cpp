@@ -11,6 +11,8 @@
 #include <cmath>
 #include <iostream>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 using namespace hdlskel::skmap;
@@ -107,7 +109,7 @@ static void test_v_convert_scalar(autogen::RecipeTestBenchModule & m) {
     ASSERT(temp->v_convert()->str == "(v * 16)");
     ASSERT(temp->v_convert()->str_inv == "(v / 16)");
 
-    // the default functions are the user domain (double), the *_raw ones the
+    // the default functions are the user domain (float_t), the *_raw ones the
     // register domain
     m.temp_write(1.5);
     CHECK(m.temp_read_raw() == 24);
@@ -145,6 +147,14 @@ static void test_v_convert_scalar(autogen::RecipeTestBenchModule & m) {
     CHECK(temp->ass_check_cached(Ass::none, nullptr) == Ass::none);
 }
 
+// the value conversion works with float_t, the type of a recipe `v_type = "f"`,
+// so a generated module does not have to change when the float width changes.
+// Qualified, this file has `using namespace hdlskel::skmap`, where the
+// unqualified name is also the float_t of <math.h> (see basic_types.hpp).
+using skmap_float_t = hdlskel::skmap::float_t;
+static_assert(std::is_same_v<decltype(std::declval<autogen::RecipeTestBenchModule &>().temp_read_cached()), skmap_float_t>);
+static_assert(std::is_same_v<decltype(std::declval<autogen::RecipeTestBenchModule &>().temp_read()), skmap_float_t>);
+
 static void test_recipe_values(autogen::RecipeTestBenchModule & m) {
     // A few plain values of the recipe, to be sure the regio layout did not move
     CHECK(m.RO_LEN() == 3);
@@ -152,6 +162,13 @@ static void test_recipe_values(autogen::RecipeTestBenchModule & m) {
     CHECK(m.RW_MULT() == 2);
     CHECK(m.ctrl_flag_0_read_cached() == true);
     CHECK(m.ctrl_flag_8_read_cached() == false);
+
+    // a wt register is triggered with *_write_trigger (a regio write), the
+    // *_write_cached functions only touch the cache of the module
+    m.regs_wt_write_cached(0x15);
+    CHECK(m.regs_wt_read_cached() == 0x15);
+    m.bit_bool_wt_write_cached(true);
+    CHECK(m.bit_bool_wt_read_cached() == true);
 
     m.regs_rw_write_cached({2, 4, 6});
     auto vec = m.regs_rw_read_cached();

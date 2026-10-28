@@ -416,7 +416,7 @@ def contains_float_value(node : ResolvableT) -> bool:
     """True if the expression evaluates as a float, it uses a float `v`.
 
     The recipe `/` is an integer division, a float expression needs a float one,
-    see the python code generator (c++ divides as a double by itself).
+    see the python code generator (c++ divides as a float_t by itself).
     """
     if is_value_param(node):
         return node.v_type.is_float

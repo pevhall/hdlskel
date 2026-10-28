@@ -147,6 +147,7 @@ async def test_skmap_module_test_acc_types(dut):
         # RW_LEN = module.regs_rw_value_type.vec_len 
         # RW_VAL_W = module.regs_rw_value_type.width 
         assert RW_LEN is not None
+        assert RW_VAL_W is not None
         # the recipe v_check of regs_rw only accepts even values between -2 and
         # 100, min and max of the register value are replaced by it
         await module.regs_rw_write_idx(0, 100)

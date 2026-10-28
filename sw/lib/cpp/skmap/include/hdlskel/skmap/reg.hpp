@@ -27,16 +27,16 @@ using RegOrFlag = std::variant<std::shared_ptr<Reg>, std::shared_ptr<RFlag>>;
 // `v_convert` converts between the user value and the value of the register
 // (every read applies its inverse).
 //
-// The user value travels as a double in both directions: for an integer v_type
+// The user value travels as a float_t in both directions: for an integer v_type
 // the functions receive and return integral values, see VType.
 // The recipe v_check="{ (v % RW_MULT) == 0}" generates
 //   ValueCheck([](sint_t v) { return (v % RW_MULT()) == 0; }, "(v % 2) == 0", VType::u)
 using VCheckFn   = std::function<bool(sint_t)>;  // check of an int domain
-using VCheckFnF  = std::function<bool(double)>;  // check of a float domain
+using VCheckFnF  = std::function<bool(float_t)>;  // check of a float domain
 
 struct ValueCheck {
     // called with the value as the module user sees it
-    std::function<bool(double)> fn;
+    std::function<bool(float_t)> fn;
     // the check as text with every recipe name resolved to its value, printed
     // in the reg map, in errors and in the assert table
     std::string str;
@@ -44,26 +44,26 @@ struct ValueCheck {
 
     ValueCheck() = default;
     ValueCheck(VCheckFn fn, std::string str, VType v_type = VType::s)
-    :   fn([fn](double v) { return fn(static_cast<sint_t>(std::llround(v))); }),
+    :   fn([fn](float_t v) { return fn(static_cast<sint_t>(std::llround(v))); }),
         str(std::move(str)), v_type(v_type) {}
     ValueCheck(VCheckFnF fn, std::string str, VType v_type = VType::s)
     :   fn(std::move(fn)), str(std::move(str)), v_type(v_type) {}
 
-    bool operator()(double value) const { return static_cast<bool>(fn(value)); }
+    bool operator()(float_t value) const { return static_cast<bool>(fn(value)); }
 };
 
 struct ValueConvert {
     // user value -> value of the register, may return a fractional value, the
     // Reg rounds it like the python runtime does
-    std::function<double(double)> to_raw;
+    std::function<float_t(float_t)> to_raw;
     // value of the register -> user value, the inverse of to_raw
-    std::function<double(sint_t)> from_raw;
+    std::function<float_t(sint_t)> from_raw;
     // both directions as text with every recipe name resolved to its value
     std::string str;
     std::string str_inv;
     VType v_type = VType::s;
 
-    ValueConvert(std::function<double(double)> to_raw, std::function<double(sint_t)> from_raw,
+    ValueConvert(std::function<float_t(float_t)> to_raw, std::function<float_t(sint_t)> from_raw,
                  std::string str, std::string str_inv, VType v_type = VType::s)
     :   to_raw(std::move(to_raw)), from_raw(std::move(from_raw)),
         str(std::move(str)), str_inv(std::move(str_inv)), v_type(v_type) {}
@@ -71,7 +71,7 @@ struct ValueConvert {
 
 // Round to the nearest integer with halves away from zero, same as python
 // round() on floats, it decides the value that ends up in the register.
-sint_t v_round_to_int(double value);
+sint_t v_round_to_int(float_t value);
 
 
 class Reg {
@@ -126,14 +126,18 @@ public:
     // the value of the module user (v_check it, then convert it, a read
     // converts with the inverse), the *_raw functions bypass the conversion.
     bool has_v_convert() const { return m_v_convert.has_value(); }
-    double to_raw(double value) const;
+    // `={ v * 16 } ` text of the v_convert, '' when there is none: printed at
+    // the start of the description in the reg map, like desc_cell() of
+    // pip/skmap/src/skmap/reg_map_table.py
+    std::string v_convert_marker() const;
+    float_t to_raw(float_t value) const;
     // v_check the user value, convert it and check that it fits the register
-    sint_t to_raw_checked(double value) const;
-    double from_raw(sint_t value) const;
-    double read_converted_cached() const;
-    double read_converted();
-    void write_converted_cached(double value);
-    void write_converted(double value);
+    sint_t to_raw_checked(float_t value) const;
+    float_t from_raw(sint_t value) const;
+    float_t read_converted_cached() const;
+    float_t read_converted();
+    void write_converted_cached(float_t value);
+    void write_converted(float_t value);
 
     // Asserts and limits (mirrors Reg in pip/skmap/src/skmap/reg.py).
     // ass_check_cached computes the assert status of this reg from the cache:
@@ -144,9 +148,9 @@ public:
     // whether to log the reg itself).
     virtual Ass ass_check_cached(Ass log_ass, std::vector<std::shared_ptr<RFlag>> * log_flags) const;
     virtual Ass ass_check_limit_cached() const;
-    Ass ass_check_value_check(double value) const;
-    Ass ass_check_value_limit(double value) const;
-    void check_value_limit(double value) const;
+    Ass ass_check_value_check(float_t value) const;
+    Ass ass_check_value_limit(float_t value) const;
+    void check_value_limit(float_t value) const;
     virtual bool has_ass() const { return m_ass != Ass::none || has_limit(); }
     bool has_limit() const;
     // True if the value fits in the register's bytes, mirrors python raising
@@ -242,14 +246,14 @@ public:
     void write_idx_sint(addr_t idx, sint_t val);
 
     // v_convert of the recipe, same as Reg, applied to every element
-    std::vector<double> read_vec_converted_cached() const;
-    std::vector<double> read_vec_converted();
-    void write_vec_converted_cached(const std::vector<double> & vec);
-    void write_vec_converted(const std::vector<double> & vec);
-    double read_idx_converted_cached(addr_t idx) const;
-    double read_idx_converted(addr_t idx);
-    void write_idx_converted_cached(addr_t idx, double value);
-    void write_idx_converted(addr_t idx, double value);
+    std::vector<float_t> read_vec_converted_cached() const;
+    std::vector<float_t> read_vec_converted();
+    void write_vec_converted_cached(const std::vector<float_t> & vec);
+    void write_vec_converted(const std::vector<float_t> & vec);
+    float_t read_idx_converted_cached(addr_t idx) const;
+    float_t read_idx_converted(addr_t idx);
+    void write_idx_converted_cached(addr_t idx, float_t value);
+    void write_idx_converted(addr_t idx, float_t value);
 
     // stride between vector elements in bytes (aligned to the module byte alignment)
     addr_t elem_off() const { return m_value_type.sw_elem_offset(); }

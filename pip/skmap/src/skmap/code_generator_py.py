@@ -279,7 +279,11 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
             s += f'        return {reg_name}.{func_read_cached}()\n\n'
             s += f'    async def {reg.name}_read{sfx}(self) -> {t_str}:\n'
             s += f'        return await {reg_name}.{func_read}()\n\n'
+            # a wt reg is triggered with write_trigger (the regio sees a write
+            # event), the write_cached functions only touch the cache
             if not is_vec_int:
+                s += f'    def {reg.name}_write_cached{sfx}(self, value : {t_str}):\n'
+                s += f'        {reg_name}.{func_write_cached}(value)\n\n'
                 s += f'    async def {reg.name}_write_trigger{sfx}(self, value : {t_str}):\n'
                 s += f'        await {reg_name}.{func_write}(value)\n\n'
             if is_vec_int:
@@ -287,6 +291,8 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
                 s += f'        return {reg_name}.{func_read_idx_cached}(idx)\n\n'
                 s += f'    async def {reg.name}_read_idx{sfx}(self, idx : int) -> int:\n'
                 s += f'        return await {reg_name}.{func_read_idx}(idx)\n\n'
+                s += f'    def {reg.name}_write_idx_cached{sfx}(self, idx : int, val : int):\n'
+                s += f'        {reg_name}.{func_write_idx_cached}(idx, val)\n\n'
                 s += f'    async def {reg.name}_write_trigger_idx{sfx}(self, idx : int, val : int):\n'
                 s += f'        await {reg_name}.{func_write_idx}(idx, val)\n\n'
         case _:
@@ -320,6 +326,8 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
                     s += f'    async def {reg.name}_write(self, value : {t_str_user}):\n'
                     s += f'        await {reg_name}.write_converted(value)\n\n'
                 if reg.acc == Acc.wt and not is_vec_int:
+                    s += f'    def {reg.name}_write_cached(self, value : {t_str_user}):\n'
+                    s += f'        {reg_name}.write_converted_cached(value)\n\n'
                     s += f'    async def {reg.name}_write_trigger(self, value : {t_str_user}):\n'
                     s += f'        await {reg_name}.write_converted(value)\n\n'
                 if is_vec_int:
@@ -333,6 +341,8 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
                         s += f'    async def {reg.name}_write_idx(self, idx : int, val : {t_str_user_one}):\n'
                         s += f'        await {reg_name}.write_converted_idx(idx, val)\n\n'
                     if reg.acc == Acc.wt:
+                        s += f'    def {reg.name}_write_idx_cached(self, idx : int, val : {t_str_user_one}):\n'
+                        s += f'        {reg_name}.write_converted_idx_cached(idx, val)\n\n'
                         s += f'    async def {reg.name}_write_trigger_idx(self, idx : int, val : {t_str_user_one}):\n'
                         s += f'        await {reg_name}.write_converted_idx(idx, val)\n\n'
     return s

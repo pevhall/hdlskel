@@ -24,7 +24,14 @@ column, and skmap's notion of a **trigger** (register write).
 ## Layout & controls
 
 The three panes (on the **skmap** tab) are resizable by **dragging a divider with the mouse**
-(between tree/table, and between workspace/log). The tree starts
+(between tree/table, and between workspace/log). The boundary between the
+**Value** and the **Description** column of the register map drags the same
+way: the value column takes the width you drop it at (the description gets
+the rest, and a too-narrow / too-wide drag is clamped), and a
+**double-click** on that boundary gives the value column its default width
+back. On a terminal too narrow to show the **Description** column the
+boundary is off the table — scroll the register map first (cursor keys or
+shift + mouse wheel) to bring it into view. The tree starts
 **fully expanded**, and the tree node of the module whose register map is
 currently displayed is **highlighted** (bold bright blue).
 

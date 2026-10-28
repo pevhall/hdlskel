@@ -1,4 +1,3 @@
-from skmap import code_generator_all_hpp
 from . import regio
 from . import head
 from . import reg

@@ -57,6 +57,9 @@ var = [
   # converts the user value into the register value (v * 16) and a read uses its
   # inverse (v / 16), so writing 1.5 stores 24 and reading gives 1.5 back.
   {name = "temp",     t = "s16", acc = "rw", desc = "Temp, Q4 float scale", v_type = "f", v_convert = "{ v * INT_16 }", v_check = "{ (v >= -1000) && (v <= 1000) }"},
+  # A wt register is a trigger, the write that reaches the regio is
+  # <reg>_write_trigger (<reg>_write_trigger_idx for a vector), while
+  # <reg>_write_cached only writes the cache of the module.
   {name = "regs_wt",  t = "b5", acc = "wt", desc = "WT registers", fw_init="k_int"},
   {name = "regs_rc",  t = "[{RW_LEN}]s{RW_VAL_W}", acc = "rc", desc = "RC registers"},
   # {name = "reg_s_wt",  t = "s40", acc = "wt", desc = "RC registers"},

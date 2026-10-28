@@ -17,11 +17,19 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-BUILD=../build
+# Where the built apps are: the meson build dir by default, HDSKEL_BUILD_DIR
+# points at another one (the cmake test sets it to its own build dir, the
+# layout of the binaries below it is the same: app/skmap, app/regio_op, test)
+BUILD="${HDSKEL_BUILD_DIR:-../build}"
 RECIPE=../../test/data/test_recipe.skmap
 TREE=../../test/data/test_tree.skmap
 
-meson compile -C "$BUILD" -v
+# rebuild first when $BUILD is a meson build dir (ctest / a plain run of this
+# script from another build dir builds the binaries itself, nothing to do)
+[ -f "$BUILD/build.ninja" ] && meson compile -C "$BUILD" -v
+for app in "$BUILD/app/skmap/skmap" "$BUILD/app/regio_op/regio_op" "$BUILD/test/test_skmap_check"; do
+    [ -x "$app" ] || { echo "FAIL: $app is not built (HDSKEL_BUILD_DIR=$BUILD)"; exit 1; }
+done
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -58,6 +66,15 @@ check_has_f() { # <description> <needle> <file>
     fi
 }
 
+# Fixed string version of check_absent
+check_absent_f() { # <description> <needle> <file>
+    if grep -aqF -- "$2" "$3"; then
+        echo "FAIL: $1 (unexpected '$2')"
+        fails=$((fails+1))
+    else
+        echo "PASS: $1"
+    fi
+}
 check_absent() { # <description> <needle> <file>
     if grep -aq -- "$2" "$3"; then
         echo "FAIL: $1 (unexpected '$2')"
@@ -92,6 +109,10 @@ check_has_f "v_check of regs_rw shown"  "(((v >= (-1 * 2)) && (v <= 100)) && ((v
 # temp has a v_convert, the map shows the value of the module user (a float),
 # not the raw value of the register
 check_has_f "v_convert prints the user value" "((v >= -1000) && (v <= 1000)) -4.25" "$TMP/recipe.txt"
+# the description of a reg with a v_convert starts with the conversion (like
+# the python reg map), the marker is not printed anywhere else
+check_has_f "v_convert in the description" "={ v * 16 } Temp, Q4 float scale" "$TMP/recipe.txt"
+check_absent_f "no marker for a reg without a v_convert" "={ v * 16 } RW registers" "$TMP/recipe.txt"
 # RW_LEN has v_check="{ (v % RW_MULT) == 0}" and the firmware value 3 is odd, so
 # the worst assert of the module is the error of that failed check
 check_has "asserts listed"              "Asserts (max error)"       "$TMP/recipe.txt"

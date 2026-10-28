@@ -68,7 +68,7 @@ class VType(Enum):
     """Type of the `v` parameter of the `v_check` / `v_convert` recipe options.
 
     Recipe option `v_type`: 'u' unsigned int, 's' signed int, 'f' float (a
-    double in c++). It decides the type the user facing read / write functions
+    float_t in c++). It decides the type the user facing read / write functions
     of a register take and return. The default comes from the value type of the
     register, see value_kind_to_v_type().
     """

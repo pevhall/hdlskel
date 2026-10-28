@@ -15,7 +15,14 @@ from skmap.external_mem import ExternalMemVec
 from skmap_ui import SkmapUiApp
 # column indices of the register map table (see SkmapUiApp.on_mount)
 ADDR, T, ACC, NAME, VALUE, DESC = range(6)
-from skmap_ui.app import ModuleTree, _hex
+from skmap_ui.app import (
+    COL_DESC,
+    COL_NAME,
+    COL_VALUE,
+    ModuleTree,
+    RegMapTable,
+    _hex,
+)
 from skmap_ui.demo import (
     MemRegio,
     _DemoModule,
@@ -274,6 +281,172 @@ def test_mouse_resize_dividers():
             assert abs(pct(app.workspace, "height") - expected_h) < 1.0
             assert ws.region.height < ws_height
 
+    _run(run())
+
+
+def test_mouse_resize_value_column():
+    """Dragging the boundary between the *Value* and the *Description*
+    column of the register map resizes the value column (the description
+    takes what is left); double-clicking the boundary gives the default
+    width back.  The width belongs to the column, so it also survives
+    showing another module."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        # wide enough that the value column can really grow (the drag
+        # clamps so the description keeps a few cells of the table)
+        async with app.run_test(size=(200, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await pilot.pause()
+            table = app.table
+            default = table.value_col_width()
+            assert default == RegMapTable.VALUE_COL_DEFAULT
+            y = table.region.y + table.header_height + 1   # a row of the body
+            bx = table.value_col_boundary_screen_x()
+
+            # the boundary is where the two columns really meet: a few cells
+            # to the left hover the value cell, to the right the description
+            await pilot.hover(None, (bx - 4, y))
+            await pilot.pause()
+            assert table.hover_coordinate.column == table.get_column_index(COL_VALUE)
+            await pilot.hover(None, (bx + 4, y))
+            await pilot.pause()
+            assert table.hover_coordinate.column == table.get_column_index(COL_DESC)
+
+            # drag right: the value column gets wider
+            await pilot.mouse_down(None, (bx, y))
+            await pilot.pause()
+            assert app._drag == "col"
+            await pilot.hover(None, (bx + 12, y))
+            await pilot.pause()
+            wide = table.value_col_width()
+            assert wide > default
+            await pilot.mouse_up(None, (bx + 12, y))
+            await pilot.pause()
+            assert app._drag is None
+
+            # drag left: narrower than the default again
+            await pilot.mouse_down(None, (bx + 12, y))
+            await pilot.hover(None, (bx - 8, y))
+            await pilot.pause()
+            narrow = table.value_col_width()
+            await pilot.mouse_up(None, (bx - 8, y))
+            assert narrow < default
+
+            # the columns are not rebuilt when another module is shown
+            await _select_node(app, _find_node(app, top.kids_cached()[0]), pilot)
+            assert table.value_col_width() == narrow
+            await _select_node(app, _find_node(app, top), pilot)
+            assert table.value_col_width() == narrow
+
+            # double-click the boundary: the default width is back
+            bx = table.value_col_boundary_screen_x()
+            await pilot.double_click(None, (bx, y))
+            await pilot.pause()
+            assert table.value_col_width() == default
+    _run(run())
+
+
+def test_mouse_resize_value_column_scrolled():
+    """On a narrow terminal the Value | Description boundary is out of the
+    table (the fixed columns before it do not fit), and scrolling the
+    register map horizontally brings it back: the drag follows the
+    scrolled position."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await pilot.pause()
+            table = app.table
+            y = table.region.y + table.header_height + 1
+            assert table.value_col_boundary_screen_x() > table.region.right
+            # no hit outside of the table
+            assert app._hit_divider(table.region.right + 2, y) != "col"
+
+            table.scroll_x = table.scroll_x + 30
+            await pilot.pause()
+            bx = table.value_col_boundary_screen_x()
+            assert bx < table.region.right
+            assert app._hit_divider(bx, y) == "col"
+
+            await pilot.mouse_down(None, (bx, y))
+            await pilot.hover(None, (bx - 10, y))
+            await pilot.pause()
+            narrower = table.value_col_width()
+            await pilot.mouse_up(None, (bx - 10, y))
+            assert narrower < RegMapTable.VALUE_COL_DEFAULT
+            assert narrower >= RegMapTable.VALUE_COL_MIN
+
+            # dragging all the way to the right of the table is clamped, the
+            # description keeps some cells and the boundary stays grabbable
+            edge = table.region.right - 1
+            bx = table.value_col_boundary_screen_x()   # the first drag moved it
+            await pilot.mouse_down(None, (bx, y))
+            await pilot.hover(None, (edge, y))
+            await pilot.pause()
+            await pilot.mouse_up(None, (edge, y))
+            assert table.value_col_width() > narrower
+            assert table.value_col_boundary_screen_x() < table.region.right
+    _run(run())
+
+
+def _desc_column_of_rows(app):
+    """For every visible body row of the register map: the column at which
+    its *Description* text is rendered, read back from the rendered line
+    (so a row that is drawn with a stale column layout shows up)."""
+    table = app.table
+    col_name = table.get_column_index(COL_NAME)
+    col_desc = table.get_column_index(COL_DESC)
+    out = {}
+    for row in range(table.row_count):
+        name = _cell(app, row, col_name).strip()
+        desc = _cell(app, row, col_desc).strip()
+        if not name or not desc:
+            continue
+        for y in range(table.region.height):
+            line = "".join(seg.text for seg in table.render_line(y))
+            if f" {name} " in line and desc in line:
+                out[name] = line.rindex(desc)
+                break
+    assert out, "no register row of the module could be rendered"
+    return out
+
+
+def test_resize_value_column_redraws_every_row():
+    """The DataTable caches rendered rows, so changing the width of the
+    Value column must invalidate them: otherwise only the row under the
+    cursor is drawn with the new width and all the other rows keep the
+    old Value | Description split."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(200, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await pilot.pause()
+            table = app.table
+            default = table.value_col_width()
+            y = table.region.y + table.header_height + 1
+            before = _desc_column_of_rows(app)
+            assert len(set(before.values())) == 1, before
+
+            bx = table.value_col_boundary_screen_x()
+            await pilot.mouse_down(None, (bx, y))
+            await pilot.hover(None, (bx + 10, y))
+            await pilot.pause()
+            await pilot.mouse_up(None, (table.value_col_boundary_screen_x(), y))
+
+            assert table.value_col_width() == default + 10   # the column did resize
+            after = _desc_column_of_rows(app)
+            assert len(set(after.values())) == 1, after            # every row agrees
+            assert set(after.values()) == {v + 10 for v in before.values()}, (before, after)
+
+            # and the same when the width is reset with a double-click
+            bx = table.value_col_boundary_screen_x()
+            await pilot.double_click(None, (bx, y))
+            await pilot.pause()
+            back = _desc_column_of_rows(app)
+            assert set(back.values()) == set(before.values()), (before, back)
     _run(run())
 
 

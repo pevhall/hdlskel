@@ -236,9 +236,11 @@ private:
     size_t m_rows = 0;
 };
 
-// One register row, mirrors RegMapTable.add_reg()
+// One register row, mirrors RegMapTable.add_reg(): the description of a
+// register with a v_convert starts with the conversion, its value column holds
+// the value of the module user, not the value of the register
 void add_reg_row(RegMapTable & table, const Reg & reg) {
-    table.add_row({str_addr(reg.addr()), reg.value_type().str(), str(reg.acc()), reg.name(), reg.str_value_cached(), reg.desc()});
+    table.add_row({str_addr(reg.addr()), reg.value_type().str(), str(reg.acc()), reg.name(), reg.str_value_cached(), reg.v_convert_marker() + reg.desc()});
 }
 
 // One flag row, mirrors RegMapTable.add_flag()

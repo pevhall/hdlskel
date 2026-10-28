@@ -2,9 +2,19 @@
 import cocotb
 import tbskel.ramface
 import skmap
+import skmap.basic
+
+from skmap import Acc, Ass, Reg, RegK, ValueKind, ValueType
+from skmap.head import SIZE_WORD
 
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer
+
+# an unknown module: nothing is known about its registers, they are only
+# placeholders for the size of the reg map (the kind of a value is unknown,
+# so it is kept as raw bits of one regios word)
+_unkown_vt = ValueType(kind=ValueKind.bits, width=SIZE_WORD*8)
+
 
 class ModuleUnkowen(skmap.Module):
 
@@ -25,12 +35,14 @@ class ModuleUnkowen(skmap.Module):
 
     def _init_reg_map_k(self):
         for ii in range(self.head.len_k):
-            reg = RegK(self, f'UNKOWN_K_{ii}', SIZE_WORD*8, "Unkowen constant {ii}")
+            reg = RegK(self, name=f'UNKOWN_K_{ii}', value_type=_unkown_vt,
+                       desc=f'Unkowen constant {ii}')
             self._add_reg_k(reg)
 
     def _init_reg_map_var(self):
         for ii in range(self.head.len_var):
-            reg = Reg(self, f'UNKOWN_VAR_{ii}', SIZE_WORD*8, f"Unkowen variable {ii}", acc=Acc.na, ass=Ass.error)
+            reg = Reg(self, name=f'UNKOWN_VAR_{ii}', value_type=_unkown_vt, acc=Acc.na,
+                      desc=f'Unkowen variable {ii}', ass=Ass.error)
             self._add_reg_var(reg)
 
 async def reg_loopback(dut):

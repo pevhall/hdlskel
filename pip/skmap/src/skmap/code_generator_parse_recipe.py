@@ -321,7 +321,7 @@ def parse_recipe_v_options(d : dict, name_to_k : NameToKT, value_kind, is_flag :
     v_convert_inv, v_convert_inv_str):
 
       * `v_type`    type of the value parameter `v`, 'u', 's' or 'f' (float, a
-                    double in c++), defaults to the type of the register
+                    float_t in c++), defaults to the type of the register
       * `v_check`   boolean expression of `v`, the value limits, replacing the
                     old `min` / `max` options, eg v_check="{ v <= 100 }".
                     A value that fails it is an assert on a read and is

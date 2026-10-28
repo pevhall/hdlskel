@@ -122,6 +122,22 @@ class Reg:
     def has_v_convert(self) -> bool:
         return self.v_convert is not None
 
+    def v_convert_marker(self) -> str:
+        """`= { v * 16 } ` text of the `v_convert` of the register, '' when it
+        has none.
+
+        Printed at the start of the description in the reg map, where the value
+        of the register and the value of the module user are shown next to each
+        other. The text is the recipe source with every recipe name resolved to
+        its value. See RegMapTable and the c++ print_reg_map.
+        """
+        if self.v_convert is None:
+            return ''
+        conv = str(self.v_convert)      # resolved, eg '(v * 16)'
+        if len(conv) > 2 and conv[0] in '({' and conv[-1] in '})':
+            conv = conv[1:-1].strip()
+        return f'={{ {conv} }} '
+
     def value_type_str(self) -> str:
         return f'{self.value_type}'
 
@@ -736,6 +752,8 @@ class RegVec(Reg):
         return s
 
 class RegK(Reg):
+    # the acc of a constant is 'k', it is not a parameter here: because Reg
+    # takes the acc before the description, pass the desc as a keyword
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs, acc = Acc.k) #, ass = Ass.none)
 
@@ -743,6 +761,7 @@ class RegK(Reg):
         return self.read_uint_cached()
 
 class RegVecK(RegVec):
+    # like RegK: the acc is 'k', pass the desc as a keyword
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs, acc = Acc.k) #, ass = Ass.none)
 

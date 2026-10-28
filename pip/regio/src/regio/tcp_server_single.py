@@ -8,7 +8,6 @@ from .tcp import RQST_HEAD_SIZE, RqstHead, RplyHead, unpack_rqst_head, pack_rply
 
 import socket
 import struct
-from typing import Optional
 
 # Keep the async Regio interface the same as you provided
 

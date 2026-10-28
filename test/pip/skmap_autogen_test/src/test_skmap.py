@@ -8,7 +8,7 @@ import skmap_autogen_test.test_skmap_tree_module
 
 
 def main():
-    args = skmap.cli_utils.parse_args()
+    args = skmap.cli_utils.parse_args_skmap_cli_main()
     asyncio.run(skmap.cli_utils.main(args))
 
 if __name__ == '__main__':

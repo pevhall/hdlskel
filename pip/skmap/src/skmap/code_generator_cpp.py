@@ -58,7 +58,7 @@ def to_cpp_source(node: ResolvableT) -> str:
         if node.op == BultiInOperation.div and contains_float_value(node):
             # The inverse of a float v_convert divides an integer register value,
             # it has to be a float division (the recipe `/` is an integer one).
-            return f'(static_cast<double>({to_cpp_source(node.lhs)}) / {to_cpp_source(node.rhs)})'
+            return f'(static_cast<float_t>({to_cpp_source(node.lhs)}) / {to_cpp_source(node.rhs)})'
         return f'({to_cpp_source(node.lhs)} {node.op} {to_cpp_source(node.rhs)})'
     if isinstance(node, ResolvableFunctionBuiltIn):
         args = ', '.join(to_cpp_source(p) for p in node.params)
@@ -120,14 +120,14 @@ def value_check_str_cpp(reg : RecipeReg) -> str:
 
     The lambda gets the user value as `v`, recipe k / ipkg values are read
     through `this`. An integer v_type gets an `sint_t v`, a float one a
-    `double v` (ValueCheck takes both).
+    `float_t v` (ValueCheck takes both).
     """
     if reg.v_check is None:
         return 'std::nullopt'
     # the function type is spelled out, a bare lambda converts to both ValueCheck
-    # constructors (sint_t and double v) and would be ambiguous
+    # constructors (sint_t and float_t v) and would be ambiguous
     if reg.v_type.is_float:
-        return (f'ValueCheck{{VCheckFnF{{[this](double v) {{ return {to_cpp_source(reg.v_check)}; }}}}, '
+        return (f'ValueCheck{{VCheckFnF{{[this](float_t v) {{ return {to_cpp_source(reg.v_check)}; }}}}, '
                 f'"{reg.v_check_str}", VType::{reg.v_type.value}}}')
     return (f'ValueCheck{{VCheckFn{{[this](sint_t v) {{ return {to_cpp_source(reg.v_check)}; }}}}, '
             f'"{reg.v_check_str}", VType::{reg.v_type.value}}}')
@@ -141,7 +141,7 @@ def value_convert_str_cpp(reg : RecipeReg) -> str:
     """
     if reg.v_convert is None:
         return 'std::nullopt'
-    v_arg = 'double v' if reg.v_type.is_float else 'sint_t v'
+    v_arg = 'float_t v' if reg.v_type.is_float else 'sint_t v'
     return (f'ValueConvert{{[this]({v_arg}) {{ return {to_cpp_source(reg.v_convert)}; }}, '
             f'[this](sint_t v) {{ return {to_cpp_source(reg.v_convert_inv)}; }}, '
             f'"{reg.v_convert_str}", "{reg.v_convert_inv_str}", VType::{reg.v_type.value}}}')
@@ -153,7 +153,7 @@ def value_user_ret_type_str_cpp(reg : RecipeReg, wr : bool = False, ignore_vec :
     """Return / argument type of the user facing functions, see the recipe v_type."""
     t = reg.t
     if reg.v_type.is_float:
-        rt = 'double'
+        rt = 'float_t'
     elif t.kind == ValueKind.flag and t.elem_w == 1:
         rt = 'bool'
     elif t.kind == ValueKind.char:
@@ -161,7 +161,7 @@ def value_user_ret_type_str_cpp(reg : RecipeReg, wr : bool = False, ignore_vec :
     else:
         rt = 'uint_t' if t.kind in (ValueKind.uint, ValueKind.bits) else 'sint_t'
     if not ignore_vec and t.is_vec:
-        rt = 'std::string' if t.kind == ValueKind.char else 'std::vector<double>'
+        rt = 'std::string' if t.kind == ValueKind.char else 'std::vector<float_t>'
         if wr:
             rt = f'const {rt} &'
     return rt
@@ -237,11 +237,15 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
         case Acc.wt:
             s += f'    {t_str} {reg.name}_read_cached{sfx}() const {{ return {reg_name}->{func_read_cached}(); }}\n'
             s += f'    {t_str} {reg.name}_read{sfx}() {{ return {reg_name}->{func_read}(); }}\n'
+            # a wt reg is triggered with write_trigger (the regio sees a write
+            # event), the write_cached functions only touch the cache
             if not is_vec_int(reg.t):
+                s += f'    void {reg.name}_write_cached{sfx}( {t_str_wr} value ) {{ {reg_name}->{func_write_cached}(value); }}\n'
                 s += f'    void {reg.name}_write_trigger{sfx}( {t_str_wr} value ) {{ {reg_name}->{func_write}(value); }}\n'
             if is_vec_int(reg.t):
                 s += f'    {t_elem_str} {reg.name}_read_idx_cached{sfx}(addr_t idx) const {{ return {reg_name}->{func_read_idx_cached}(idx); }}\n'
                 s += f'    {t_elem_str} {reg.name}_read_idx{sfx}(addr_t idx) {{ return {reg_name}->{func_read_idx}(idx); }}\n'
+                s += f'    void {reg.name}_write_idx_cached{sfx}(addr_t idx, {t_elem_str} val) {{ {reg_name}->{func_write_idx_cached}(idx, val); }}\n'
                 s += f'    void {reg.name}_write_trigger_idx{sfx}(addr_t idx, {t_elem_str} val) {{ {reg_name}->{func_write_idx}(idx, val); }}\n'
         case _:
             assert False
@@ -271,6 +275,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
                     s += f'    void {reg.name}_write_cached( {t_user_wr} value ) {{ {reg_name}->write_converted_cached(value); }}\n'
                     s += f'    void {reg.name}_write( {t_user_wr} value ) {{ {reg_name}->write_converted(value); }}\n'
                 if reg.acc == Acc.wt and not is_vec_int(reg.t):
+                    s += f'    void {reg.name}_write_cached( {t_user_wr} value ) {{ {reg_name}->write_converted_cached(value); }}\n'
                     s += f'    void {reg.name}_write_trigger( {t_user_wr} value ) {{ {reg_name}->write_converted(value); }}\n'
                 if is_vec_int(reg.t):
                     s += f'    {t_user_one} {reg.name}_read_idx_cached(addr_t idx) const {{ return {reg_name}->read_idx_converted_cached(idx); }}\n'
@@ -279,6 +284,7 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
                         s += f'    void {reg.name}_write_idx_cached(addr_t idx, {t_user_one} val) {{ {reg_name}->write_idx_converted_cached(idx, val); }}\n'
                         s += f'    void {reg.name}_write_idx(addr_t idx, {t_user_one} val) {{ {reg_name}->write_idx_converted(idx, val); }}\n'
                     if reg.acc == Acc.wt:
+                        s += f'    void {reg.name}_write_idx_cached(addr_t idx, {t_user_one} val) {{ {reg_name}->write_idx_converted_cached(idx, val); }}\n'
                         s += f'    void {reg.name}_write_trigger_idx(addr_t idx, {t_user_one} val) {{ {reg_name}->write_idx_converted(idx, val); }}\n'
     return s
 

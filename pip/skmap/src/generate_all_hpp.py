@@ -7,6 +7,9 @@ import logging
 import argparse
 from typing import Optional, Sequence
 
+# the messages of this cli go through the root logger (basic_config below)
+log = logging.getLogger("skmap.generate_all_hpp")
+
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="skmap-all-hpp",
@@ -85,7 +88,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             log.error(f"{directory}: {e}")
             return 1
         if args.check and changed:
-            log.warning(f"{directory}: {ALL_HPP_NAME} is out of date")
+            log.warning(f"{directory}: {skmap.code_generator_all_hpp.ALL_HPP_NAME} is out of date")
             rc = 1
     return rc
 

@@ -149,9 +149,11 @@ register / flag / mem device accesses use skmap's async *non-cached*
 regio reads/writes (never ``*_cached``), so the value really goes to
 / comes from the regio (live TCP server or cache file) and the skmap
 cache is refreshed; ``k`` (hardwired) and ``na`` (no access) assets
-are never read back.  All three panes are resizable with the mouse:
-drag the divider between tree and table, or between the table and the
-log.  The ``x`` key toggles the display of ``uint`` / ``sint`` values
+are never read back.  Everything is resizable with the mouse: the
+divider between tree and table, the one between the table and the log,
+and the boundary between the *Value* and the *Description* column of the
+register map (double-click that boundary to give the value column its
+default width back).  The ``x`` key toggles the display of ``uint`` / ``sint`` values
 between int (decimal) and bits (hex, like the ``bits`` kind — ``sint``
 values sign-extended to the type's byte width, e.g. a 12-bit -40 as
 ``0xFFD8``) — the input prefill follows the display; the ``e`` key
@@ -431,6 +433,100 @@ class RegMapTable(DataTable):
     #: how many lines 'shift+up' / 'shift+down' move the cursor
     _SHIFT_ROW_STEP = 5
 
+    #: width (in cells) the Value column is built with; drag the boundary
+    #: with the Description column to change it (see the app's mouse
+    #: handlers), double-click the boundary to get this width back
+    VALUE_COL_DEFAULT = 22
+    #: the narrowest the Value column can be dragged
+    VALUE_COL_MIN = 6
+    #: cells that must stay out of the Value column when dragging, so the
+    #: description does not disappear completely
+    VALUE_COL_KEEP = 12
+
+    def value_col_width(self) -> int:
+        """Current width (in cells) of the Value column."""
+        return int(self.columns[COL_VALUE].width)
+
+    def set_value_col_width(self, width: int) -> None:
+        """Make the Value column ``width`` cells wide (content, without the
+        padding of the cells); the Description column takes what is left.
+
+        The width is a property of the column, so it stays when the table
+        is rebuilt (another module selected, a display option toggled).
+        """
+        # the value column must not swallow the visible part of the table
+        limit = max(
+            self.VALUE_COL_MIN,
+            self.size.width
+            - self._col_local_x(COL_VALUE)
+            - 2 * self.cell_padding
+            - self.VALUE_COL_KEEP,
+        )
+        self._set_value_col_width(
+            min(max(int(width), self.VALUE_COL_MIN), int(limit))
+        )
+
+    def reset_value_col_width(self) -> None:
+        """Back to the width the table is built with."""
+        self._set_value_col_width(self.VALUE_COL_DEFAULT)
+
+    def _set_value_col_width(self, width: int) -> None:
+        """Set the width of the Value column and redraw the whole table.
+
+        The rows of a DataTable are cached as rendered strips, and the cache
+        key does not contain the column widths: without clearing that cache,
+        only a row that is re-rendered for another reason (the cursor or the
+        hover moving over it) would show the new width, all the other rows
+        would keep the old Value | Description split.
+        """
+        col = self.columns[COL_VALUE]
+        col.auto_width = False        # a fixed width (not the content width)
+        col.width = width
+        self._require_update_dimensions = True    # the total width changed
+        self._clear_caches()
+        self.refresh(layout=True)
+
+    def value_col_width_for_pointer(
+        self, screen_x: int, scroll_x: int | None = None
+    ) -> int:
+        """Width of the Value column when its right boundary is dragged to
+        ``screen_x``.  The padding cells of the two columns are not part of
+        the width, so grabbing the boundary does not move it.
+
+        ``scroll_x`` is the horizontal scroll the drag started at: making the
+        column narrower can make the whole table fit the table area, and then
+        the scroll is reset by Textual.  Measuring against the scroll of the
+        grab (instead of the current one) keeps the width of the column
+        coupled to the pointer, instead of chasing that reset - which would
+        otherwise collapse the column to its minimum.
+        """
+        return (
+            int(screen_x)
+            - self._to_screen_x(self._col_local_x(COL_VALUE, scroll_x))
+            - 2 * self.cell_padding
+        )
+
+    def _col_local_x(self, col_key: str, scroll_x: int | None = None) -> int:
+        """x of the left edge of the cells of a column, in the scrolled
+        content coordinates of the table (``scroll_x`` overrides the current
+        horizontal scroll, see ``value_col_width_for_pointer``)."""
+        index = self.get_column_index(col_key)
+        if index is None:
+            return 0
+        if scroll_x is None:
+            scroll_x = self.scroll_x
+        return int(self._get_column_region(index).x - scroll_x)
+
+    def _to_screen_x(self, local_x: int) -> int:
+        """Screen x of an x in the content coordinates of the table."""
+        return int(self.region.x + self.gutter.left + local_x)
+
+    def value_col_boundary_screen_x(self) -> int:
+        """Screen x of the line between the Value and the Description
+        column, the one a mouse drag moves (the right edge of the cells of
+        the Value column)."""
+        return self._to_screen_x(self._col_local_x(COL_DESC))
+
     def action_select_cursor(self) -> None:
         self.post_message(self.EditRequested())
 
@@ -569,6 +665,9 @@ class SkmapUiApp(App):
 
     #: mouse hit-zone (cells) around a pane divider that starts a drag
     _RESIZE_EDGE = 3
+    #: two presses on the value | description boundary within this many
+    #: seconds are a double-click: the value column width is reset
+    _DBL_CLICK_TIME = 0.4
 
     def __init__(
         self,
@@ -593,7 +692,14 @@ class SkmapUiApp(App):
         self._row_keys: list[str] = []
         self._row_objs: dict[str, RowObj] = {}
         self._row_module: Module | None = None
-        self._drag: str | None = None  # "h" (tree|table) or "v" (workspace|log)
+        # None, or what a mouse drag moves: "h" (workspace | log), "v"
+        # (tree | registers) or "col" (value | description column)
+        self._drag: str | None = None
+        # last mouse press on a column boundary: ((x, y), time), to detect
+        # the double-click that resets the value column width
+        self._col_click: tuple[tuple[int, int], float] | None = None
+        # horizontal scroll of the table when a column drag was grabbed
+        self._col_drag_scroll: int | None = None
         # one regio connection on one event loop: serialize device I/O
         self._regio_lock = asyncio.Lock()
         # '+' / '-' key steps queued as (obj, key, idx, delta) jobs, run
@@ -683,8 +789,8 @@ class SkmapUiApp(App):
                         placeholder=(
                             "enter: edit (rw/wt) / clear (rc) | l: assert "
                             "level | u: update | R: read all | r: read | "
-                            "t: toggle bool | x: clear RC | tab: panels | "
-                            "a: check asserts | v: value bits | "
+                            "+/-: step value | C: clear RC | tab: panels | "
+                            "a: check asserts | x: show hex | "
                             "e: expand vec | 2: regio view"
                         ),
                     )
@@ -732,7 +838,7 @@ class SkmapUiApp(App):
             (COL_T, "T", 8),
             (COL_ACC, "Acc", 8),
             (COL_NAME, "Name", 24),
-            (COL_VALUE, "Value", 22),
+            (COL_VALUE, "Value", RegMapTable.VALUE_COL_DEFAULT),
             (COL_DESC, "Description", None),
         ):
             self.table.add_column(label, key=key, width=width)
@@ -2127,8 +2233,14 @@ class SkmapUiApp(App):
         """Return which pane divider the screen position is on.
 
         ``"v"`` = vertical divider between tree and table, ``"h"`` =
-        horizontal divider between workspace and log, ``None`` otherwise.
+        horizontal divider between workspace and log, ``"col"`` = the
+        boundary between the Value and the Description column of the
+        register map, ``None`` otherwise.
         """
+        # the register map column boundary first: the table spans the
+        # workspace, so where the dividers touch the column wins
+        if self._hit_value_col_boundary(sx, sy):
+            return "col"
         ws = self.workspace.region
         tree = self.tree_view.region
         inp = self.value_input.region
@@ -2146,17 +2258,57 @@ class SkmapUiApp(App):
             return "v"
         return None
 
+    def _hit_value_col_boundary(self, sx: int, sy: int) -> bool:
+        """True when the screen position is on the Value | Description
+        boundary of the register map (within ``_RESIZE_EDGE`` cells of it,
+        like the pane dividers)."""
+        table = self.table
+        if not table.columns or not table.is_on_screen:
+            return False        # not mounted yet / on the regio tab
+        if not table.region.contains(sx, sy):
+            return False        # the pointer is not over the table
+        return abs(sx - table.value_col_boundary_screen_x()) <= self._RESIZE_EDGE
+
     def on_mouse_down(self, event: events.MouseDown) -> None:
         hit = self._hit_divider(event.screen_x, event.screen_y)
-        if hit is not None:
-            self._drag = hit
-            event.stop()
+        if hit is None:
+            return
+        if hit == "col":
+            # double-click on the column boundary: the value column back to
+            # its default width. The click chain is tracked here, and not
+            # through Textual's Click event, which a DataTable does not
+            # bubble up to the app.
+            pos = (int(event.screen_x), int(event.screen_y))
+            last = self._col_click
+            if (
+                last is not None
+                and last[0] == pos
+                and event.time - last[1] < self._DBL_CLICK_TIME
+            ):
+                self.table.reset_value_col_width()
+                self._col_click = None
+                event.stop()
+                return
+            self._col_click = (pos, event.time)
+        if hit == "col":
+            # the drag is measured against the table as it was grabbed
+            self._col_drag_scroll = self.table.scroll_x
+        self._drag = hit
+        event.stop()
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
         if self._drag is None:
             return
         event.stop()
-        if self._drag == "v":
+        if self._drag == "col":
+            # the boundary follows the pointer, the description takes the
+            # rest of the table
+            self.table.set_value_col_width(
+                self.table.value_col_width_for_pointer(
+                    event.screen_x, self._col_drag_scroll
+                )
+            )
+        elif self._drag == "v":
             ws = self.workspace.region
             if ws.width > 0:
                 pct = (event.screen_x - ws.x) / ws.width * 100

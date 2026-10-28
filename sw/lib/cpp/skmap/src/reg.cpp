@@ -28,7 +28,7 @@ namespace hdlskel::skmap {
 
 // Round half away from zero, like python round() on a float. A v_convert with
 // a float v_type decides the register value with this.
-sint_t v_round_to_int(double value) {
+sint_t v_round_to_int(float_t value) {
     return static_cast<sint_t>(value >= 0 ? std::floor(value + 0.5) : std::ceil(value - 0.5));
 }
 
@@ -261,7 +261,7 @@ std::vector<bool> Reg::read_vec_bool() {
 // v_check of the recipe, the only value limit a register can have (see the
 // python runtime: the value of a register is always the value of the module
 // user, min and max of the register value are replaced by v_check).
-Ass Reg::ass_check_value_check(double value) const {
+Ass Reg::ass_check_value_check(float_t value) const {
     if (!m_v_check.has_value()) {
         return Ass::none;
     }
@@ -274,11 +274,11 @@ Ass Reg::ass_check_value_check(double value) const {
     return Ass::error;
 }
 
-Ass Reg::ass_check_value_limit(double value) const {
+Ass Reg::ass_check_value_limit(float_t value) const {
     return ass_check_value_check(value);
 }
 
-void Reg::check_value_limit(double value) const {
+void Reg::check_value_limit(float_t value) const {
     if (ass_check_value_limit(value) >= Ass::error) {
         std::stringstream ss;
         ss << "v_check failed for reg \"" << m_name << "\"";
@@ -298,7 +298,23 @@ bool Reg::has_limit() const {
 
 // ---------- v_convert ----------
 
-double Reg::to_raw(double value) const {
+std::string Reg::v_convert_marker() const {
+    if (!m_v_convert.has_value()) {
+        return "";
+    }
+    // the recipe source with every recipe name resolved to its value, eg
+    // "(v * 16)", printed the way a recipe writes it: ={ v * 16 }
+    std::string conv = m_v_convert->str;
+    if (conv.size() > 2 && (conv.front() == '(' || conv.front() == '{')
+        && (conv.back() == ')' || conv.back() == '}')) {
+        conv = conv.substr(1, conv.size() - 2);
+        while (!conv.empty() && conv.front() == ' ') { conv.erase(conv.begin()); }
+        while (!conv.empty() && conv.back() == ' ') { conv.pop_back(); }
+    }
+    return "={ " + conv + " } ";
+}
+
+float_t Reg::to_raw(float_t value) const {
     // user value -> value of the register
     if (!m_v_convert.has_value()) {
         return value;
@@ -306,10 +322,10 @@ double Reg::to_raw(double value) const {
     return m_v_convert->to_raw(value);
 }
 
-double Reg::from_raw(sint_t value) const {
+float_t Reg::from_raw(sint_t value) const {
     // value of the register -> user value
     if (!m_v_convert.has_value()) {
-        return static_cast<double>(value);
+        return static_cast<float_t>(value);
     }
     return m_v_convert->from_raw(value);
 }
@@ -322,10 +338,10 @@ void Reg::check_value_fits_reg(sint_t value) const {
     }
 }
 
-sint_t Reg::to_raw_checked(double value) const {
+sint_t Reg::to_raw_checked(float_t value) const {
     // v_check the user value, convert it, check the result
     check_value_limit(value);
-    double value_raw = to_raw(value);
+    float_t value_raw = to_raw(value);
     if (!std::isfinite(value_raw)) {
         throw std::runtime_error("v_convert of reg "" + m_name + "" returned a value that is not a number");
     }
@@ -334,17 +350,17 @@ sint_t Reg::to_raw_checked(double value) const {
     return value_raw_int;
 }
 
-double Reg::read_converted_cached() const {
+float_t Reg::read_converted_cached() const {
     return from_raw(m_value_type.kind() == ValueKind::sint_ ? read_sint_cached()
                                                             : static_cast<sint_t>(read_uint_cached()));
 }
 
-double Reg::read_converted() {
+float_t Reg::read_converted() {
     update_cache();
     return read_converted_cached();
 }
 
-void Reg::write_converted_cached(double value) {
+void Reg::write_converted_cached(float_t value) {
     sint_t value_raw = to_raw_checked(value);
     if (m_value_type.kind() == ValueKind::sint_) {
         write_sint_cached(value_raw);
@@ -353,7 +369,7 @@ void Reg::write_converted_cached(double value) {
     }
 }
 
-void Reg::write_converted(double value) {
+void Reg::write_converted(float_t value) {
     write_converted_cached(value);
     write_cache();
 }
@@ -397,10 +413,10 @@ std::string str_num(sint_t value, addr_t width, int base) {
     return oss.str();
 }
 
-// Mirrors skmap.value_to_str_from_int: a float v_type prints as a double,
+// Mirrors skmap.value_to_str_from_int: a float v_type prints as a float_t,
 // everything else keeps the register formatting. Used to print the value a
 // v_convert gives the module user.
-std::string value_to_str_from_int(double value, addr_t width, int base, bool v_type_is_float) {
+std::string value_to_str_from_int(float_t value, addr_t width, int base, bool v_type_is_float) {
     if (v_type_is_float) {
         std::ostringstream oss;
         oss << value;
@@ -714,8 +730,8 @@ void RegVec::write_idx_sint_cached(addr_t idx, sint_t val) {
 
 // ---------- v_convert of a vector register, applied to every element ----------
 
-std::vector<double> RegVec::read_vec_converted_cached() const {
-    std::vector<double> vec;
+std::vector<float_t> RegVec::read_vec_converted_cached() const {
+    std::vector<float_t> vec;
     vec.reserve(vec_len());
     for(addr_t idx = 0; idx < vec_len(); idx++) {
         vec.push_back(read_idx_converted_cached(idx));
@@ -723,42 +739,42 @@ std::vector<double> RegVec::read_vec_converted_cached() const {
     return vec;
 }
 
-std::vector<double> RegVec::read_vec_converted() {
+std::vector<float_t> RegVec::read_vec_converted() {
     update_cache();
     return read_vec_converted_cached();
 }
 
-double RegVec::read_idx_converted_cached(addr_t idx) const {
+float_t RegVec::read_idx_converted_cached(addr_t idx) const {
     return from_raw(m_value_type.kind() == ValueKind::sint_ ? read_idx_sint_cached(idx)
                                                             : static_cast<sint_t>(read_idx_uint_cached(idx)));
 }
 
-double RegVec::read_idx_converted(addr_t idx) {
+float_t RegVec::read_idx_converted(addr_t idx) {
     update_idx_cache(idx);
     return read_idx_converted_cached(idx);
 }
 
-void RegVec::write_vec_converted_cached(const std::vector<double> & vec) {
+void RegVec::write_vec_converted_cached(const std::vector<float_t> & vec) {
     check_vec_len(vec.size());
     if (m_value_type.kind() == ValueKind::sint_) {
         std::vector<sint_t> vec_raw;
         vec_raw.reserve(vec.size());
-        for(double v : vec) { vec_raw.push_back(to_raw_checked(v)); }
+        for(float_t v : vec) { vec_raw.push_back(to_raw_checked(v)); }
         write_vec_sint_cached(vec_raw);
     } else {
         std::vector<uint_t> vec_raw;
         vec_raw.reserve(vec.size());
-        for(double v : vec) { vec_raw.push_back(static_cast<uint_t>(to_raw_checked(v))); }
+        for(float_t v : vec) { vec_raw.push_back(static_cast<uint_t>(to_raw_checked(v))); }
         write_vec_uint_cached(vec_raw);
     }
 }
 
-void RegVec::write_vec_converted(const std::vector<double> & vec) {
+void RegVec::write_vec_converted(const std::vector<float_t> & vec) {
     write_vec_converted_cached(vec);
     write_cache();
 }
 
-void RegVec::write_idx_converted_cached(addr_t idx, double value) {
+void RegVec::write_idx_converted_cached(addr_t idx, float_t value) {
     sint_t value_raw = to_raw_checked(value);
     if (m_value_type.kind() == ValueKind::sint_) {
         write_idx_sint_cached(idx, value_raw);
@@ -767,7 +783,7 @@ void RegVec::write_idx_converted_cached(addr_t idx, double value) {
     }
 }
 
-void RegVec::write_idx_converted(addr_t idx, double value) {
+void RegVec::write_idx_converted(addr_t idx, float_t value) {
     write_idx_converted_cached(idx, value);
     write_idx_cache(idx);
 }
@@ -814,7 +830,7 @@ std::string RegVec::str_value_cached() const {
         case ValueKind::uint_: {
             if (conv) {
                 bool first = true;
-                for (double v : read_vec_converted_cached()) {
+                for (float_t v : read_vec_converted_cached()) {
                     if (!first) { ss << ", "; }
                     first = false;
                     ss << value_to_str_from_int(v, m_value_type.elem_width(), base_conv, m_v_type == VType::f);
@@ -831,7 +847,7 @@ std::string RegVec::str_value_cached() const {
         case ValueKind::sint_: {
             if (conv) {
                 bool first = true;
-                for (double v : read_vec_converted_cached()) {
+                for (float_t v : read_vec_converted_cached()) {
                     if (!first) { ss << ", "; }
                     first = false;
                     ss << value_to_str_from_int(v, m_value_type.elem_width(), base_conv, m_v_type == VType::f);

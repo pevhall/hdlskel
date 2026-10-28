@@ -94,7 +94,6 @@ class ValueTypeVhdl:
 
         self.port_flattened = False
         if use_basic_port_types:
-            make_slv = False
             match self.kind:
                 case ValueKindVhdl.integer:        self.port_flattened = self.t.is_vec
                 case ValueKindVhdl.natural:        self.port_flattened = self.t.is_vec
