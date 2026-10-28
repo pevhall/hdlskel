@@ -15,7 +15,7 @@ from skmap.external_mem import ExternalMemVec
 from skmap_ui import SkmapUiApp
 # column indices of the register map table (see SkmapUiApp.on_mount)
 ADDR, T, ACC, NAME, VALUE, DESC = range(6)
-from skmap_ui.app import ModuleTree
+from skmap_ui.app import ModuleTree, _hex
 from skmap_ui.demo import (
     MemRegio,
     _DemoModule,
@@ -483,18 +483,26 @@ def test_trigger_writable_reg():
             assert before == 5
 
             app.table.move_cursor(row=1, column=0)
-            app.action_trigger_selected()
 
             # async: the (random) write reaches the (fake) device in a
-            # worker; the read-back updates the skmap cache
-            for _ in range(500):
+            # worker; the read-back updates the skmap cache. The trigger
+            # writes a random value, so it can (very unlikely) pick the value
+            # that is already there, another trigger picks a different one.
+            for _try in range(3):
+                app.action_trigger_selected()
+                for _ in range(500):
+                    if v_reset.read_uint_cached() != before:
+                        break
+                    await pilot.pause()
                 if v_reset.read_uint_cached() != before:
                     break
-                await pilot.pause()
             assert v_reset.read_uint_cached() != before
             # the cell shows the value as read back from the (fake) device
+            # the cell shows the value as read back from the (fake) device,
+            # the number of hex digits comes from the width of the register
             await _wait_cell(
-                app, pilot, 1, VALUE, f"0x{v_reset.read_uint_cached():04X}"
+                app, pilot, 1, VALUE,
+                _hex(v_reset.read_uint_cached(), v_reset.value_type.width),
             )
 
     _run(run())
@@ -559,8 +567,8 @@ _bad_top_counter = itertools.count()
 def make_bad_top():
     """A module whose kid has an unregistered (unknown) head ID."""
     n = next(_bad_top_counter)
-    top_mid = f"BADTOP{n}"[:8]
-    kid_mid = f"NOCHILD{n}"[:8]
+    top_mid = f"BTOP{n:04d}"
+    kid_mid = f"NCHD{n:04d}"
 
     class _BadTop(_DemoModule):
         mid = top_mid
@@ -896,7 +904,7 @@ _edit_top_counter = itertools.count()
 def make_edit_top():
     """A module with wide / vector registers for the edit tests."""
     n = next(_edit_top_counter)
-    edit_mid = f"EDITTOP{n}"[:8]
+    edit_mid = f"EDTOP{n:03d}"   # 8 chars: the module id field of the head
     big = 0xDEADBEEFCAFEBABE1234567890ABCDEF
 
     vt_big = ValueType(kind=ValueKind.bits, width=128)
@@ -1179,13 +1187,25 @@ def test_edit_v_convert_float():
             assert app.app.focused is app.value_input
             assert temp.read_sint_cached() == 25
 
-            # bits display: the raw value of the register, prefixed with the
-            # conversion it stands for (-68 of a 16 bit sint is 0xFFBC)
+            # bits display: the raw value of the register (-68 of a 16 bit
+            # sint is 0xFFBC), the conversion is in the description column
             await pilot.press("escape")
             await pilot.pause()
-            await pilot.press("v")
+            await pilot.press("x")
             await pilot.pause()
-            await _wait_cell(app, pilot, 4, VALUE, "={ v * 16 } 0x0019")
+            await _wait_cell(app, pilot, 4, VALUE, "0x0019")
+            await _wait_cell(app, pilot, 4, DESC, "={ v * 16 } scaled")
+            # the marker is colored like Ass.none, the description keeps the
+            # blue of the column (see _reg_desc_text)
+            cell = app.table.get_cell_at(Coordinate(4, DESC))
+            assert [span.style for span in cell.spans] == [Ass.none.color, "blue"]
+            assert cell.spans[0].end == len("={ v * 16 } ")
+            # a register without a v_convert has a plain description (a Text
+            # with only the blue style of the row, nothing is highlighted)
+            cell_other = app.table.get_cell_at(Coordinate(0, DESC))
+            assert cell_other.plain == top.arr_reg_var[0].desc
+            assert cell_other.style == "blue"
+            assert Ass.none.color not in [span.style for span in cell_other.spans]
 
             # a hex value writes the bits of the register directly, it does not
             # go through the conversion (0x10 = 16, not 16 * 16)
@@ -1196,7 +1216,7 @@ def test_edit_v_convert_float():
             app.value_input.value = "0x10"
             await pilot.press("enter")
             await pilot.pause()
-            await _wait_cell(app, pilot, 4, VALUE, "={ v * 16 } 0x0010")
+            await _wait_cell(app, pilot, 4, VALUE, "0x0010")
             assert temp.read_sint_cached() == 16
             assert temp.read_converted_cached() == 1.0
 
@@ -1208,7 +1228,7 @@ def test_edit_v_convert_float():
             app.value_input.value = "0xFFFF"
             await pilot.press("enter")
             await pilot.pause()
-            await _wait_cell(app, pilot, 4, VALUE, "={ v * 16 } 0xFFFF")
+            await _wait_cell(app, pilot, 4, VALUE, "0xFFFF")
             assert temp.read_sint_cached() == -1
 
             # 0x7FFF would be 2047.9375 for the user, above the v_check: the
@@ -1230,7 +1250,7 @@ def test_edit_v_convert_float():
 
 
 def test_value_bits_toggle():
-    """'v' toggles the uint / sint value display between int (decimal)
+    """'x' toggles the uint / sint (hex) value display between int (decimal)
     and bits (hex, like the bits kind — sint lanes as their raw two's
     complement); the input prefill follows the display."""
     async def run():
@@ -1244,14 +1264,14 @@ def test_value_bits_toggle():
             await _wait_cell(app, pilot, 2, VALUE, "[ 5, -85 ]")
             # bits: hex, ceil_div(width, 4) digits (S2 lane 1 = -85
             # is shown as 0xAB)
-            await pilot.press("v")
+            await pilot.press("x")
             await pilot.pause()
             await _wait_cell(app, pilot, 1, VALUE, "[ 0xAA, 0xBB, 0xCC, 0xDD ]")
             await _wait_cell(app, pilot, 2, VALUE, "[ 0x05, 0xAB ]")
             # the active option shows in the border title
             assert "bits" in app.table.border_title
             # toggle back to int
-            await pilot.press("v")
+            await pilot.press("x")
             await pilot.pause()
             await _wait_cell(app, pilot, 1, VALUE, "[ 170, 187, 204, 221 ]")
             await _wait_cell(app, pilot, 2, VALUE, "[ 5, -85 ]")
@@ -1265,7 +1285,7 @@ def test_value_bits_toggle():
             assert [l.value for l in lanes] == ["5", "-85"]
             await pilot.press("escape")
             await pilot.pause()
-            await pilot.press("v")
+            await pilot.press("x")
             await pilot.pause()
             app.table.move_cursor(row=2, column=0)
             await pilot.press("enter")
@@ -1354,7 +1374,7 @@ def test_expand_vec_lane_edit():
 
 
 def test_expand_vec_bits_display():
-    """the display options compose: expanded lanes honor the 'v' bits
+    """the display options compose: expanded lanes honor the 'x' bits
     display (hex, sint lanes as raw two's complement)."""
     async def run():
         top = make_edit_top()
@@ -1364,7 +1384,7 @@ def test_expand_vec_bits_display():
             await _select_node(app, _find_node(app, top), pilot)
             await pilot.press("e")
             await pilot.pause()
-            await pilot.press("v")
+            await pilot.press("x")
             await pilot.pause()
             assert len(app._row_keys) == 11
             await _wait_cell(app, pilot, 2, VALUE, "0xAA")
@@ -1391,7 +1411,7 @@ def make_sintw_top():
     """A module with sint registers whose width is not a byte multiple
     (4-bit vector lanes, 12-bit scalar) for the sign-extension tests."""
     n = next(_sintw_counter)
-    sintw_mid = f"SINTW{n}"[:8]
+    sintw_mid = f"STW{n:05d}"
     vt_s4 = ValueType(kind=ValueKind.sint, width=4, vec_len=4)
     vt_s12 = ValueType(kind=ValueKind.sint, width=12)
 
@@ -1452,7 +1472,7 @@ def test_bits_display_sign_extends_sint():
             # int mode: signed decimal (row 0 = S4 header row)
             await _wait_cell(app, pilot, 0, VALUE, "[ -1, 5, -2, 3 ]")
             await _wait_cell(app, pilot, 5, VALUE, "-40")
-            await pilot.press("v")
+            await pilot.press("x")
             await pilot.pause()
             # bits mode: ceil_div(width, 4) digits, sign-extended
             await _wait_cell(app, pilot, 0, VALUE, "[ 0xF, 0x5, 0xE, 0x3 ]")
@@ -1720,7 +1740,7 @@ def test_external_mem_vec_rc_clear():
 
 
 def test_clear_triggered_clears_shown_module_rc():
-    """'x' (and the refresh) clear the rc registers of the *selected*
+    """'C' (and the refresh) clear the rc registers of the *selected*
     module (clear_reg_rc) and the triggered asserts of the whole tree
     (clear_assert_tree)."""
     async def run():
@@ -2002,7 +2022,7 @@ def test_refresh_period_does_not_shadow_app_refresh():
 
 
 def test_clear_triggered_write_only_no_new_log():
-    """'x' (clear RC) is *write-only*: it writes zero to every triggered
+    """'C' (clear RC) is *write-only*: it writes zero to every triggered
     rc register but performs no device reads and does NOT re-check the
     asserts, so it triggers / logs no new assert block."""
     async def run():
@@ -2019,7 +2039,7 @@ def test_clear_triggered_write_only_no_new_log():
 
             # x: write zero to V_EVENT (a triggered rc register of the
             # whole tree) ...
-            await pilot.press("x")
+            await pilot.press("C")
             for _ in range(500):
                 if v_event.read_uint_cached() == 0:
                     break
@@ -2037,7 +2057,7 @@ def test_clear_triggered_write_only_no_new_log():
 
 
 def test_clear_rc_clears_rc_register_not_non_rc_assert():
-    """'x' (clear RC) writes zero to the *rc* registers that are
+    """'C' (clear RC) writes zero to the *rc* registers that are
     triggered asserts (the whole tree) but leaves non-rc triggered
     asserts (ro / rw) untouched."""
     async def run():
@@ -2059,7 +2079,7 @@ def test_clear_rc_clears_rc_register_not_non_rc_assert():
 
             # show any module (the clear covers the whole tree)
             await _select_node(app, _find_node(app, top), pilot)
-            await pilot.press("x")
+            await pilot.press("C")
             for _ in range(500):
                 if v_event.read_uint_cached() == 0:
                     break
@@ -2328,10 +2348,9 @@ def test_read_module_appends_its_asserts_to_log():
     _run(run())
 
 
-def test_toggle_bool_flips_selected_flag():
-    """'t' (toggle bool) with the register map focused inverts the
-    selected bool (here a flag bit of the FLAGS register) and writes
-    the inverted value."""
+def test_step_flag_toggles_selected_flag():
+    """'+' / '-' on a flag row toggle it (a flag is one bit, so stepping
+    wraps to the other value): here a flag bit of the FLAGS register."""
     async def run():
         top = make_demo()
         app = SkmapUiApp(top)
@@ -2352,8 +2371,8 @@ def test_toggle_bool_flips_selected_flag():
             app.table.focus()
             app.table.move_cursor(row=f0_row, column=0)
             await pilot.pause()
-            # 't' (table focused): toggle just the selected flag (f0)
-            await pilot.press("t")
+            # '+' (table focused): the 1 bit flag wraps, so it toggles (f0)
+            await pilot.press("+")
             for _ in range(500):
                 if f0.read_bool_cached() is False:
                     break
@@ -2363,9 +2382,9 @@ def test_toggle_bool_flips_selected_flag():
     _run(run())
 
 
-def test_toggle_bool_flips_flag_register():
-    """'t' (toggle bool) on a flag-register (bitfield) row inverts
-    every flag of the register and writes the result."""
+def test_step_flag_toggles_flag_register():
+    """'+' / '-' on a flag-register (bitfield) row toggle every flag of
+    the register and write the result."""
     async def run():
         top = make_demo()
         app = SkmapUiApp(top)
@@ -2382,8 +2401,8 @@ def test_toggle_bool_flips_flag_register():
             app.table.focus()
             app.table.move_cursor(row=flags_row, column=0)
             await pilot.pause()
-            # 't' (table focused): toggle every flag of the register
-            await pilot.press("t")
+            # '+' (table focused): toggle every flag of the register
+            await pilot.press("+")
             for _ in range(500):
                 if top_flags.read_uint_cached() == 2:  # 0b10
                     break
@@ -2392,9 +2411,218 @@ def test_toggle_bool_flips_flag_register():
     _run(run())
 
 
+def _row_of(app, obj, lane=None) -> int:
+    """Table row of ``obj`` (``lane``: the vector lane of an expanded row)."""
+    for ii, key in enumerate(app._row_keys):
+        if app._row_objs[key] is not obj:
+            continue
+        if app._row_reg_idx.get(key) == lane and key not in app._row_mem_idx:
+            return ii
+    raise AssertionError(f"no row for {obj} lane {lane}")
+
+
+def _row_of_mem(app, mem, lane=None) -> int:
+    """Table row of an ExternalMemVec (``lane=None``: the header row)."""
+    for ii, key in enumerate(app._row_keys):
+        if app._row_objs[key] is not mem:
+            continue
+        if app._row_mem_idx.get(key) == lane:
+            return ii
+    raise AssertionError(f"no row for {mem} lane {lane}")
+
+
+async def _settles(pilot, cond, n=500) -> None:
+    """Wait until ``cond()`` holds (a device write + read back is async)."""
+    for _ in range(n):
+        if cond():
+            return
+        await pilot.pause()
+    raise AssertionError("condition never became true")
+
+
+def test_step_up_down_wraps_vector_lanes():
+    """'+' / '-' step the bits of the value and wrap at the width of the
+    value: on the header row every lane of the vector, on a lane row just
+    that lane (V4 is a uint8 x4 rw register)."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            v4 = top.arr_reg_var[1]
+            assert v4.name == "V4"
+            assert [v4.read_idx_uint_cached(i) for i in range(4)] == [
+                0xAA, 0xBB, 0xCC, 0xDD
+            ]
+            # '+' on the header row: every lane one up (0xDD + 1 = 0xDE)
+            app.table.focus()
+            app.table.move_cursor(row=_row_of(app, v4), column=0)
+            await pilot.pause()
+            await pilot.press("+")
+            await _settles(pilot, lambda: v4.read_idx_uint_cached(3) == 0xDE)
+            assert [v4.read_idx_uint_cached(i) for i in range(4)] == [
+                0xAB, 0xBC, 0xCD, 0xDE
+            ]
+            # expand into lane rows, set lane 3 to all ones and step just it:
+            # 0xFF + 1 wraps to 0x00, the other lanes are not written
+            await pilot.press("e")
+            await pilot.pause()
+            v4.write_idx_uint_cached(3, 0xFF)
+            app.table.move_cursor(row=_row_of(app, v4, 3), column=0)
+            await pilot.pause()
+            await pilot.press("+")
+            await _settles(pilot, lambda: v4.read_idx_uint_cached(3) == 0x00)
+            assert v4.read_idx_uint_cached(2) == 0xCD  # stays as stepped above
+            # '-' on the header row: every lane one down, 0x00 - 1 wraps
+            # back to all ones (0xFF), the stepped-down lanes follow
+            app.table.move_cursor(row=_row_of(app, v4), column=0)
+            await pilot.pause()
+            await pilot.press("-")
+            await _settles(pilot, lambda: v4.read_idx_uint_cached(3) == 0xFF)
+            assert [v4.read_idx_uint_cached(i) for i in range(4)] == [
+                0xAA, 0xBB, 0xCC, 0xFF
+            ]
+    _run(run())
+
+
+def test_step_signed_wraps_to_negative():
+    """'+' steps the bits, so the largest value of a sint wraps to the
+    most negative one (s8: 0x7F + 1 = 0x80 = -128)."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            s2 = top.arr_reg_var[2]
+            assert s2.name == "S2" and s2.read_idx_sint_cached(1) == -85
+            await pilot.press("e")
+            await pilot.pause()
+            s2.write_idx_sint_cached(0, 0x7F)  # the largest positive s8
+            app.table.focus()
+            app.table.move_cursor(row=_row_of(app, s2, 0), column=0)
+            await pilot.pause()
+            await pilot.press("+")
+            await _settles(pilot, lambda: s2.read_idx_sint_cached(0) == -128)
+            assert s2.read_idx_sint_cached(1) == -85  # the other lane stays
+            # and one step down wraps back to the largest positive value
+            await pilot.press("-")
+            await _settles(pilot, lambda: s2.read_idx_sint_cached(0) == 0x7F)
+    _run(run())
+
+
+def test_step_rejected_by_v_check():
+    """A stepped value is written by the register, so a value that does
+    not pass the v_check of the register is not written (LMT: 2..100)."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            lmt = top.arr_reg_var[3]
+            assert lmt.name == "LMT"
+            lmt.write_uint_cached(100)  # the highest value that passes
+            app.table.focus()
+            app.table.move_cursor(row=_row_of(app, lmt), column=0)
+            await pilot.pause()
+            await pilot.press("+")  # 101 does not pass the check
+            await pilot.pause(0.5)  # let the (rejected) write finish
+            assert lmt.read_uint_cached() == 100
+            # one step down passes and is written
+            await pilot.press("-")
+            await _settles(pilot, lambda: lmt.read_uint_cached() == 99)
+    _run(run())
+
+
+def test_step_cannot_write_a_read_only_register():
+    """'+' / '-' only write 'rw' / 'wt' values: a read-only register is left
+    alone, the app reports why it cannot write it."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            sysctrl = top.kids_cached()[0]  # DEMO_SYSCTRL: its STATUS is ro
+            await _select_node(app, _find_node(app, sysctrl), pilot)
+            ro = next(r for r in sysctrl.arr_reg_var if r.acc == Acc.ro)
+            assert ro.name == "STATUS"
+            before = ro.read_uint_cached()
+            app.table.focus()
+            app.table.move_cursor(row=_row_of(app, ro), column=0)
+            await pilot.pause()
+            await pilot.press("+")
+            await pilot.pause(0.5)  # a write would have settled by now
+            assert ro.read_uint_cached() == before
+    _run(run())
+
+
+def test_minus_and_plus_are_still_typeable_in_the_input():
+    """'+' / '-' are app keys now, but the value input has the focus
+    while a value is edited, so the keys must still reach it (a negative
+    decimal value starts with '-', and the app action must not fire)."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            lmt = top.arr_reg_var[3]
+            assert lmt.name == "LMT" and lmt.read_uint_cached() == 30
+            app.table.focus()
+            app.table.move_cursor(row=_row_of(app, lmt), column=0)
+            await pilot.pause()
+            await pilot.press("enter")  # edit the scalar, the input is focused
+            await pilot.pause()
+            app.value_input.value = ""
+            await pilot.press("-")
+            await pilot.pause()
+            assert app.value_input.value == "-"
+            await pilot.press("+")
+            await pilot.pause()
+            assert app.value_input.value == "-+"
+            await pilot.press("escape")
+            await pilot.pause()
+            # nothing was written: the keys went to the input, not to the app
+            assert lmt.read_uint_cached() == 30
+    _run(run())
+
+
+def test_step_external_mem_lane():
+    """'+' / '-' also step an ExternalMemVec: the lane under the cursor,
+    or every lane on the header row (wrapping in the width of a lane)."""
+    async def run():
+        top = make_vecmem_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            mem = top.arr_external_mem[0]
+            assert isinstance(mem, ExternalMemVec)
+            await _select_node(app, _find_node(app, mem), pilot)
+            assert mem.read_idx_uint_cached(1) == 0xBB
+            # the lane row: only that lane is stepped
+            app.table.focus()
+            app.table.move_cursor(row=_row_of_mem(app, mem, 1), column=0)
+            await pilot.pause()
+            await pilot.press("+")
+            await _settles(pilot, lambda: mem.read_idx_uint_cached(1) == 0xBC)
+            assert mem.read_idx_uint_cached(2) == 0xCC  # the other lanes stay
+            # the header row: every lane, and the 0xFF lane wraps to 0x00
+            mem.write_idx_uint_cached(3, 0xFF)
+            app.table.move_cursor(row=_row_of_mem(app, mem), column=0)
+            await pilot.pause()
+            await pilot.press("+")
+            await _settles(pilot, lambda: mem.read_idx_uint_cached(3) == 0x00)
+            assert mem.read_idx_uint_cached(0) == 0xAB
+            assert mem.read_idx_uint_cached(1) == 0xBD
+    _run(run())
+
+
 def test_keymap_read_keys_and_u_is_update():
     """'u' cycles the update period; 'R' is the one-shot read all;
-    'r' is the one-shot read of the selection; 't' toggles a bool."""
+    'r' is the one-shot read of the selection; the +/- step, 'C' clear RC
+    and 'x' hex keys are bound (the old 't' / 'v' keys are gone)."""
     by_key = {}
     for b in SkmapUiApp.BINDINGS:
         if isinstance(b, tuple):
@@ -2402,11 +2630,17 @@ def test_keymap_read_keys_and_u_is_update():
         else:
             by_key[b.key] = b.action
     keys = set(by_key)
-    assert "u" in keys and "R" in keys and "r" in keys and "t" in keys
-    assert by_key["u"] == "cycle_refresh"     # u: update (periodic refresh)
-    assert by_key["R"] == "read_all_modules"  # R: read all (one-shot)
-    assert by_key["r"] == "read_selected"     # r: read the selection
-    assert by_key["t"] == "toggle_bool"       # t: toggle bool
+    assert "u" in keys and "R" in keys and "r" in keys
+    assert by_key["u"] == "cycle_refresh"       # u: update (periodic refresh)
+    assert by_key["R"] == "read_all_modules"    # R: read all (one-shot)
+    assert by_key["r"] == "read_selected"       # r: read the selection
+    assert by_key["+"] == "value_step_up"       # +: one up, wrapping
+    assert by_key["-"] == "value_step_down"     # -: one down, wrapping
+    assert by_key["C"] == "clear_triggered"     # C: clear the rc registers
+    assert by_key["x"] == "toggle_value_bits"   # x: show hex
+    assert by_key["c"] == "clear_log"           # c: clear the log
+    # 't' (toggle) and 'v' (bits) are replaced by +/- and x
+    assert "t" not in keys and "v" not in keys
 
     async def run():
         app = SkmapUiApp(make_demo())
@@ -2588,7 +2822,7 @@ def test_tab_focus_toggles_tree_and_table():
 
 
 def test_x_clears_shown_module_rc_and_triggered_rc_asserts():
-    """'x' (clear RC) writes zero to every rc register of the module
+    """'C' (clear RC) writes zero to every rc register of the module
     whose register map is shown AND to every rc register that is a
     triggered assert (the log checks the whole tree)."""
     async def run():
@@ -2599,7 +2833,7 @@ def test_x_clears_shown_module_rc_and_triggered_rc_asserts():
             sysctrl = top.kids_cached()[0]
             # UART.RSR (rc) starts clear: set the (fake) device RSR so
             # it becomes a triggered assert.  RSR lives in UART — not
-            # the shown module — so 'x' must clear it as a *triggered
+            # the shown module — so 'C' must clear it as a *triggered
             # rc assert*, not via the shown module's clear_reg_rc().
             uart = sysctrl.kids_cached()[0]
             rsr = uart.arr_reg_var[0]
@@ -2831,5 +3065,75 @@ def test_regio_tab_footer_and_clear():
             await pilot.pause()
             assert app.tabs.active == "tab-registers"
             assert {"R", "r", "a", "x", "1", "2"} <= shown()
+
+    _run(run())
+
+
+def test_step_keys_hold_writes_each_value_once():
+    """Holding '+' / '-' must not fire overlapping device operations:
+    the step pump runs the queued steps one at a time — each write (and
+    its read-back) finishes and the next step computes its value from
+    the updated cache — so the device sees a strictly stepping series
+    and the same value is never written twice in a row."""
+
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(140, 36)) as pilot:
+            await _wait_asserts(app, pilot)
+
+            v_reset = next(
+                o
+                for o in app._row_objs.values()
+                if getattr(o, "name", "") == "V_RESET"
+            )
+            key = next(k for k, o in app._row_objs.items() if o is v_reset)
+            # (re)select the top module so the table rebuild from the
+            # boot assert check has settled, then place the cursor
+            await _select_node(app, _find_node(app, top), pilot)
+            row = app._row_keys.index(key)
+            app.table.focus()
+            app.table.move_cursor(row=row, column=0)
+            await pilot.pause()
+            assert app._row_keys[app.table.cursor_row] == key
+
+            # record every device write to the register's address
+            writes: list[bytes] = []
+            real_write = top._regio.dev_write
+
+            async def spy_write(addr, data):
+                if addr == v_reset.addr:
+                    writes.append(bytes(data))
+                return await real_write(addr, data)
+
+            top._regio.dev_write = spy_write
+
+            start = v_reset.read_uint_cached()
+            # holding '+': four presses queue up (all land before the
+            # first write + read-back can finish)
+            await pilot.press("+", "+", "+", "+")
+            for _ in range(1000):  # wait for the step queue to drain
+                if not app._step_queue and not app._step_pumping:
+                    break
+                await pilot.pause()
+            assert not app._step_queue and not app._step_pumping
+
+            # exactly one write per press, in strictly incrementing
+            # order: start+1 .. start+4, no value written twice in a row
+            vals = [int.from_bytes(w[:4], "little") for w in writes]
+            assert vals == [start + 1, start + 2, start + 3, start + 4]
+            assert v_reset.read_uint_cached() == start + 4
+            # V_RESET is a bits-kind register: the cell shows the hex
+            # bit pattern, ceil_div(32, 4) = 8 digits
+            assert _cell(app, row, VALUE) == f"0x{start + 4:08X}"
+
+            # '-' steps down the same way
+            await pilot.press("-", "-")
+            for _ in range(1000):
+                if not app._step_queue and not app._step_pumping:
+                    break
+                await pilot.pause()
+            vals = [int.from_bytes(w[:4], "little") for w in writes[4:]]
+            assert vals == [start + 3, start + 2]
 
     _run(run())

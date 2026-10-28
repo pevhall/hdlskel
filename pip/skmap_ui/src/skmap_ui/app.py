@@ -72,12 +72,21 @@ and without moving the selected (highlighted) table row.  The ``r``
 the register map focused it reads the asset under the table cursor,
 and with the tree focused it calls ``Module.read_all()`` on the module
 under the tree cursor (the read refreshes the skmap cache, and the
-shown value is refreshed from it).  The ``t`` (toggle bool) key
-inverts the bool(s) of the selected row when the register map is
-focused and a bool (or bool list / vector) type is selected — a
-single bool, an individual flag bit, or every flag of a flag register
-— and writes the inverted value.  The ``x``
-(clear RC) key is *write-only*: it calls ``Module.clear_reg_rc()`` on
+shown value is refreshed from it).  The ``+`` / ``-`` keys add /
+subtract one to the value under the table cursor and write the result.
+The step is done on the *bits* of the register (like the hex display
+and a hex input) and the result *wraps* in the width of the value (all
+ones + 1 is 0, 0 - 1 is all ones), so on a bool / flag — a single bool,
+an individual flag bit, a flag register or a vector of them — it is a
+toggle (what the ``t`` key used to do, ``+`` / ``-`` replace it); a
+lane row steps that lane, the header row of a vector every lane, and a
+value that does not pass the ``v_check`` of the register is not
+written.  Holding ``+`` / ``-`` is safe: a press only *queues* the
+step and a single pump worker runs the steps one at a time (each write
+and its read-back finishes before the next step computes its value
+from the updated cache), so holding a key writes a strictly stepping
+series of values to the device — never overlapping operations, never
+the same value twice in a row.  The ``C`` (clear RC) key is *write-only*: it calls ``Module.clear_reg_rc()`` on
 the *shown* module and ``Module.clear_assert_tree()`` on the top
 module (clearing the triggered ``rc`` asserts of the whole tree); it
 performs no device reads and does not re-check the asserts, so it can
@@ -92,9 +101,10 @@ before it reaches the device.  A register with a recipe ``v_convert``
 edited in the domain of the user of the module: a decimal input is the
 value of the user and the register converts it, a **0x-prefixed (hex)
 input sets the bits of the register directly** (the same as the
-generated ``<reg>_write_*_raw`` functions, no conversion).  In the bits
-(``v``) display such a register shows its raw value, prefixed with the
-conversion it stands for, eg. ``={ v * 16 } 0xFFFFFFBC``.  Device I/O
+generated ``<reg>_write_*_raw`` functions, no conversion), so a hex value is
+not checked against ``v_check`` (the register checks the user value its bits
+stand for).  The description column of such a register starts with the
+conversion, eg. ``={ v * 16 }``, in the color of ``Ass.none``.  Device I/O
 errors are reported on the console via ``logging`` so the log view only
 ever contains triggered asserts.
 
@@ -141,7 +151,7 @@ regio reads/writes (never ``*_cached``), so the value really goes to
 cache is refreshed; ``k`` (hardwired) and ``na`` (no access) assets
 are never read back.  All three panes are resizable with the mouse:
 drag the divider between tree and table, or between the table and the
-log.  The ``v`` key toggles the display of ``uint`` / ``sint`` values
+log.  The ``x`` key toggles the display of ``uint`` / ``sint`` values
 between int (decimal) and bits (hex, like the ``bits`` kind — ``sint``
 values sign-extended to the type's byte width, e.g. a 12-bit -40 as
 ``0xFFD8``) — the input prefill follows the display; the ``e`` key
@@ -182,6 +192,7 @@ from skmap import (
     ValueKind,
     make_module,
 )
+from skmap.basic import cast_uint_to_sint
 from skmap.external_mem import ExternalMemCached, ExternalMemVec
 from textual import actions
 from textual import events
@@ -259,24 +270,6 @@ def _bits_str(value: int, width: int, kind: ValueKind) -> str:
     if kind is ValueKind.sint and v & (1 << (width - 1)):
         v |= (1 << (hex_digits * 4)) - (1 << width)
     return f"0x{v:0{hex_digits}X}"
-
-
-def _v_convert_marker(reg) -> str:
-    """``={ ... }`` prefix of the ``v_convert`` of a register (empty if it
-    has none).
-
-    The bits (hex) display shows the value *stored in the register*, this
-    says with which conversion it becomes the value of the module user,
-    eg. ``={ v * 16 }`` (as written in the recipe, with every recipe name
-    resolved to its value). Like the ``v_check`` prefix it is printed
-    before the value, so the value stays aligned in the value column.
-    """
-    if not isinstance(reg, Reg) or not reg.has_v_convert:
-        return ''
-    conv = str(reg.v_convert)  # resolved, eg '(v * 16)'
-    if conv.startswith('(') and conv.endswith(')'):
-        conv = conv[1:-1]
-    return f"={{ {conv} }} "
 
 
 def _is_raw_write(reg, text: str) -> bool:
@@ -558,10 +551,11 @@ class SkmapUiApp(App):
         ("l", "cycle_asserts_level", "Assert level"),
         ("R", "read_all_modules", "Read all"),
         ("r", "read_selected", "Read"),
-        ("t", "toggle_bool", "Toggle bool"),
+        ("+", "value_step_up", "v++"),
+        ("-", "value_step_down", "v--"),
         ("u", "cycle_refresh", "Update"),
-        ("x", "clear_triggered", "Clear RC"),
-        ("v", "toggle_value_bits", "Value bits"),
+        ("C", "clear_triggered", "Clear RC"),
+        ("x", "toggle_value_bits", "Hex"),
         ("e", "toggle_expand_vec", "Expand vec"),
         ("1", "show_skmap_tab", "skmap tab"),
         ("2", "show_regio_tab", "regio tab"),
@@ -602,6 +596,14 @@ class SkmapUiApp(App):
         self._drag: str | None = None  # "h" (tree|table) or "v" (workspace|log)
         # one regio connection on one event loop: serialize device I/O
         self._regio_lock = asyncio.Lock()
+        # '+' / '-' key steps queued as (obj, key, idx, delta) jobs, run
+        # one at a time by a single pump worker (_step_pump): each write
+        # (and its read-back) finishes before the next step starts, so
+        # holding a key writes a strictly stepping series of values and
+        # never writes the same value twice in a row (the stepped value
+        # is computed when the job RUNS, not when the key was pressed)
+        self._step_queue: list[tuple[RowObj, str, int | None, int]] = []
+        self._step_pumping = False
         # the table row to restore the cursor to after a tree-rebuild
         # re-select (set by the read-all / assert-check workers): the
         # re-select's NodeSelected message is processed *after* the
@@ -640,7 +642,7 @@ class SkmapUiApp(App):
         # map is shown)
         self._row_mem: ExternalMem | None = None
         # value display: False = int (decimal for uint / sint),
-        # True = bits (hex, like the bits kind) — the 'v' key
+        # True = bits (hex, like the bits kind) — the 'x' key
         self._value_bits = False
         # the currently shown tab (the first pane is active at boot);
         # used to ignore the initial TabActivated message so it does not
@@ -861,26 +863,22 @@ class SkmapUiApp(App):
         """Rich value cell of a register's own row (a header row when
         the register is expanded).
 
-        Follows the ``v`` display toggle: when on, ``uint`` / ``sint``
+        Follows the ``x`` display toggle: when on, ``uint`` / ``sint``
         values are shown as bits (hex, like the ``bits`` kind — sint
         values sign-extended to the type's byte width) instead of int.
         """
         kind = reg.value_type.kind
         if self._value_bits and kind in (ValueKind.uint, ValueKind.sint):
-            marker = _v_convert_marker(reg)
             if reg.value_type.is_vec:
                 values = reg.read_list_uint_cached()
                 return Text(
-                    marker
-                    + "[ "
+                    "[ "
                     + ", ".join(
                         _bits_str(v, reg.value_type.width, kind) for v in values
                     )
                     + " ]"
                 )
-            return Text(
-                marker + _bits_str(reg.read_uint_cached(), reg.value_type.width, kind)
-            )
+            return Text(_bits_str(reg.read_uint_cached(), reg.value_type.width, kind))
         return Text.from_markup(reg.read_rich_str_cached())
 
     def _reg_lane_value_text(self, reg: Reg, idx: int) -> Text:
@@ -889,8 +887,7 @@ class SkmapUiApp(App):
         kind = reg.value_type.kind
         if self._value_bits and kind in (ValueKind.uint, ValueKind.sint):
             return Text(
-                _v_convert_marker(reg)
-                + _bits_str(reg.read_idx_uint_cached(idx), reg.value_type.width, kind)
+                _bits_str(reg.read_idx_uint_cached(idx), reg.value_type.width, kind)
             )
         return Text(str(reg.read_idx_value_cached(idx)))
 
@@ -901,6 +898,16 @@ class SkmapUiApp(App):
         if self._value_bits and kind in (ValueKind.uint, ValueKind.sint):
             return Text(_bits_str(mem.read_idx_uint_cached(idx), mem.value_type.width, kind))
         return Text(mem.read_idx_rich_str_cached(idx))
+
+    def _reg_desc_text(self, reg: Reg) -> Text:
+        """Rich description cell: a register with a recipe ``v_convert``
+        starts with the conversion (``={ v * 16 }``) in the color of
+        ``Ass.none``, the same text as the skmap reg map (see
+        ``Reg.v_convert_marker``)."""
+        marker = reg.v_convert_marker()
+        if not marker:
+            return Text(reg.desc, style="blue")
+        return Text.assemble((marker, Ass.none.color), (reg.desc, "blue"))
 
     def _reg_rows(self, reg: Reg) -> list[tuple[tuple, RowObj, int | None]]:
         """Table rows for a register: the register's own row, plus one
@@ -917,7 +924,7 @@ class SkmapUiApp(App):
                     Text(str(reg.acc), style="blue"),
                     Text(reg.name, style="cyan"),
                     self._reg_value_text(reg),
-                    Text(reg.desc, style="blue"),
+                    self._reg_desc_text(reg),
                 ),
                 reg,
                 None,
@@ -1550,7 +1557,7 @@ class SkmapUiApp(App):
         self._log_module_asserts(module)
 
     def action_toggle_value_bits(self) -> None:
-        """'v' key: toggle the display of ``uint`` / ``sint`` values
+        """'x' key: toggle the display of ``uint`` / ``sint`` values
         between int (decimal) and bits (hex, like the ``bits`` kind);
         the input prefill follows the display."""
         self._value_bits = not self._value_bits
@@ -1584,7 +1591,8 @@ class SkmapUiApp(App):
             "cycle_asserts_level",
             "read_all_modules",
             "read_selected",
-            "toggle_bool",
+            "value_step_up",
+            "value_step_down",
             "cycle_refresh",
             "clear_triggered",
             "toggle_value_bits",
@@ -1727,7 +1735,7 @@ class SkmapUiApp(App):
             self._refresh_idle.set()
 
     def action_clear_triggered(self) -> None:
-        """'x' (clear RC) key: clear the ``rc`` registers.
+        """'C' (clear RC) key: clear the ``rc`` registers.
 
         Calls ``Module.clear_reg_rc()`` on the module shown in the
         register map (the register map only shows that module) and
@@ -1762,13 +1770,39 @@ class SkmapUiApp(App):
             # register writes held by _wait_refresh_idle() may now go out
             self._refresh_idle.set()
 
-    def action_toggle_bool(self) -> None:
-        """'t' (toggle bool) key: if the register map is focused and a
-        bool (or bool list / vector) type is selected, invert the
-        bool(s) and write the inverted value to the device.
+    def action_value_step_up(self) -> None:
+        """'+' key: add one to the value under the table cursor."""
+        self._step_selected(1)
 
-        Only writable (``rw`` / ``wt``) registers / flags are toggled;
-        a non-bool selection (or a read-only register) does nothing.
+    def action_value_step_down(self) -> None:
+        """'-' key: subtract one from the value under the table cursor."""
+        self._step_selected(-1)
+
+    def _step_selected(self, delta: int) -> None:
+        """'+' / '-' keys: add / subtract ``delta`` to the value under the
+        table cursor and write the result to the device.
+
+        The step is done on the *bits* of the register, like the hex
+        display and a hex input (so the ``v_convert`` of a recipe is not
+        applied, see _is_raw_write), and the result wraps in the width of
+        the value (all ones + 1 is 0, 0 - 1 is all ones).  A bool / flag
+        is one bit — or a list of bits — so there the step is a toggle
+        (what the 't' key used to do, '+' / '-' replace it).
+
+        A lane row of an expanded vector (register or ExternalMemVec)
+        steps that lane, its header row every lane.  What is written is
+        checked by the register itself, a value that does not pass the
+        ``v_check`` of the register is rejected (logged, the shown value
+        stays).  Only 'rw' / 'wt' values can be stepped, anything else
+        reports why not.
+
+        A press does NOT start the device I/O directly: the step is
+        queued and a single pump worker (_step_pump) runs the steps one
+        at a time — each write (and its read-back) finishes before the
+        next queued step computes its value from the now-updated cache.
+        Holding '+' or '-' therefore writes a strictly stepping series
+        of values, never the same value twice in a row (and never N
+        overlapping device operations).
         """
         if self.focused is not self.table:
             return
@@ -1778,34 +1812,163 @@ class SkmapUiApp(App):
         if row >= len(self._row_keys):
             return
         key = self._row_keys[row]
-        self._toggle_bool_row(row, key, self._row_objs[key])
+        obj = self._row_objs[key]
+        # the vector lane a row stands for (a lane row of an expanded
+        # register, or of an ExternalMemVec view), None on a normal row
+        idx = (
+            self._row_mem_idx.get(key)
+            if isinstance(obj, ExternalMem)
+            else self._row_reg_idx.get(key)
+        )
+        # a bool / flag type: +1 / -1 wrap to the other value, a toggle
+        if isinstance(obj, RFlag) or (
+            isinstance(obj, Reg) and obj.value_type.kind is ValueKind.flag
+        ):
+            # an RFlag is one bit of its RegFlags, a RegFlags is the field
+            reg = obj.reg_flags if isinstance(obj, RFlag) else obj
+            if self._check_writable(obj.name, reg.addr, reg.acc):
+                self._queue_step(obj, key, idx, delta)
+            return
+        if isinstance(obj, Reg):
+            if not self._check_writable(obj.name, obj.addr, obj.acc):
+                return
+            if obj.value_type.kind is ValueKind.char:
+                logging.warning("%s is a char value: edit it with enter", obj.name)
+                return
+            self._queue_step(obj, key, idx, delta)
+        elif isinstance(obj, ExternalMem):
+            if not isinstance(obj, ExternalMemVec):
+                logging.warning("%s is not a vec mem: edit it with enter", obj.name)
+                return
+            if not self._check_writable(obj.name, obj.base_addr, obj.acc):
+                return
+            if not isinstance(obj, ExternalMemCached):
+                logging.warning(
+                    "%s @ %s not cached yet (run read_cache_tree first)",
+                    obj.name, hex(obj.base_addr),
+                )
+                return
+            self._queue_step(obj, key, idx, delta)
 
-    def _toggle_bool_row(self, row: int, key: str, obj) -> None:
-        """Invert and write the bool(s) of the selected row, when it is
-        a bool / flag type (a single bool, an individual flag bit, or a
-        bool list / vector)."""
-        # an individual flag bit (a sub-row of a RegFlags register)
-        if isinstance(obj, RFlag):
-            reg = obj.reg_flags
-            if reg.acc not in (Acc.rw, Acc.wt):
-                return  # only writable flags can be toggled
-            self._run_regio(
-                self._flag_write_async(key, obj, not obj.read_bool_cached()),
-                name=f"toggle {reg.name}.{obj.name}",
+    def _queue_step(self, obj: RowObj, key: str, idx: int | None, delta: int) -> None:
+        """Queue one '+' / '-' step and make sure the pump worker runs.
+
+        The pumping flag is set *here* (before ``run_worker`` returns):
+        a key press in between cannot start a second pump.
+        """
+        self._step_queue.append((obj, key, idx, delta))
+        if not self._step_pumping:
+            self._step_pumping = True
+            self.run_worker(self._step_pump(), name="step keys", group="regio-step")
+
+    async def _step_pump(self) -> None:
+        """Run the queued '+' / '-' steps one at a time (see _queue_step).
+
+        Each step — write and read-back — completes before the next
+        queued step computes its stepped value from the (now updated)
+        cache, so holding a key writes a strictly stepping series of
+        values instead of N overlapping writes of the same value.
+        """
+        try:
+            while self._step_queue:
+                obj, key, idx, delta = self._step_queue.pop(0)
+                try:
+                    if isinstance(obj, RFlag) or (
+                        isinstance(obj, Reg)
+                        and obj.value_type.kind is ValueKind.flag
+                    ):
+                        await self._toggle_bool_async(key, obj)
+                    elif isinstance(obj, Reg):
+                        await self._step_reg_async(key, obj, idx, delta)
+                    elif isinstance(obj, ExternalMem):
+                        await self._step_mem_async(key, obj, idx, delta)
+                except Exception as err:  # noqa: BLE001
+                    # one failing step must not kill the pump (the
+                    # *_async writers catch the device errors already,
+                    # this is the unexpected-exception net)
+                    logging.warning(
+                        "step of %s failed: %s",
+                        getattr(obj, "name", obj), err,
+                    )
+        finally:
+            self._step_pumping = False
+
+    def _check_writable(self, name: str, addr: int, acc) -> bool:
+        """True when ``acc`` can be written, otherwise report why not."""
+        if acc in (Acc.rw, Acc.wt):
+            return True
+        logging.warning("%s @ %s is %s: cannot write a new value", name, hex(addr), acc)
+        return False
+
+    @staticmethod
+    def _step_bits(cur: int, delta: int, width: int) -> int:
+        """``cur`` + ``delta`` in the bits of a ``width`` bit value (wraps)."""
+        return (cur + delta) & ((1 << width) - 1)
+
+    async def _step_reg_async(
+        self, key: str, reg: Reg, idx: int | None, delta: int
+    ) -> None:
+        """Step a register (see ``_step_selected``): the lane of a lane
+        row, every lane of a vector header row, or the whole scalar
+        value.  The value is stepped from the cache *at run time*, so
+        queued steps (``_step_pump``) form an incrementing series."""
+        vt = reg.value_type
+
+        def as_written(bits: int) -> int:
+            # the stepped bits of a sint value are written back as a signed
+            # value (write_sint), the bits of every other kind as an uint
+            return cast_uint_to_sint(bits, vt.width) if vt.kind is ValueKind.sint else bits
+
+        if vt.is_vec:
+            lanes = [idx] if idx is not None else list(range(vt.vec_len))
+            pairs = [
+                (
+                    i,
+                    as_written(self._step_bits(reg.read_idx_uint_cached(i), delta, vt.width)),
+                )
+                for i in lanes
+            ]
+            # every stepped lane sets the bits of the register directly
+            await self._write_vec_row_async(
+                key, reg, pairs, "STEP", [True] * len(pairs)
             )
             return
-        # a flag-kind register (single bool / bool list / bool vector)
-        if not isinstance(obj, Reg) or obj.value_type.kind is not ValueKind.flag:
-            return  # not a bool / flag type: nothing to toggle
-        if obj.acc not in (Acc.rw, Acc.wt):
-            return  # only writable registers can be toggled
+        bits = self._step_bits(reg.read_uint_cached(), delta, vt.width)
+        await self._write_row_async(key, reg, as_written(bits), "STEP", raw=True)
+
+    async def _step_mem_async(
+        self, key: str, mem: ExternalMemVec, idx: int | None, delta: int
+    ) -> None:
+        """Step an external mem row (see ``_step_selected``): the lane of
+        an ExternalMemVec view, or every lane on its header row.  The
+        lane values are stepped at run time (see ``_step_pump``)."""
+        vt = mem.value_type
+        lanes = [idx] if idx is not None else list(range(mem.vec_len()))
+        pairs = []
+        for i in lanes:
+            bits = self._step_bits(mem.read_idx_uint_cached(i), delta, vt.width)
+            value = cast_uint_to_sint(bits, vt.width) if vt.kind is ValueKind.sint else bits
+            pairs.append((key if idx is not None else self._mem_lane_key(i), i, value))
+        await self._write_mem_lanes_async(mem, pairs)
+
+    async def _toggle_bool_async(self, key: str, obj) -> None:
+        """Invert and write the bool(s) of a row, when it is a bool /
+        flag type (a single bool, an individual flag bit, or a bool list
+        / vector).  Run by the step pump (see ``_step_pump``); the value
+        is read from the cache at run time."""
+        # an individual flag bit (a sub-row of a RegFlags register)
+        if isinstance(obj, RFlag):
+            await self._flag_write_async(key, obj, not obj.read_bool_cached())
+            return
+        # a flag-kind register (single bool / bool list / bool vector);
+        # the writable access was checked when the step was queued
         vt = obj.value_type
         if vt.is_vec:
             # a bool vector: invert every lane and write them
             pairs = [
                 (i, int(not b)) for i, b in enumerate(obj.read_list_bool_cached())
             ]
-            self._write_vec_row(key, obj, pairs)
+            await self._write_vec_row_async(key, obj, pairs)
             return
         if isinstance(obj, RegFlags):
             # a flag bitfield (a list of bool flags): invert every flag bit
@@ -1814,10 +1977,10 @@ class SkmapUiApp(App):
                 mask |= 1 << f.bit
             cur = obj.read_uint_cached()
             new = (cur & ~mask) | ((~cur) & mask)
-            self._write_row(row, obj, new, "WRITE")
+            await self._write_row_async(key, obj, new, "WRITE")
         else:
             # a single bool: invert it
-            self._write_row(row, obj, int(not obj.read_bool_cached()), "WRITE")
+            await self._write_row_async(key, obj, int(not obj.read_bool_cached()), "WRITE")
 
     # ------------------------------------------------------------------
     # panel focus (tab / shift+tab: tree <-> register map table)
@@ -2119,7 +2282,7 @@ class SkmapUiApp(App):
         input line.
 
         Hex for ``bits`` kinds (and for ``uint`` / ``sint`` while the
-        ``v`` bits display is on), decimal otherwise — the same number
+        ``x`` bits display is on), decimal otherwise — the same number
         bases the table shows.  The input accepts both hex and decimal.
 
         A reg with a recipe ``v_convert`` is prefilled (and edited) with
@@ -2741,8 +2904,6 @@ def _import_module_file(path) -> None:
     (``skmap.register_Module``), so ``make_module`` can instantiate the
     head IDs found in the regio / cache file.
     """
-    import importlib.util
-
     path = Path(path).resolve()
     spec = importlib.util.spec_from_file_location(path.stem, path)
     if spec is None or spec.loader is None:
@@ -2780,8 +2941,6 @@ def main() -> None:
     the regio TCP client is asyncio-based, so the connection created
     while building the module must stay alive inside the TUI event loop.
     """
-    import argparse
-
     parser = argparse.ArgumentParser(
         prog="skmap-ui",
         description="SKMap User Interface — browse a skmap module register map",
