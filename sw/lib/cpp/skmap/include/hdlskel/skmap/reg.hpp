@@ -2,6 +2,8 @@
 
 #include "hdlskel/skmap/basic_types.hpp"
 #include <cassert>
+#include <cmath>
+#include <functional>
 #include <memory>
 #include <vector>
 #include <span>
@@ -15,16 +17,69 @@ class Reg;
 class RegFlags;
 class RFlag;
 
-// An entry in an assert log: either a Reg (min/max or reg level ass) or
+// An entry in an assert log: either a Reg (min/max, check or reg level ass) or
 // an individual RFlag of a RegFlags reg.
 using RegOrFlag = std::variant<std::shared_ptr<Reg>, std::shared_ptr<RFlag>>;
+
+// v_check / v_convert of the recipe, mirrors skmap.ValueCheck / ValueConvert in
+// the python library: the value of the module user and the value of the
+// register are two different things. `v_check` validates the user value,
+// `v_convert` converts between the user value and the value of the register
+// (every read applies its inverse).
+//
+// The user value travels as a double in both directions: for an integer v_type
+// the functions receive and return integral values, see VType.
+// The recipe v_check="{ (v % RW_MULT) == 0}" generates
+//   ValueCheck([](sint_t v) { return (v % RW_MULT()) == 0; }, "(v % 2) == 0", VType::u)
+using VCheckFn   = std::function<bool(sint_t)>;  // check of an int domain
+using VCheckFnF  = std::function<bool(double)>;  // check of a float domain
+
+struct ValueCheck {
+    // called with the value as the module user sees it
+    std::function<bool(double)> fn;
+    // the check as text with every recipe name resolved to its value, printed
+    // in the reg map, in errors and in the assert table
+    std::string str;
+    VType v_type = VType::s;
+
+    ValueCheck() = default;
+    ValueCheck(VCheckFn fn, std::string str, VType v_type = VType::s)
+    :   fn([fn](double v) { return fn(static_cast<sint_t>(std::llround(v))); }),
+        str(std::move(str)), v_type(v_type) {}
+    ValueCheck(VCheckFnF fn, std::string str, VType v_type = VType::s)
+    :   fn(std::move(fn)), str(std::move(str)), v_type(v_type) {}
+
+    bool operator()(double value) const { return static_cast<bool>(fn(value)); }
+};
+
+struct ValueConvert {
+    // user value -> value of the register, may return a fractional value, the
+    // Reg rounds it like the python runtime does
+    std::function<double(double)> to_raw;
+    // value of the register -> user value, the inverse of to_raw
+    std::function<double(sint_t)> from_raw;
+    // both directions as text with every recipe name resolved to its value
+    std::string str;
+    std::string str_inv;
+    VType v_type = VType::s;
+
+    ValueConvert(std::function<double(double)> to_raw, std::function<double(sint_t)> from_raw,
+                 std::string str, std::string str_inv, VType v_type = VType::s)
+    :   to_raw(std::move(to_raw)), from_raw(std::move(from_raw)),
+        str(std::move(str)), str_inv(std::move(str_inv)), v_type(v_type) {}
+};
+
+// Round to the nearest integer with halves away from zero, same as python
+// round() on floats, it decides the value that ends up in the register.
+sint_t v_round_to_int(double value);
 
 
 class Reg {
 public:
     virtual ~Reg() = default;
     Reg(const std::string& name, Acc acc, ValueType value_type, const std::string & desc,
-        Ass ass = Ass::none, std::optional<sint_t> max = std::nullopt, std::optional<sint_t> min = std::nullopt);
+        Ass ass = Ass::none, std::optional<ValueCheck> v_check = std::nullopt,
+        std::optional<ValueConvert> v_convert = std::nullopt, VType v_type = VType::s);
     virtual void initalise(Module* module, addr_t addr);
     addr_t elem_size() const {return m_value_type.sw_elem_size();}
     addr_t elem_w() const {return m_value_type.elem_width();}
@@ -58,39 +113,52 @@ public:
     void write_bool(bool v);
     void write_char(char v);
     void write_zero();
+    // Raw bytes of the register, they bypass v_check and v_convert (the same
+    // access a firmware can do), mirrors Reg.read_bytes_cached and
+    // Reg.write_bytes_cached in python.
+    std::span<const std::byte> read_bytes_cached() const;
+    void write_bytes_cached(std::span<const std::byte> data);
     // Zeros in the cache only, mirrors Reg.write_zero_cached in python
     // (write_zero() is this followed by a device write).
     void write_zero_cached();
 
+    // v_convert (see the recipe): the functions without a postfix work with
+    // the value of the module user (v_check it, then convert it, a read
+    // converts with the inverse), the *_raw functions bypass the conversion.
+    bool has_v_convert() const { return m_v_convert.has_value(); }
+    double to_raw(double value) const;
+    // v_check the user value, convert it and check that it fits the register
+    sint_t to_raw_checked(double value) const;
+    double from_raw(sint_t value) const;
+    double read_converted_cached() const;
+    double read_converted();
+    void write_converted_cached(double value);
+    void write_converted(double value);
+
     // Asserts and limits (mirrors Reg in pip/skmap/src/skmap/reg.py).
     // ass_check_cached computes the assert status of this reg from the cache:
-    //   * if the reg has min/max limits, the value is checked against them
+    //   * if the reg has a v_check, the value is checked with it
     //   * else if the reg has an ass level, a non-zero value raises that ass
     // If log_flags is given and this is a RegFlags, the failing flags are
     // appended to it. Plain regs never append anything (the Module decides
     // whether to log the reg itself).
     virtual Ass ass_check_cached(Ass log_ass, std::vector<std::shared_ptr<RFlag>> * log_flags) const;
     virtual Ass ass_check_limit_cached() const;
-    Ass ass_check_value_limit_min(sint_t value) const;
-    Ass ass_check_value_limit_max(sint_t value) const;
-    Ass ass_check_value_limit(sint_t value) const;
-    void check_value_limit(sint_t value) const;
-    // Unsigned variants, used for uint/bits/flag regs. The value can use the
-    // full 64 bit range, so comparing it against a signed limit (as the
-    // python code does with arbitrary precision ints) needs unsigned math.
-    Ass ass_check_value_limit_min_u(uint_t value) const;
-    Ass ass_check_value_limit_max_u(uint_t value) const;
-    Ass ass_check_value_limit_u(uint_t value) const;
-    void check_value_limit_u(uint_t value) const;
+    Ass ass_check_value_check(double value) const;
+    Ass ass_check_value_limit(double value) const;
+    void check_value_limit(double value) const;
     virtual bool has_ass() const { return m_ass != Ass::none || has_limit(); }
     bool has_limit() const;
     // True if the value fits in the register's bytes, mirrors python raising
     // OverflowError from int.to_bytes(self.size).
     void check_value_fits(uint_t value) const;
     void check_value_fits(sint_t value) const;
+    // Same for the value of the register of a v_convert write
+    void check_value_fits_reg(sint_t value) const;
     Ass ass() const { return m_ass; }
-    std::optional<sint_t> max() const { return m_max; }
-    std::optional<sint_t> min() const { return m_min; }
+    const std::optional<ValueCheck> & v_check() const { return m_v_check; }
+    const std::optional<ValueConvert> & v_convert() const { return m_v_convert; }
+    VType v_type() const { return m_v_type; }
     bool is_bool() const { return m_value_type.is_bool(); }
     std::vector<bool> read_vec_bool_cached() const;
     std::vector<bool> read_vec_bool();
@@ -115,8 +183,10 @@ private:
 protected:
     addr_t m_addr_off;
     Ass m_ass;
-    std::optional<sint_t> m_max;
-    std::optional<sint_t> m_min;
+    std::optional<ValueCheck>   m_v_check;
+    std::optional<ValueConvert> m_v_convert;
+    // domain of the user value, follows the recipe v_type
+    VType m_v_type = VType::s;
 };
 
 class RegVec : public Reg {
@@ -124,8 +194,9 @@ class RegVec : public Reg {
 public:
     virtual ~RegVec() = default;
     RegVec(const std::string& name, Acc acc, ValueType value_type, const std::string & desc,
-        Ass ass = Ass::none, std::optional<sint_t> max = std::nullopt, std::optional<sint_t> min = std::nullopt)
-    :   Reg(name, acc, value_type,  desc, ass, max, min)
+        Ass ass = Ass::none, std::optional<ValueCheck> v_check = std::nullopt,
+        std::optional<ValueConvert> v_convert = std::nullopt, VType v_type = VType::s)
+    :   Reg(name, acc, value_type,  desc, ass, v_check, v_convert, v_type)
     {
         if(not value_type.is_vec()) { throw std::runtime_error("Value type must be vector");}
     }
@@ -155,6 +226,10 @@ public:
     void write_str(const std::string & str);
  
     void update_idx_cache(addr_t idx);
+    // Raw bytes of one element, they bypass v_check and v_convert (like python
+    // RegVec.read_idx_bytes_cached / write_idx_bytes_cached)
+    std::span<const std::byte> read_idx_bytes_cached(addr_t idx) const;
+    void write_idx_bytes_cached(addr_t idx, std::span<const std::byte> data);
     uint_t read_idx_uint_cached(addr_t idx) const;
     uint_t read_idx_uint(addr_t idx);
     sint_t read_idx_sint_cached(addr_t idx) const;
@@ -165,6 +240,16 @@ public:
     void write_idx_uint(addr_t idx, uint_t val);
     void write_idx_sint_cached(addr_t idx, sint_t val);
     void write_idx_sint(addr_t idx, sint_t val);
+
+    // v_convert of the recipe, same as Reg, applied to every element
+    std::vector<double> read_vec_converted_cached() const;
+    std::vector<double> read_vec_converted();
+    void write_vec_converted_cached(const std::vector<double> & vec);
+    void write_vec_converted(const std::vector<double> & vec);
+    double read_idx_converted_cached(addr_t idx) const;
+    double read_idx_converted(addr_t idx);
+    void write_idx_converted_cached(addr_t idx, double value);
+    void write_idx_converted(addr_t idx, double value);
 
     // stride between vector elements in bytes (aligned to the module byte alignment)
     addr_t elem_off() const { return m_value_type.sw_elem_offset(); }
@@ -287,18 +372,23 @@ inline void push_back_flag(std::vector<std::shared_ptr<RFlag>> & flags, std::sha
 }
 
 inline std::shared_ptr<Reg> make_reg(const std::string & name, Acc acc, ValueType value_type, const std::string & desc,
-    Ass ass = Ass::none, std::optional<sint_t> max = std::nullopt, std::optional<sint_t> min = std::nullopt) {
-    return std::make_shared<Reg>(name, acc, value_type, desc, ass, max, min);
+    Ass ass = Ass::none, std::optional<ValueCheck> v_check = std::nullopt,
+    std::optional<ValueConvert> v_convert = std::nullopt, VType v_type = VType::s) {
+    return std::make_shared<Reg>(name, acc, value_type, desc, ass, v_check, v_convert, v_type);
 }
 inline std::shared_ptr<RegVec> make_reg_vec(const std::string & name, Acc acc, ValueType value_type, const std::string & desc,
-    Ass ass = Ass::none, std::optional<sint_t> max = std::nullopt, std::optional<sint_t> min = std::nullopt) {
-    return std::make_shared<RegVec>(name, acc, value_type, desc, ass, max, min);
+    Ass ass = Ass::none, std::optional<ValueCheck> v_check = std::nullopt,
+    std::optional<ValueConvert> v_convert = std::nullopt, VType v_type = VType::s) {
+    return std::make_shared<RegVec>(name, acc, value_type, desc, ass, v_check, v_convert, v_type);
 }
-inline std::shared_ptr<Reg> make_reg_k(const std::string & name, ValueType value_type, const std::string & desc) {
-    return make_reg(name, Acc::k, value_type, desc);
+// A constant register has no v_convert, only a v_check of the value the firmware reports
+inline std::shared_ptr<Reg> make_reg_k(const std::string & name, ValueType value_type, const std::string & desc,
+    std::optional<ValueCheck> v_check = std::nullopt, VType v_type = VType::s) {
+    return make_reg(name, Acc::k, value_type, desc, Ass::none, v_check, std::nullopt, v_type);
 }
-inline std::shared_ptr<RegVec> make_reg_vec_k(const std::string & name, ValueType value_type, const std::string & desc) {
-    return make_reg_vec(name, Acc::k, value_type, desc);
+inline std::shared_ptr<RegVec> make_reg_vec_k(const std::string & name, ValueType value_type, const std::string & desc,
+    std::optional<ValueCheck> v_check = std::nullopt, VType v_type = VType::s) {
+    return make_reg_vec(name, Acc::k, value_type, desc, Ass::none, v_check, std::nullopt, v_type);
 }
 inline std::shared_ptr<RegFlags> make_reg_flags(const std::string& name, Acc acc, uint32_t width, std::vector<std::shared_ptr<RFlag>> flags, const std::string & desc) {
     return std::make_shared<RegFlags>(name, acc, width, flags, desc);

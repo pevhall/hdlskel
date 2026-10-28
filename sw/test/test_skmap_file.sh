@@ -46,6 +46,18 @@ check_has() { # <description> <needle> <file>
         fails=$((fails+1))
     fi
 }
+# Same as check_has, but the needle is a fixed string (the printed check
+# expressions are full of ( ) * characters that would be regex syntax)
+check_has_f() { # <description> <needle> <file>
+    if grep -aqF -- "$2" "$3"; then
+        echo "PASS: $1"
+    else
+        echo "FAIL: $1 (missing '$2')"
+        sed 's/^/      /' "$3"
+        fails=$((fails+1))
+    fi
+}
+
 check_absent() { # <description> <needle> <file>
     if grep -aq -- "$2" "$3"; then
         echo "FAIL: $1 (unexpected '$2')"
@@ -73,8 +85,18 @@ $SKMAP -f "$RECIPE" -m -s               > "$TMP/recipe.txt"
 check_has "reg map printed"             "TBRecip"                   "$TMP/recipe.txt"
 check_has "k reg value"                 "RO_LEN"                    "$TMP/recipe.txt"
 check_has "external mem rows"           "Mem size:"                 "$TMP/recipe.txt"
-check_has "value limits shown"          "-2 <= v <= 100"            "$TMP/recipe.txt"
-check_has "asserts listed"              "Asserts (max debug)"       "$TMP/recipe.txt"
+# The recipe v_check of regs_rw, printed with every recipe name resolved to a
+# value (the recipe is not needed to print a module): min / max of the register
+# value are replaced by the v_check of the value of the module user
+check_has_f "v_check of regs_rw shown"  "(((v >= (-1 * 2)) && (v <= 100)) && ((v % 2) == 0))" "$TMP/recipe.txt"
+# temp has a v_convert, the map shows the value of the module user (a float),
+# not the raw value of the register
+check_has_f "v_convert prints the user value" "((v >= -1000) && (v <= 1000)) -4.25" "$TMP/recipe.txt"
+# RW_LEN has v_check="{ (v % RW_MULT) == 0}" and the firmware value 3 is odd, so
+# the worst assert of the module is the error of that failed check
+check_has "asserts listed"              "Asserts (max error)"       "$TMP/recipe.txt"
+check_has "failing check in assert table" "RW_LEN"                  "$TMP/recipe.txt"
+check_has_f "failing check shows its expression" "((v % 2) == 0) 3"  "$TMP/recipe.txt"
 
 echo "--- skmap: whole tree ---"
 $SKMAP -f "$TREE" -t                    > "$TMP/tree.txt"
@@ -147,7 +169,7 @@ echo "--- skmap: python output parity ---"
 # The cpp printing mirrors the python library: `0xADDR name {id, vN, c=XXXX
 # l=..}` with a zero padded upper case checksum, and python spelling for
 # bools. Column widths and the box drawing differ (tabulate vs rich).
-check_has "upper case checksum in info line" "c=1AD7" "$TMP/tree.txt"
+check_has "upper case checksum in info line" "c=C805" "$TMP/tree.txt"
 check_has "bools print as python True"       "True" "$TMP/recipe.txt"
 check_has "bools print as python False"      "False" "$TMP/recipe.txt"
 check_has "value types print like python"    "\[3\]s12" "$TMP/recipe.txt"
@@ -160,6 +182,13 @@ $SKMAP -f "$RECIPE" -m                             > "$TMP/quiet.txt" 2>&1
 $SKMAP -f "$RECIPE" -m -vv                         > "$TMP/vv.txt" 2>&1
 check_absent "no info logging without -v" "Creating module" "$TMP/quiet.txt"
 check_has    "info logging with -vv"      "Creating module" "$TMP/vv.txt"
+
+echo
+echo "--- skmap: recipe value check (C++ unit test) ---"
+# The recipe v_check / v_convert options (ValueCheck / ValueConvert): a failing
+# check is an assert when reading and rejects a write, a v_convert converts the
+# written value and every read. Also runnable with `meson test -C build`.
+check "v_check / v_convert unit test" "$BUILD/test/test_skmap_check" "$RECIPE"
 
 echo
 echo "--- error handling ---"

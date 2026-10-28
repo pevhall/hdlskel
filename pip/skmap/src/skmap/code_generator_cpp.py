@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Union
 
 from .code_generator_parse_resolvable import ResolvableFunctionOperation, ResolvableT, ResolvableFunctionBuiltIn, BultiInOperation
+from .code_generator_parse_resolvable import contains_float_value
 from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeIpkg, RecipeK, RecipeVar, RecipeReg, RecipeMem
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR, SKMAP_VER_MAJOR, SKMAP_VER_MINOR, SKMAP_VER_PATCH
 from . import code_generator_sw_common as common
@@ -31,7 +32,12 @@ def reg_to_inst_str(reg : RecipeReg) -> str:
     return name_to_reg_var(reg.name)
 
 def to_cpp_source(node: ResolvableT) -> str:
-    """Render a ResolvableT tree back out as a C++ source-code expression string."""
+    """Render a ResolvableT tree back out as a C++ source-code expression string.
+
+    Note that `/` and `%` keep the C++ truncated semantics for negative
+    operands (python floors them). A check like `{ (v % RW_MULT) == 0}` gives
+    the same result either way, a check on the sign of a remainder would not.
+    """
     # if isinstance(node, bool):
     #     return str(int(node))
     if isinstance(node, int):
@@ -43,9 +49,16 @@ def to_cpp_source(node: ResolvableT) -> str:
     if isinstance(node, RecipeK):
         return f'{node.name}()'
     if isinstance(node, ResolvableFunctionOperation):
+        if node.op.is_unary:
+            # '!' takes one operand, the parser keeps rhs as None
+            return f'({node.op}{to_cpp_source(node.lhs)})'
         if node.op == BultiInOperation.power:
             # C++ has no ** operator, std::pow returns double, recipe math is integer
             return f'static_cast<int>(std::pow({to_cpp_source(node.lhs)}, {to_cpp_source(node.rhs)}))'
+        if node.op == BultiInOperation.div and contains_float_value(node):
+            # The inverse of a float v_convert divides an integer register value,
+            # it has to be a float division (the recipe `/` is an integer one).
+            return f'(static_cast<double>({to_cpp_source(node.lhs)}) / {to_cpp_source(node.rhs)})'
         return f'({to_cpp_source(node.lhs)} {node.op} {to_cpp_source(node.rhs)})'
     if isinstance(node, ResolvableFunctionBuiltIn):
         args = ', '.join(to_cpp_source(p) for p in node.params)
@@ -102,6 +115,57 @@ def reg_inst_type_str(reg : RecipeReg) -> str:
 def is_vec_int(t : Union[ValueType, ValueTypeUnresolved]) -> bool:
     return t.is_vec and t.kind in (ValueKind.uint, ValueKind.sint, ValueKind.bits)
 
+def value_check_str_cpp(reg : RecipeReg) -> str:
+    """The `v_check` ctor argument (a ValueCheck), 'std::nullopt' when there is none.
+
+    The lambda gets the user value as `v`, recipe k / ipkg values are read
+    through `this`. An integer v_type gets an `sint_t v`, a float one a
+    `double v` (ValueCheck takes both).
+    """
+    if reg.v_check is None:
+        return 'std::nullopt'
+    # the function type is spelled out, a bare lambda converts to both ValueCheck
+    # constructors (sint_t and double v) and would be ambiguous
+    if reg.v_type.is_float:
+        return (f'ValueCheck{{VCheckFnF{{[this](double v) {{ return {to_cpp_source(reg.v_check)}; }}}}, '
+                f'"{reg.v_check_str}", VType::{reg.v_type.value}}}')
+    return (f'ValueCheck{{VCheckFn{{[this](sint_t v) {{ return {to_cpp_source(reg.v_check)}; }}}}, '
+            f'"{reg.v_check_str}", VType::{reg.v_type.value}}}')
+
+def value_convert_str_cpp(reg : RecipeReg) -> str:
+    """The `v_convert` ctor argument (a ValueConvert), 'std::nullopt' when there is none.
+
+    The first lambda converts the user value into the value of the register,
+    the second one is its inverse and is used by every read, both are generated
+    from the same recipe expression.
+    """
+    if reg.v_convert is None:
+        return 'std::nullopt'
+    v_arg = 'double v' if reg.v_type.is_float else 'sint_t v'
+    return (f'ValueConvert{{[this]({v_arg}) {{ return {to_cpp_source(reg.v_convert)}; }}, '
+            f'[this](sint_t v) {{ return {to_cpp_source(reg.v_convert_inv)}; }}, '
+            f'"{reg.v_convert_str}", "{reg.v_convert_inv_str}", VType::{reg.v_type.value}}}')
+
+def has_v_convert(reg : RecipeReg) -> bool:
+    return getattr(reg, 'v_convert', None) is not None
+
+def value_user_ret_type_str_cpp(reg : RecipeReg, wr : bool = False, ignore_vec : bool = False) -> str:
+    """Return / argument type of the user facing functions, see the recipe v_type."""
+    t = reg.t
+    if reg.v_type.is_float:
+        rt = 'double'
+    elif t.kind == ValueKind.flag and t.elem_w == 1:
+        rt = 'bool'
+    elif t.kind == ValueKind.char:
+        rt = 'char'
+    else:
+        rt = 'uint_t' if t.kind in (ValueKind.uint, ValueKind.bits) else 'sint_t'
+    if not ignore_vec and t.is_vec:
+        rt = 'std::string' if t.kind == ValueKind.char else 'std::vector<double>'
+        if wr:
+            rt = f'const {rt} &'
+    return rt
+
 def all_ipkg_value_parameters_str(ipkgv : RecipeIpkg) -> str:
     if isinstance(ipkgv.value, str):
         # plain-string leaf (char vector ipkg)
@@ -132,57 +196,90 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     func_write_idx = f'write_idx_{kind_f_s}'
 
     s = ''
+    # A register with a v_convert converts in the default functions and gives
+    # the plain register value in the *_raw ones, all other registers only have
+    # the functions below, with their original names.
+    sfx = '_raw' if has_v_convert(reg) else ''
     s += f'    //{reg.name}: {reg.desc}\n'
     s += f'    std::shared_ptr<{reg_inst_type_str(reg)}> {reg.name}_inst() const {{ return {reg_name}; }}\n'
-
-    if isinstance(reg, RecipeVar):
-        if reg.max is not None:
-            s += f'    int {reg.name}_max() const {{ return {to_cpp_source(reg.max)}; }}\n'
-        if reg.min is not None:
-            s += f'    int {reg.name}_min() const {{ return {to_cpp_source(reg.min)}; }}\n'
 
     match reg.acc:
         case Acc.k:
             s += f'    {t_str} {reg.name}() const {{ return {reg_name}->{func_read_cached}(); }}\n'
         case Acc.ro:
-            s += f'    {t_str} {reg.name}_read_cached() const {{ return {reg_name}->{func_read_cached}(); }}\n'
-            s += f'    {t_str} {reg.name}_read() {{ return {reg_name}->{func_read}(); }}\n'
+            s += f'    {t_str} {reg.name}_read_cached{sfx}() const {{ return {reg_name}->{func_read_cached}(); }}\n'
+            s += f'    {t_str} {reg.name}_read{sfx}() {{ return {reg_name}->{func_read}(); }}\n'
             if is_vec_int(reg.t):
-                s += f'    {t_elem_str} {reg.name}_read_idx_cached(addr_t idx) const {{ return {reg_name}->{func_read_idx_cached}(idx); }}\n'
-                s += f'    {t_elem_str} {reg.name}_read_idx(addr_t idx) {{ return {reg_name}->{func_read_idx}(idx); }}\n'
+                s += f'    {t_elem_str} {reg.name}_read_idx_cached{sfx}(addr_t idx) const {{ return {reg_name}->{func_read_idx_cached}(idx); }}\n'
+                s += f'    {t_elem_str} {reg.name}_read_idx{sfx}(addr_t idx) {{ return {reg_name}->{func_read_idx}(idx); }}\n'
         case Acc.rc:
-            s += f'    {t_str} {reg.name}_read_cached() const {{ return {reg_name}->{func_read_cached}(); }}\n'
-            s += f'    {t_str} {reg.name}_read(bool clear) {{\n'
+            s += f'    {t_str} {reg.name}_read_cached{sfx}() const {{ return {reg_name}->{func_read_cached}(); }}\n'
+            s += f'    {t_str} {reg.name}_read{sfx}(bool clear) {{\n'
             s += f'        {t_str} val = {reg_name}->{func_read}();\n'
             s += f'        if ( clear ) {{ {reg.name}_clear(); }}\n'
             s += f'        return val;\n'
             s += f'    }}\n'
             s += f'    void {reg.name}_clear() {{ {reg_name}->write_zero(); }}\n'
             if is_vec_int(reg.t):
-                s += f'    {t_elem_str} {reg.name}_read_idx_cached(addr_t idx) const {{ return {reg_name}->{func_read_idx_cached}(idx); }}\n'
-                s += f'    {t_elem_str} {reg.name}_read_idx(addr_t idx) {{ return {reg_name}->{func_read_idx}(idx); }}\n'
+                s += f'    {t_elem_str} {reg.name}_read_idx_cached{sfx}(addr_t idx) const {{ return {reg_name}->{func_read_idx_cached}(idx); }}\n'
+                s += f'    {t_elem_str} {reg.name}_read_idx{sfx}(addr_t idx) {{ return {reg_name}->{func_read_idx}(idx); }}\n'
                 s += f'    void {reg.name}_clear_idx(addr_t idx) {{ {reg_name}->{func_write_idx}(idx, 0); }}\n'
         case Acc.rw:
-            s += f'    {t_str} {reg.name}_read_cached() const {{ return {reg_name}->{func_read_cached}(); }}\n'
-            s += f'    {t_str} {reg.name}_read() {{ return {reg_name}->{func_read}(); }}\n'
-            s += f'    void {reg.name}_write_cached( {t_str_wr} value ) {{ {reg_name}->{func_write_cached}(value); }}\n'
-            s += f'    void {reg.name}_write( {t_str_wr} value ) {{ {reg_name}->{func_write}(value); }}\n'
+            s += f'    {t_str} {reg.name}_read_cached{sfx}() const {{ return {reg_name}->{func_read_cached}(); }}\n'
+            s += f'    {t_str} {reg.name}_read{sfx}() {{ return {reg_name}->{func_read}(); }}\n'
+            s += f'    void {reg.name}_write_cached{sfx}( {t_str_wr} value ) {{ {reg_name}->{func_write_cached}(value); }}\n'
+            s += f'    void {reg.name}_write{sfx}( {t_str_wr} value ) {{ {reg_name}->{func_write}(value); }}\n'
             if is_vec_int(reg.t):
-                s += f'    {t_elem_str} {reg.name}_read_idx_cached(addr_t idx) const {{ return {reg_name}->{func_read_idx_cached}(idx); }}\n'
-                s += f'    {t_elem_str} {reg.name}_read_idx(addr_t idx) {{ return {reg_name}->{func_read_idx}(idx); }}\n'
-                s += f'    void {reg.name}_write_idx_cached(addr_t idx, {t_elem_str} val) {{ {reg_name}->{func_write_idx_cached}(idx, val); }}\n'
-                s += f'    void {reg.name}_write_idx(addr_t idx, {t_elem_str} val) {{ {reg_name}->{func_write_idx}(idx, val); }}\n'
+                s += f'    {t_elem_str} {reg.name}_read_idx_cached{sfx}(addr_t idx) const {{ return {reg_name}->{func_read_idx_cached}(idx); }}\n'
+                s += f'    {t_elem_str} {reg.name}_read_idx{sfx}(addr_t idx) {{ return {reg_name}->{func_read_idx}(idx); }}\n'
+                s += f'    void {reg.name}_write_idx_cached{sfx}(addr_t idx, {t_elem_str} val) {{ {reg_name}->{func_write_idx_cached}(idx, val); }}\n'
+                s += f'    void {reg.name}_write_idx{sfx}(addr_t idx, {t_elem_str} val) {{ {reg_name}->{func_write_idx}(idx, val); }}\n'
         case Acc.wt:
-            s += f'    {t_str} {reg.name}_read_cached() const {{ return {reg_name}->{func_read_cached}(); }}\n'
-            s += f'    {t_str} {reg.name}_read() {{ return {reg_name}->{func_read}(); }}\n'
+            s += f'    {t_str} {reg.name}_read_cached{sfx}() const {{ return {reg_name}->{func_read_cached}(); }}\n'
+            s += f'    {t_str} {reg.name}_read{sfx}() {{ return {reg_name}->{func_read}(); }}\n'
             if not is_vec_int(reg.t):
-                s += f'    void {reg.name}_write_trigger( {t_str_wr} value ) {{ {reg_name}->{func_write}(value); }}\n'
+                s += f'    void {reg.name}_write_trigger{sfx}( {t_str_wr} value ) {{ {reg_name}->{func_write}(value); }}\n'
             if is_vec_int(reg.t):
-                s += f'    {t_elem_str} {reg.name}_read_idx_cached(addr_t idx) const {{ return {reg_name}->{func_read_idx_cached}(idx); }}\n'
-                s += f'    {t_elem_str} {reg.name}_read_idx(addr_t idx) {{ return {reg_name}->{func_read_idx}(idx); }}\n'
-                s += f'    void {reg.name}_write_trigger_idx(addr_t idx, {t_elem_str} val) {{ {reg_name}->{func_write_idx}(idx, val); }}\n'
+                s += f'    {t_elem_str} {reg.name}_read_idx_cached{sfx}(addr_t idx) const {{ return {reg_name}->{func_read_idx_cached}(idx); }}\n'
+                s += f'    {t_elem_str} {reg.name}_read_idx{sfx}(addr_t idx) {{ return {reg_name}->{func_read_idx}(idx); }}\n'
+                s += f'    void {reg.name}_write_trigger_idx{sfx}(addr_t idx, {t_elem_str} val) {{ {reg_name}->{func_write_idx}(idx, val); }}\n'
         case _:
             assert False
+
+    if has_v_convert(reg):
+        # The functions above bypass the value conversion, the ones below take
+        # and give the value of the module user: v_check it, then convert it
+        # with v_convert, a read converts with the inverse of v_convert.
+        t_user     = value_user_ret_type_str_cpp(reg)
+        t_user_wr  = value_user_ret_type_str_cpp(reg, wr=True)
+        t_user_one = value_user_ret_type_str_cpp(reg, ignore_vec=True)
+        s += f'    // {reg.name}: value conversion, see the recipe v_convert / v_type\n'
+        match reg.acc:
+            case Acc.k:
+                assert False, 'a constant register cannot have a v_convert'
+            case Acc.ro | Acc.rc | Acc.rw | Acc.wt:
+                s += f'    {t_user} {reg.name}_read_cached() const {{ return {reg_name}->read_converted_cached(); }}\n'
+                if reg.acc == Acc.rc:
+                    s += f'    {t_user} {reg.name}_read(bool clear) {{\n'
+                    s += f'        {t_user} val = {reg_name}->read_converted();\n'
+                    s += f'        if ( clear ) {{ {reg.name}_clear(); }}\n'
+                    s += f'        return val;\n'
+                    s += f'    }}\n'
+                else:
+                    s += f'    {t_user} {reg.name}_read() {{ return {reg_name}->read_converted(); }}\n'
+                if reg.acc == Acc.rw:
+                    s += f'    void {reg.name}_write_cached( {t_user_wr} value ) {{ {reg_name}->write_converted_cached(value); }}\n'
+                    s += f'    void {reg.name}_write( {t_user_wr} value ) {{ {reg_name}->write_converted(value); }}\n'
+                if reg.acc == Acc.wt and not is_vec_int(reg.t):
+                    s += f'    void {reg.name}_write_trigger( {t_user_wr} value ) {{ {reg_name}->write_converted(value); }}\n'
+                if is_vec_int(reg.t):
+                    s += f'    {t_user_one} {reg.name}_read_idx_cached(addr_t idx) const {{ return {reg_name}->read_idx_converted_cached(idx); }}\n'
+                    s += f'    {t_user_one} {reg.name}_read_idx(addr_t idx) {{ return {reg_name}->read_idx_converted(idx); }}\n'
+                    if reg.acc == Acc.rw:
+                        s += f'    void {reg.name}_write_idx_cached(addr_t idx, {t_user_one} val) {{ {reg_name}->write_idx_converted_cached(idx, val); }}\n'
+                        s += f'    void {reg.name}_write_idx(addr_t idx, {t_user_one} val) {{ {reg_name}->write_idx_converted(idx, val); }}\n'
+                    if reg.acc == Acc.wt:
+                        s += f'    void {reg.name}_write_trigger_idx(addr_t idx, {t_user_one} val) {{ {reg_name}->write_idx_converted(idx, val); }}\n'
     return s
 
 def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
@@ -191,7 +288,9 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
     reg_name = reg_to_inst_str(reg)
 
     s = ''
-    s += f'    //{reg.name}: {reg.desc}\n'
+    s += f'    // ------------------\n'
+    s += f'    // {reg.name}:Start\n'
+    s += f'    //    {reg.desc}"\n'
     if reg.acc != Acc.k:
         s += f'    std::shared_ptr<{reg_inst_type_str(reg)}> {reg.name}_inst() const {{ return {reg_name}; }}\n'
         s += f'    void {reg.name}_update_cache() {{ {reg_name}->update_cache(); }}\n'
@@ -243,6 +342,8 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
                 s += f'    void {f.name}_write_cached( {t_str_c} value ) {{ {f_name}->{func_write_cached}(value); }}\n'
             case _:
                 assert False
+    s += f'    // {reg.name}:End\n'
+    s += f'    // ------------------\n'
     return s
 
 def all_reg_value_functions_str(reg : RecipeReg) -> str:
@@ -413,7 +514,12 @@ bool {recipe.sw_module}::registered = Module::register_module(std::make_shared<{
             else:
                 t_str = value_type_str(kv.t)
                 reg_make = 'make_reg_vec_k' if kv.t.is_vec else 'make_reg_k'
-                cpp_f.write(f'    {name_k} = {reg_make}("{kv.name}", {t_str}, "{kv.desc}");\n')
+                check_s = value_check_str_cpp(kv)
+                if kv.v_check is None:
+                    cpp_f.write(f'    {name_k} = {reg_make}("{kv.name}", {t_str}, "{kv.desc}");\n')
+                else:
+                    # a constant can only have a v_check, see the recipe parser
+                    cpp_f.write(f'    {name_k} = {reg_make}("{kv.name}", {t_str}, "{kv.desc}", {check_s}, VType::{kv.v_type.value});\n')
                 cpp_f.write(f'    add_reg_k({name_k});\n')
         cpp_f.write(f"}}\n\n")
 
@@ -439,11 +545,12 @@ bool {recipe.sw_module}::registered = Module::register_module(std::make_shared<{
                 t_str = value_type_str(varv.t)
                 reg_make = 'make_reg_vec' if varv.t.is_vec else 'make_reg'
                 extra = ''
-                if varv.ass != Ass.none or varv.max is not None or varv.min is not None:
+                if varv.ass != Ass.none or varv.v_check is not None or varv.v_convert is not None:
+                    # the value options are v_check / v_convert, the replaced
+                    # min and max of the register value are gone
                     ass_s = f'Ass::{varv.ass.to_str()}'
-                    max_s = to_cpp_source(varv.max) if varv.max is not None else 'std::nullopt'
-                    min_s = to_cpp_source(varv.min) if varv.min is not None else 'std::nullopt'
-                    extra = f', {ass_s}, {max_s}, {min_s}'
+                    extra = (f', {ass_s}, {value_check_str_cpp(varv)}, {value_convert_str_cpp(varv)}'
+                             f', VType::{varv.v_type.value}')
                 cpp_f.write(f'    {name_var} = {reg_make}("{varv.name}", Acc::{varv.acc}, {t_str}, "{varv.desc}"{extra});\n')
                 cpp_f.write(f"    add_reg_var({name_var});\n")
         cpp_f.write(f"}}\n")

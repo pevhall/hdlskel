@@ -1,28 +1,111 @@
 import ast
-from typing import Optional, Type, Literal, Union, TYPE_CHECKING
+from typing import Optional, Type, Literal, Union, Callable, TYPE_CHECKING
 
-from .basic_types import Acc, Ass, ValueKind, ValueType, value_type_u8, value_type_x32
+from .basic_types import Acc, Ass, ValueKind, ValueType, VType, value_kind_to_v_type, value_type_u8, value_type_x32
 from .basic import ceil_log2, ceil_div, ceil_multiple, promote_to_sw_w, bytes_to_list_int, list_int_to_bytes, cast_uint_to_sint, to_rich_str, set_bit, set_bits
 
 if TYPE_CHECKING:
     from .module import Module
 
+def round_half_away(value : Union[int, float]) -> int:
+    """Round half away from zero, used to turn a float value into a register value."""
+    if isinstance(value, int):
+        return value
+    return int((value + 0.5)//1) if value >= 0 else -int((-value + 0.5)//1)
+
+class ValueCheck:
+    """A recipe `v_check` option: a boolean function of the register value.
+
+    It is the value limit of a register (it replaces the old `min` / `max`
+    options), for a vector register it applies to every element. A value that
+    fails the check raises when written (the write is not allowed) and is
+    reported as an assert when reading / printing the register.
+
+    The recipe v_check="{ (v % RW_MULT) == 0}" generates
+    `skmap.ValueCheck(lambda v: ((v % 2) == 0), '(v % 2) == 0')` (and the
+    matching `ValueCheck{...}` of the c++ library, see reg.hpp). The text has
+    every name resolved to its value so the check prints the same in every
+    language and does not need the recipe at runtime.
+
+    Args:
+        fn : takes the register value, True when the value is allowed
+        str : expression text with resolved values, for printing and errors
+        v_type : type of the value, 'f' is a float (see the recipe v_type)
+    """
+    def __init__(self, fn : Callable[[Union[int, float]], bool], str : str = '', v_type : VType = VType.s):
+        self.fn = fn
+        self._str = str
+        self.v_type = v_type
+
+    def __call__(self, value : Union[int, float]) -> bool:
+        return bool(self.fn(value))
+
+    def __str__(self) -> str:
+        return self._str
+
+class ValueConvert:
+    """A recipe `v_convert` option: converts a user value to a register value.
+
+    A register stores an integer, `v_convert` maps the value the user of the
+    module works with into that integer, eg v_convert="{ v * 16 }" for a Q4
+    fixed point temperature. Reading uses the *inverse* of the same expression
+    (derived while parsing the recipe, see invert_resolvable), so writing 1.5
+    stores 24 and reading gives 1.5 back.
+
+      * `fn`     user value -> register value, a float result is rounded
+      * `fn_inv` register value -> user value, what a read returns
+
+    Args:
+        fn, fn_inv : the conversion and its inverse
+        str, str_inv : their text (names resolved to values), for printing
+        v_type : type of the user value (see the recipe v_type)
+    """
+    def __init__(self, fn : Callable[[Union[int, float]], Union[int, float]], fn_inv : Callable[[int], Union[int, float]],
+                 str : str = '', str_inv : str = '', v_type : VType = VType.s):
+        self.fn = fn
+        self.fn_inv = fn_inv
+        self._str = str
+        self._str_inv = str_inv
+        self.v_type = v_type
+
+    def to_raw(self, value : Union[int, float]) -> int:
+        """User value as the value stored in the register (always an int)."""
+        return round_half_away(self.fn(value))
+
+    def from_raw(self, raw : int) -> Union[int, float]:
+        """Value stored in the register as the user value."""
+        return self.fn_inv(raw)
+
+    def __call__(self, value : Union[int, float]) -> int:
+        return self.to_raw(value)
+
+    @property
+    def str_inv(self) -> str:
+        return self._str_inv
+
+    def __str__(self) -> str:
+        return self._str
+
 class Reg:
-    def __init__(self, module : "Module", name : str, value_type : ValueType, acc : Acc, desc : str, ass : Ass = Ass.none, max : Optional[int] = None, min : Optional[int] = None): #, fmt : Fmt = Fmt.default): #, ass : Ass = Ass.none):
+    def __init__(self, module : "Module", name : str, value_type : ValueType, acc : Acc, desc : str, ass : Ass = Ass.none,
+                 v_check : Optional[ValueCheck] = None, v_convert : Optional[ValueConvert] = None, v_type : Optional[VType] = None):
         # assert (ass != ass.passed)
         self.module = module
         self.name   = name
         self.value_type  = value_type
         self.acc    = acc
-        # self.ass    = ass
         self.desc   = desc
-        # self.fmt    = fmt
         self.size   = promote_to_sw_w(value_type.width)>>3
         self.elem_size = self.size
         self.addr : Optional[int]  = None
         self.ass    = ass
-        self.max    = max
-        self.min    = min
+        assert v_check is None or value_type.kind in (ValueKind.uint, ValueKind.sint, ValueKind.bits), \
+            f'a v_check is only supported on int registers ({name})'
+        assert v_convert is None or value_type.kind in (ValueKind.uint, ValueKind.sint, ValueKind.bits), \
+            f'a v_convert is only supported on int registers ({name})'
+        self.v_check = v_check
+        self.v_convert = v_convert
+        self.v_type = v_type if v_type is not None else value_kind_to_v_type(value_type.kind)
 
     @property
     def is_flag(self) -> bool:
@@ -34,6 +117,10 @@ class Reg:
 
     def has_ass(self) -> bool:
         return self.ass != Ass.none or self.has_limit()
+
+    @property
+    def has_v_convert(self) -> bool:
+        return self.v_convert is not None
 
     def value_type_str(self) -> str:
         return f'{self.value_type}'
@@ -118,39 +205,55 @@ class Reg:
         _ = await self.read_bytes()
         return self.ass_check_cached(log_ass, log_f)
 
-    def ass_check_value_limit_min(self, value : int) -> Ass:
-        if self.min is None:
+    def ass_check_value_limit(self, value : Union[int, float]) -> Ass:
+        """Ass of a (user) value against the recipe `v_check`, none when it passes."""
+        if self.v_check is None:
             return Ass.none
-        if value >= self.min:
+        if self.v_check(value):
             return Ass.none
-        # if value == self.min:
-        #     return Ass.debug
         if self.ass != Ass.none:
             return self.ass
         return Ass.error
 
-    def ass_check_value_limit_max(self, value : int ) -> Ass:
-        if self.max is None:
-            return Ass.none
-        if value <= self.max:
-            return Ass.none
-        # if value == self.max:
-        #     return Ass.debug
-        if self.ass != Ass.none:
-            return self.ass
-        return Ass.error
+    def check_value_limit(self, value : Union[int, float]):
+        """Raise when a (user) value does not pass the recipe `v_check`."""
+        ass = self.ass_check_value_limit(value)
+        if (ass >= Ass.error):
+            raise ValueError(f"for reg {self.name} {value=} does not pass the check '{self.v_check}'")
 
-    def ass_check_value_limit(self, value : int) -> Ass:
-        return max(self.ass_check_value_limit_min(value), self.ass_check_value_limit_max(value))
+    def check_value_fits_reg(self, value : int):
+        """Raise when a register value does not fit the width of the register.
 
-    def check_value_limit(self, value : int):
-        if (self.ass_check_value_limit(value) >= Ass.error):
-            raise ValueError(f"for reg {self.name} {value=} is not in range [{self.min} , {self.max}]")
+        A `v_convert` result is not bounded by the conversion, so the value that
+        goes into the register is checked here.
+        """
+        value_int = int(value)
+        width = self.value_type.width
+        if self.value_type.kind == ValueKind.sint:
+            lo, hi = -(1<<(width-1)), (1<<(width-1))-1
+        else:
+            lo, hi = 0, (1<<width)-1
+        if not lo <= value_int <= hi:
+            conv = f' (converted from {value} with v_convert {self.v_convert})' if self.has_v_convert else ''
+            raise ValueError(f'for reg {self.name} register value {value_int} does not fit '
+                             f'{self.value_type_str()} [{lo} , {hi}]{conv}')
+
+    def to_raw(self, value : Union[int, float]) -> int:
+        """User value as the value stored in the register (identity without a conversion)."""
+        return self.v_convert.to_raw(value) if self.has_v_convert else value
+
+    def from_raw(self, raw : int) -> Union[int, float]:
+        """Value stored in the register as the user value (identity without a conversion)."""
+        return self.v_convert.from_raw(raw) if self.has_v_convert else raw
+
+    def has_limit(self):
+        # A `v_check` is the value limit of a register, it is printed and
+        # asserted (flags have their own assert per flag).
+        return self.value_type.kind in (ValueKind.uint, ValueKind.sint, ValueKind.bits) and \
+            self.v_check is not None
 
     def ass_check_limit_cached(self) -> Ass:
-        value = self.read_value_cached() #type:ignore
-        assert isinstance(value, int)
-        return self.ass_check_value_limit(value)
+        return self.ass_check_value_limit(self.read_converted_cached())
 
     def _str_num(self, value : int, base : Literal[2, 10, 16]) -> str:
         match (base):
@@ -158,20 +261,12 @@ class Reg:
             case 10: return str(value)
             case 16: return f'0x{value:0{ceil_div(self.value_type.width,4)}X}'
 
-    def has_limit(self):
-        return self.value_type.kind in (ValueKind.uint, ValueKind.sint, ValueKind.bits) and (
-            self.min is not None or self.max is not None)
+    def _v_check_bound_str(self, v_color : str) -> str:
+        """The `v_check` printed as its expression, names resolved to values.
 
-    def _value_limit_bound_str(self, value_min : int, value_max : int, v_color : str, base : Literal[2, 10, 16]) -> str:
-        min_s = ''
-        max_s = ''
-        if self.min is not None:
-            min_color = self.ass_check_value_limit_min(value_min).color;
-            min_s = f'{to_rich_str(self._str_num(self.min, base), min_color)} <= '
-        if self.max is not None:
-            max_color = self.ass_check_value_limit_max(value_max).color;
-            max_s = f' <= {to_rich_str(self._str_num(self.max, base), max_color)}'
-        return f"({min_s}{to_rich_str('v', v_color)}{max_s}) "
+        Coloured with the assert of the value, which includes this check.
+        """
+        return f"{to_rich_str(str(self.v_check), v_color)} "
 
     def read_rich_str_cached(self) -> str:
         value_str = None
@@ -200,9 +295,12 @@ class Reg:
             ass = self.ass_check_cached()
             s += to_rich_str(str(self.ass), ass.color)+": "
         if self.has_limit():
-            assert value_int is not None
             ass = max(ass, self.ass_check_limit_cached())
-            s += self._value_limit_bound_str(value_int,  value_int, ass.color, base)
+            s += self._v_check_bound_str(ass.color)
+        if self.has_v_convert:
+            # The user value is printed, the raw register value is available
+            # through the `*_raw` functions
+            value_str = str(self.read_converted_cached())
         if value_str is None:
             assert value_int is not None
             value_str = self._str_num(value_int, base)
@@ -228,7 +326,10 @@ class Reg:
         await self.write_cache()
 
     def write_uint_cached(self, v : int):
-        self.check_value_limit(v)
+        # v is the value stored in the register, the v_check is checked against
+        # the user value it stands for (see write_converted_cached)
+        self.check_value_fits_reg(v)
+        self.check_value_limit(self.from_raw(v))
         b = v.to_bytes(self.size, byteorder='little', signed=False)
         return self.write_bytes_cached(b)
 
@@ -237,12 +338,46 @@ class Reg:
         await self.write_cache()
 
     def write_sint_cached(self, v : int):
-        self.check_value_limit(v)
+        self.check_value_fits_reg(v)
+        self.check_value_limit(self.from_raw(v))
         b = v.to_bytes(self.size, byteorder='little', signed=True)
         return self.write_bytes_cached(b)
 
     async def write_sint(self, v : int):
         self.write_sint_cached(v)
+        await self.write_cache()
+
+    def read_converted_cached(self):
+        """Value of the register as the user of the module sees it.
+
+        Without a `v_convert` this is the value of the register itself, with one
+        it is the register value converted by the inverse of `v_convert`.
+        """
+        return self.from_raw(self.read_value_cached())
+
+    async def read_converted(self):
+        _ = await self.read_bytes()
+        return self.read_converted_cached()
+
+    def write_converted_cached(self, value : Union[int, float]):
+        """Write a user value: `v_check` it, convert it with `v_convert` and write it.
+
+        Raises when the value does not pass the check, or when the converted
+        value does not fit the register.
+        """
+        self.check_value_limit(value)
+        value_raw = self.to_raw(value)
+        self.check_value_fits_reg(value_raw)
+        match self.value_type.kind:
+            case ValueKind.sint:
+                self.write_sint_cached(value_raw)
+            case ValueKind.uint | ValueKind.bits | ValueKind.flag:
+                self.write_uint_cached(value_raw)
+            case _:
+                assert False, f'a v_convert is not supported on {self.value_type_str()} registers ({self.name})'
+
+    async def write_converted(self, value : Union[int, float]):
+        self.write_converted_cached(value)
         await self.write_cache()
 
     def write_bool_cached(self, v : bool):
@@ -381,6 +516,9 @@ class RegVec(Reg):
             case ValueKind.char: return self.read_idx_char_cached(idx)
 
     def write_idx_uint_cached(self, idx : int, val : int):
+        # val is the value stored in this element of the register
+        self.check_value_fits_reg(val)
+        self.check_value_limit(self.from_raw(val))
         b = val.to_bytes(self.elem_size, byteorder='little', signed=False)
         self.write_idx_bytes_cached(idx, b)
 
@@ -389,11 +527,38 @@ class RegVec(Reg):
         await self.write_idx_cache(idx)
 
     def write_idx_sint_cached(self, idx : int, val : int):
+        self.check_value_fits_reg(val)
+        self.check_value_limit(self.from_raw(val))
         b = val.to_bytes(self.elem_size, byteorder='little', signed=True)
         self.write_idx_bytes_cached(idx, b)
 
     async def write_idx_sint(self, idx : int, val : int):
         self.write_idx_sint_cached(idx, val)
+        await self.write_idx_cache(idx)
+
+    def read_converted_idx_cached(self, idx : int):
+        """One element as the user of the module sees it (see v_convert)."""
+        return self.from_raw(self.read_idx_value_cached(idx))
+
+    async def read_converted_idx(self, idx : int):
+        _ = await self.read_idx_bytes(idx)
+        return self.read_converted_idx_cached(idx)
+
+    def write_converted_idx_cached(self, idx : int, value : Union[int, float]):
+        """Write one element with the user value (v_check, then v_convert)."""
+        self.check_value_limit(value)
+        value_raw = self.to_raw(value)
+        self.check_value_fits_reg(value_raw)
+        match self.value_type.kind:
+            case ValueKind.sint:
+                self.write_idx_sint_cached(idx, value_raw)
+            case ValueKind.uint | ValueKind.bits | ValueKind.flag:
+                self.write_idx_uint_cached(idx, value_raw)
+            case _:
+                assert False, f'a v_convert is not supported on {self.value_type_str()} registers ({self.name})'
+
+    async def write_converted_idx(self, idx : int, value : Union[int, float]):
+        self.write_converted_idx_cached(idx, value)
         await self.write_idx_cache(idx)
 
     def read_str_cached(self)  -> str:
@@ -402,14 +567,74 @@ class RegVec(Reg):
         # works for 8 bit char vectors, which the previous element size check
         # rejected.
         b = self.read_bytes_cached()
-        return ''.join(chr(b[ii*self.elem_offset]) for ii in range(self.vec_len))
+        assert self.value_type.vec_len is not None
+        return ''.join(chr(b[ii*self.elem_offset]) for ii in range(self.value_type.vec_len))
 
     async def read_str(self)  -> str:
         _ = await self.read_bytes()
         return self.read_str_cached()
 
+    def _list_int_to_bytes(self, value : list[int], signed : bool) -> bytes:
+        # Every element lives in an aligned element of elem_offset bytes (the
+        # value itself is elem_size bytes), mirroring
+        # RegVec::write_vec_uint_cached in the C++ library. Packing the values
+        # without the padding (list_int_to_bytes) did not match how the values
+        # are read back with bytes_to_list_int(b, elem_offset).
+        b = bytearray(self.size)
+        for ii, v in enumerate(value):
+            off = ii*self.elem_offset
+            b[off:off+self.elem_size] = v.to_bytes(self.elem_size, byteorder='little', signed=signed)
+        return bytes(b)
+
+    def check_value_list(self, value : list[int]):
+        # The v_check applies to every element of a vector register
+        for v in value:
+            self.check_value_limit(v)
+
+    def read_converted_cached(self) -> list[Union[int, float]]:
+        """All elements as the user of the module sees them (see v_convert)."""
+        return [self.from_raw(v) for v in self._read_list_raw_cached()]
+
+    async def read_converted(self) -> list[Union[int, float]]:
+        _ = await self.read_bytes()
+        return self.read_converted_cached()
+
+    def _read_list_raw_cached(self) -> list[int]:
+        match self.value_type.kind:
+            case ValueKind.sint:  return self.read_list_sint_cached()
+            case ValueKind.uint:  return self.read_list_uint_cached()
+            case ValueKind.bits:  return self.read_list_uint_cached()
+            case ValueKind.flag:  return [int(v) for v in self.read_list_bool_cached()]
+            case _: assert False, f'{self.value_type_str()} registers have no int value list ({self.name})'
+
+    def write_converted_cached(self, value : list[Union[int, float]]):
+        """Write all elements with the user values (v_check, then v_convert)."""
+        assert isinstance(self.value_type.vec_len, int)
+        assert len(value) == self.value_type.vec_len, \
+            f'{self.name} expects {self.value_type.vec_len} values, got {len(value)}'
+        value_raw = []
+        for v in value:
+            self.check_value_limit(v)
+            v_raw = self.to_raw(v)
+            self.check_value_fits_reg(v_raw)
+            value_raw.append(v_raw)
+        match self.value_type.kind:
+            case ValueKind.sint:
+                self.write_list_sint_cached(value_raw)
+            case ValueKind.uint | ValueKind.bits:
+                self.write_list_uint_cached(value_raw)
+            case _:
+                assert False, f'a v_convert is not supported on {self.value_type_str()} registers ({self.name})'
+
+    async def write_converted(self, value : list[Union[int, float]]):
+        self.write_converted_cached(value)
+        await self.write_cache()
+
     def write_list_uint_cached(self, value : list[int]):
-        b = list_int_to_bytes(value, self.elem_size, endian='little', signed=False)
+        self.check_value_list([self.from_raw(v) for v in value])
+        for v in value:
+            self.check_value_fits_reg(v)
+        b = self._list_int_to_bytes(value, signed=False)
         self.write_bytes_cached(b)
 
     async def write_list_uint(self, value : list[int]):
@@ -417,7 +642,10 @@ class RegVec(Reg):
         await self.write_cache()
 
     def write_list_sint_cached(self, value : list[int]):
-        b = list_int_to_bytes(value, self.elem_size, endian='little', signed=True)
+        self.check_value_list([self.from_raw(v) for v in value])
+        for v in value:
+            self.check_value_fits_reg(v)
+        b = self._list_int_to_bytes(value, signed=True)
         self.write_bytes_cached(b)
 
     async def write_list_sint(self, value : list[int]):
@@ -428,9 +656,7 @@ class RegVec(Reg):
         ass = Ass.none
         assert isinstance(self.value_type.vec_len, int)
         for idx in range(self.value_type.vec_len):
-            v = self.read_idx_value_cached(idx)
-            assert isinstance(v, int)
-            v_ass = self.ass_check_value_limit(v)
+            v_ass = self.ass_check_value_limit(self.read_converted_idx_cached(idx))
             if ass < v_ass:
                 ass = v_ass
         return ass
@@ -453,9 +679,7 @@ class RegVec(Reg):
 
     def ass_check_cached_idx(self, idx : int, log_ass : Ass = Ass.none, log_f : list[Union["RFlag",Reg]] = []) -> Ass:
         if self.has_limit():
-            value = self.read_idx_value_cached(idx)
-            assert isinstance(value, int)
-            ass = self.ass_check_value_limit(value)
+            ass = self.ass_check_value_limit(self.read_converted_idx_cached(idx))
         elif self.ass == Ass.none:
             return Ass.none
         else:
@@ -493,11 +717,11 @@ class RegVec(Reg):
             s += to_rich_str(f'{self.ass}', ass_checked.color)+": "
         if self.has_limit():
             ass = max(ass, self.ass_check_limit_cached())
-            value_min = min(value)
-            value_max = max(value)
-            assert isinstance(value_min, int)
-            assert isinstance(value_max, int)
-            s += self._value_limit_bound_str(value_min, value_max, ass.color, base)
+            s += self._v_check_bound_str(ass.color)
+        if self.has_v_convert:
+            # The user values are printed, the raw values are available through
+            # the `*_raw` functions
+            value = self.read_converted_cached()
         s += "[ "
         for idx, v in enumerate(value):
             ass = self.ass_check_cached_idx(idx)

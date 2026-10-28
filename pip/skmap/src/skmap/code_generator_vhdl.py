@@ -42,6 +42,7 @@ class ValueKindVhdl(Enum):
     def is_int(self) -> bool:
         return self in (ValueKindVhdl.integer, ValueKindVhdl.natural)
 
+    @property
     def is_num(self) -> bool:
         return self in (ValueKindVhdl.integer, ValueKindVhdl.natural, ValueKindVhdl.unsigned, ValueKindVhdl.signed)
 
@@ -255,8 +256,6 @@ class RecipeVarFw():
         self.desc : str = var.desc
         self.ass        = var.ass
         self.fw_init    = var.fw_init
-        self.max        = var.max
-        self.min        = var.min
         self.use_basic_port_types = use_basic_port_types
 
         assert self.t.kind is not None
@@ -274,7 +273,11 @@ class RecipeVarFw():
             for f in var.flags:
                 self.flags.append(RecipeFlagFw(f, self) )
         else:
-            if self.direction == 'out' and (self.t.kind.is_int or self.t.is_bool or (self.t.kind.is_num and self.t.is_vec)):
+            # An out port is driven from the variable of the map process: the
+            # skmap_map_acc_* procedures work on std_ulogic_vector, so every
+            # numeric / bool out port needs a variable and a type conversion
+            # (a signed / unsigned port can not be passed to them directly).
+            if self.direction == 'out' and (self.t.kind.is_int or self.t.kind.is_num or self.t.is_bool):
                 self.uses_var_name = True
                 self.name_ext = var_name(self.name)
                 self.p_name = port_name(self.name, self.direction)
@@ -1126,7 +1129,9 @@ begin
                             match varv.t.kind:
                                 case ValueKindVhdl.natural: vhdl_f.write(f'    {varv.p_name} <= unsigned({varv.name_ext});\n')
                                 case ValueKindVhdl.integer: vhdl_f.write(f'    {varv.p_name} <= signed({varv.name_ext});\n')
-                                case _: assert False;
+                                case ValueKindVhdl.unsigned: vhdl_f.write(f'    {varv.p_name} <= unsigned({varv.name_ext});\n')
+                                case ValueKindVhdl.signed: vhdl_f.write(f'    {varv.p_name} <= signed({varv.name_ext});\n')
+                                case _: assert False, f'{varv.name=} {varv.t.kind=}';
                     else:
                         assert( varv.flags is not None )
                         assert( not varv.t.is_vec) # TODO:

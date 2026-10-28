@@ -14,7 +14,11 @@ from dataclasses import dataclass
 from .basic import ceil_div, ceil_log2 #promote_to_sw_w, ceil_multiple
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_ID_LEN, SKMAP_VER_MAJOR, SKMAP_VER_MINOR
 from .head import SIZE_CHECKSUM
-from .code_generator_parse_resolvable import ResolvableT, make_resolvable_function, BultiInOperation, parse_resolvable, NameToKT
+from .code_generator_parse_resolvable import (
+    ResolvableT, make_resolvable_function, BultiInOperation, parse_resolvable, NameToKT,
+    VType, value_kind_to_v_type, parse_resolvable_v_check, parse_resolvable_v_convert,
+    resolvable_to_int, resolvable_print_source,
+)
 
 dict_char_to_value_kind = {}
 for vk in ValueKind:
@@ -79,6 +83,14 @@ class RecipeK:
         self.desc : str = d['desc']
         flags, flags_width  = parse_recipe_flags(d, name_to_k=name_to_k)
         self.flags : Optional[list[RecipeFlag]] = flags
+        # `v_check` is the value limit of the register (it replaces the old
+        # `min` / `max` options), `v_convert` maps the user value to the value
+        # stored in the register, see parse_recipe_v_options
+        (self.v_type, self.v_check, self.v_check_str,
+         self.v_convert, self.v_convert_str,
+         self.v_convert_inv, self.v_convert_inv_str) = parse_recipe_v_options(d, name_to_k, self.t.kind, self.flags is not None)
+        assert self.v_convert is None, \
+            f'v_convert is not supported on constant registers ({self.name}), it converts values written to the module'
         if self.t.width is not None:
             if self.flags is not None:
                 if isinstance(flags_width, int) and isinstance(self.t.width, int):
@@ -149,6 +161,37 @@ def make_value_type_resolvable(*args, **kwargs) -> ValueTypeT:
     if value_type.castable_to_ValueType():
         return value_type.to_ValueType()
     return value_type
+
+def checksum_hash_of(val) -> str:
+    """Text of a recipe field for the module checksum.
+
+    A recipe value can be written as a number or as an expression of other
+    recipe constants (`bit = "{RO_LEN}"`), it is resolved here so two recipes
+    that mean the same have the same checksum. Everything that can not be
+    evaluated (the text of a `v_check`, an expression with a value parameter)
+    is printed, with the recipe names resolved to their values.
+    """
+    if val is None:
+        return 'none'
+    if isinstance(val, bool):
+        return str(int(val))
+    if isinstance(val, int):
+        return str(val)
+    if isinstance(val, str):
+        return val
+    if isinstance(val, Enum):
+        return str(val)
+    try:
+        return str(resolvable_to_int(val))
+    except Exception:
+        pass
+    # a width or a bit can be a constant of the recipe (a value the module
+    # reports at run time), it is hashed as the text with the recipe names
+    # resolved, that is the name of the constant
+    try:
+        return str(resolvable_print_source(val))
+    except Exception:
+        return str(val)
 
 def md5_update(m, val):
     if isinstance(val, int):
@@ -271,6 +314,52 @@ def parse_recipe_flags(d : dict, name_to_k : NameToKT) -> tuple[Optional[list[Re
         width = bit_default
     return flags, width
 
+def parse_recipe_v_options(d : dict, name_to_k : NameToKT, value_kind, is_flag : bool) -> tuple[VType, Optional[ResolvableT], Optional[str], Optional[ResolvableT], Optional[str], Optional[ResolvableT], Optional[str]]:
+    """Parse the optional `v_type`, `v_check` and `v_convert` recipe options.
+
+    Returns (v_type, v_check, v_check_str, v_convert, v_convert_str,
+    v_convert_inv, v_convert_inv_str):
+
+      * `v_type`    type of the value parameter `v`, 'u', 's' or 'f' (float, a
+                    double in c++), defaults to the type of the register
+      * `v_check`   boolean expression of `v`, the value limits, replacing the
+                    old `min` / `max` options, eg v_check="{ v <= 100 }".
+                    A value that fails it is an assert on a read and is
+                    rejected on a write.
+      * `v_convert` int expression of `v` converting a user value into the raw
+                    register value, eg v_convert="{ v * 8 }". A read uses the
+                    inverse, which is derived here and returned as `v_convert_inv`.
+
+    The `_str` texts have every name resolved to a value (a `v_check` using an
+    ipkg scale prints the scale, not its name) and are used for printing and
+    error messages.
+    """
+    for opt in ('v_type', 'v_check', 'v_convert'):
+        assert not is_flag or opt not in d, \
+            f'{opt} is not supported on flag registers ({d["name"]})'
+    # min / max of the register value and the first version of the value check
+    # are removed, an old recipe has to say so instead of being ignored
+    for removed in ('min', 'max', 'check'):
+        assert removed not in d, \
+            (f'{removed} is not a recipe option anymore ({d["name"]}), '
+             f'write the same limit as a v_check of the value v, '
+             f'eg. min = 2, max = 100 becomes v_check="{{ (v >= 2) && (v <= 100) }}"')
+    v_type = VType.from_str(d['v_type']) if 'v_type' in d else value_kind_to_v_type(value_kind)
+    if 'v_check' in d:
+        v_check, v_check_str = parse_resolvable_v_check(d['v_check'], name_to_k, v_type)
+    else:
+        v_check, v_check_str = None, None
+    if 'v_convert' in d:
+        assert v_check is not None or v_type.is_float, \
+            f'v_convert of {d["name"]} needs a v_check or a float v_type'
+        v_convert, v_convert_str, v_convert_inv, v_convert_inv_str = \
+            parse_resolvable_v_convert(d['v_convert'], name_to_k, v_type)
+    else:
+        assert v_type.is_float is False, \
+            f'{d["name"]}: a float register (v_type="f") needs a v_convert to map it to the register value'
+        v_convert = v_convert_str = v_convert_inv = v_convert_inv_str = None
+    return v_type, v_check, v_check_str, v_convert, v_convert_str, v_convert_inv, v_convert_inv_str
+
 class RecipeVar:
 
     def __init__(self, d : dict, name_to_k : NameToKT):
@@ -284,14 +373,14 @@ class RecipeVar:
         self.fw_init = FwInitMode.zero
         if 'fw_init' in d:
             self.fw_init = FwInitMode[d['fw_init']]
-        self.max = None
-        if 'max' in d:
-            self.max = parse_unresolved_word(d['max'], name_to_k)
-        self.min = None
-        if 'min' in d:
-            self.min = parse_unresolved_word(d['min'], name_to_k)
         flags, flags_width  = parse_recipe_flags(d, name_to_k=name_to_k)
         self.flags : Optional[list[RecipeFlag]] = flags
+        # `v_check` is the value limit of the register (it replaces the old
+        # `min` / `max` options), `v_convert` maps the user value to the value
+        # stored in the register, see parse_recipe_v_options
+        (self.v_type, self.v_check, self.v_check_str,
+         self.v_convert, self.v_convert_str,
+         self.v_convert_inv, self.v_convert_inv_str) = parse_recipe_v_options(d, name_to_k, self.t.kind, self.flags is not None)
 
         if self.t.width is not None:
             if self.flags is not None:
@@ -388,22 +477,55 @@ class Recipe:
 
         self._checksum = self._caculate_checksum()
 
+    def _checksum_update_reg(self, m, r):
+        """Update the checksum with one register (a `k` or a `var` entry)."""
+        md5_update(m, r.name)
+        md5_update(m, r.acc)
+        md5_update(m, r.t.kind)
+        md5_update(m, checksum_hash_of(r.t.width))
+        # The vector length is part of the layout of the module (how many
+        # elements a register has), the assert level, the value type (v_type),
+        # the value check (v_check) and the value conversion (v_convert) are
+        # baked into the generated code of the firmware and the software, so a
+        # module and the code that parses it have to agree on all of them.
+        md5_update(m, checksum_hash_of(r.t.vec_len))
+        md5_update(m, checksum_hash_of(getattr(r, 'ass', Ass.none)))
+        md5_update(m, checksum_hash_of(r.v_type))
+        md5_update(m, checksum_hash_of(r.v_check_str))
+        md5_update(m, checksum_hash_of(r.v_convert_str))
+        # the flags of a flag register (a flag is only visible through its
+        # register, its bit, length and assert belong to the module)
+        if r.flags is None:
+            md5_update(m, checksum_hash_of(None))
+        else:
+            md5_update(m, checksum_hash_of(len(r.flags)))
+            for f in r.flags:
+                md5_update(m, checksum_hash_of(f.name))
+                md5_update(m, checksum_hash_of(f.bit))
+                md5_update(m, checksum_hash_of(f.vec_len))
+                md5_update(m, checksum_hash_of(f.ass))
+
     def _caculate_checksum(self):
         """Checksum of the recipe, embedded in the generated py / cpp / vhdl
         and in the module head, so a module image and the code that parses it
         can be checked against each other (ModuleFactory.make_module refuses a
         checksum mismatch).
 
-        Note: everything that changes the layout is hashed (names, access
-        types, value kind and width) but the vector length, the assert level
-        and the value limits are NOT, so changing those does not change the
-        checksum. They are read from the sub header / module data at runtime
-        for variables, but for constants they are baked into the generated
-        code, so a stale generated file is not detected for those fields.
-        They are left out deliberately: the checksum is checked against images
-        produced by the firmware and against cached regio files, so extending
-        it is a breaking change that needs every generated file (and every
-        cached image) to be regenerated together.
+        Hashed: the skmap version, the module id and version, the names of the
+        ipkg / `k` constants (and the type of their value), and for every
+        register the name, the access type, the value kind, width and vector
+        length, the assert level, the value options (`v_type`, `v_check`,
+        `v_convert`) and the flags.
+
+        Not hashed: the *value* of the ipkg / `k` constants (a constant value
+        is a parameter of the design, changing it usually changes the layout
+        through the widths that use it, and every name that is used is hashed),
+        the descriptions and the `fw_init` mode.
+
+        Extending this list is a breaking change: the checksum is checked
+        against the images the firmware produces and against cached regio
+        files, so every generated file and every cached image has to be
+        regenerated together (see `test/data/*.skmap`).
         """
         m = hashlib.md5()
         m.update(SKMAP_VER_MAJOR.to_bytes(1))
@@ -414,15 +536,9 @@ class Recipe:
             md5_update(m, r.name)
             md5_update(m, type(r.value))
         for r in self.k:
-            md5_update(m, r.name)
-            md5_update(m, r.acc)
-            md5_update(m, r.t.kind)
-            md5_update(m, r.t.width)
+            self._checksum_update_reg(m, r)
         for r in self.var:
-            md5_update(m, r.name)
-            md5_update(m, r.acc)
-            md5_update(m, r.t.kind)
-            md5_update(m, r.t.width)
+            self._checksum_update_reg(m, r)
 
         checksum = int.from_bytes(m.digest())
         return checksum & 0xFFFF

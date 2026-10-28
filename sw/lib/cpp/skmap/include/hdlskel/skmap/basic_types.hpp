@@ -114,6 +114,19 @@ enum class ValueKind {
 
     flag_
 };
+
+// Type of the `v` of the recipe options `v_check` / `v_convert`, mirrors
+// VType in pip/skmap/src/skmap/basic_types.py. 'f' is a double in c++, an
+// integer in python (the recipe has no float constants).
+enum class VType {
+    u,   // unsigned integer
+    s,   // signed integer
+    f    // float
+};
+std::string str(VType v);
+// Default v_type of a register: the signedness of its value type
+VType value_kind_to_v_type(ValueKind kind);
+
 std::string str(Acc v);
 std::string str(Ass v);
 std::string str(ValueKind v);

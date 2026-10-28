@@ -64,6 +64,41 @@ class Ass(IntEnum):
         }[self]
         # rich colors
 
+class VType(Enum):
+    """Type of the `v` parameter of the `v_check` / `v_convert` recipe options.
+
+    Recipe option `v_type`: 'u' unsigned int, 's' signed int, 'f' float (a
+    double in c++). It decides the type the user facing read / write functions
+    of a register take and return. The default comes from the value type of the
+    register, see value_kind_to_v_type().
+    """
+    u = 'u'
+    s = 's'
+    f = 'f'
+
+    @staticmethod
+    def from_str(s : str) -> 'VType':
+        if not isinstance(s, str) or s not in ('u', 's', 'f'):
+            raise ValueError(f'recipe v_type must be one of "u", "s", "f", got {s!r}')
+        return VType(s)
+
+    def __str__(self) -> str:
+        return self.value
+
+    @property
+    def is_float(self) -> bool:
+        return self == VType.f
+
+    @property
+    def is_unsigned(self) -> bool:
+        return self == VType.u
+
+
+def value_kind_to_v_type(value_kind : 'ValueKind') -> VType:
+    """Default `v_type` of a register: signed values are signed, the rest unsigned."""
+    return VType.s if value_kind == ValueKind.sint else VType.u
+
+
 class ValueKind(Enum):
     uint = auto()
     sint = auto()

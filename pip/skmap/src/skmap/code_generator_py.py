@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Union
 
 from .code_generator_parse_resolvable import ResolvableFunctionOperation, ResolvableT, ResolvableFunctionBuiltIn, BultiInOperation
+from .code_generator_parse_resolvable import is_value_param, contains_float_value
 from .code_generator_parse_recipe import ValueTypeUnresolved, parse_recipe_file, RecipeIpkg, RecipeK, RecipeVar, RecipeReg, RecipeMem
 # from basic import promote_to_sw_w, ceil_div
 from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_VER_STR, SKMAP_VER_MAJOR, SKMAP_VER_MINOR, SKMAP_VER_PATCH
@@ -35,6 +36,17 @@ def op_to_py_source(op : BultiInOperation) -> str:
         BultiInOperation.mult: "*",
         BultiInOperation.div: "//",
         BultiInOperation.power: "**",
+        BultiInOperation.mod : "%",
+        BultiInOperation.eq  : "==",
+        BultiInOperation.ne  : "!=",
+        BultiInOperation.lt  : "<",
+        BultiInOperation.le  : "<=",
+        BultiInOperation.gt  : ">",
+        BultiInOperation.ge  : ">=",
+        # The recipe spells the logic operators like c++, python uses words
+        BultiInOperation.land: "and",
+        BultiInOperation.lor : "or",
+        BultiInOperation.lnot: "not",
         }[op]
 
 def to_python_source(node: ResolvableT) -> str:
@@ -49,7 +61,17 @@ def to_python_source(node: ResolvableT) -> str:
         return f'self.{node.name}'
     if isinstance(node, RecipeK):
         return f'self.{node.name}'
+    if is_value_param(node):
+        # the v of a v_check / v_convert
+        return node.name
     if isinstance(node, ResolvableFunctionOperation):
+        if node.op.is_unary:
+            # 'not' / '!' take one operand, the parser keeps rhs as None
+            return f'({op_to_py_source(node.op)} {to_python_source(node.lhs)})'
+        if node.op == BultiInOperation.div and contains_float_value(node):
+            # The recipe `/` is a integer division, in a float expression (the v
+            # of a v_convert / v_check with v_type 'f') it has to be a float one.
+            return f'({to_python_source(node.lhs)} / {to_python_source(node.rhs)})'
         return f'({to_python_source(node.lhs)} {op_to_py_source(node.op)} {to_python_source(node.rhs)})'
     if isinstance(node, ResolvableFunctionBuiltIn):
         args = ', '.join(to_python_source(p) for p in node.params)
@@ -107,6 +129,53 @@ _value_kind_function_str = common._value_kind_function_str
 read_value_function_str  = common.read_value_function_str
 write_value_function_str  = common.write_value_function_str
 
+def value_check_str_py(reg : RecipeReg) -> str:
+    """The `v_check=skmap.ValueCheck(...)` ctor argument, '' when there is none.
+
+    The lambda gets the register value as `v`, recipe k / ipkg values are read
+    through `self`. The text is the check with every name resolved to a value
+    (see resolvable_print_source), so it prints without the recipe.
+    """
+    if reg.v_check is None:
+        return ''
+    return (f", v_check=skmap.ValueCheck(lambda v: {to_python_source(reg.v_check)},"
+            f" {reg.v_check_str!r}, skmap.VType.{reg.v_type.value})")
+
+def value_convert_str_py(reg : RecipeReg) -> str:
+    """The `v_convert=skmap.ValueConvert(...)` ctor argument, '' when there is none.
+
+    The first lambda is the recipe expression (user value -> register value),
+    the second one is its inverse (register value -> user value, used by every
+    read), both are generated from the same recipe expression.
+    """
+    if reg.v_convert is None:
+        return ''
+    return (f", v_convert=skmap.ValueConvert(lambda v: {to_python_source(reg.v_convert)},"
+            f" lambda v: {to_python_source(reg.v_convert_inv)},"
+            f" {reg.v_convert_str!r}, {reg.v_convert_inv_str!r}, skmap.VType.{reg.v_type.value})"
+            f", v_type=skmap.VType.{reg.v_type.value}")
+
+def value_user_type_str_py(reg : RecipeReg, ignore_vec : bool = False) -> str:
+    """Return / argument type of the user facing functions of a register.
+
+    With a `v_convert` the functions work on the user value, which follows the
+    recipe `v_type` ('f' is a float), without one they work on the value of the
+    register itself.
+    """
+    t = reg.t
+    if reg.v_type.is_float:
+        rt = 'float'
+    elif t.kind == ValueKind.flag and t.elem_w == 1:
+        rt = 'bool'
+    else:
+        rt = 'int'
+    if not ignore_vec and t.is_vec:
+        rt = f'list[{rt}]'
+    return rt
+
+def has_v_convert(reg : RecipeReg) -> bool:
+    return getattr(reg, 'v_convert', None) is not None
+
 def all_ipkg_value_parameters_str(ipkgv : RecipeIpkg) -> str:
     t_str = value_ret_type_str(ipkgv.t)
     value = ipkgv.value
@@ -140,6 +209,10 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
 
     s = ''
     is_vec_int = reg.t.vec_len != None and reg.t.kind in (ValueKind.uint, ValueKind.sint, ValueKind.bits)
+    # A register with a v_convert gets the value conversion in the default
+    # functions and the plain register value in the *_raw functions, the rest
+    # of the module has only the plain functions.
+    sfx = '_raw' if has_v_convert(reg) else ''
     s += f'    #{reg.name}: {reg.desc}\n'
     if reg.t.kind == ValueKind.flag:
         inst_type = 'RegFlags'
@@ -151,35 +224,25 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     s += f'    def {reg.name}_inst(self) -> skmap.{inst_type}:\n'
     s += f'        return {reg_name}\n\n'
 
-    if isinstance(reg, RecipeVar):
-        if reg.max is not None:
-            s += f'    @property\n'
-            s += f'    def {reg.name}_max(self) -> int:\n'
-            s += f'        return {to_python_source(reg.max)}\n\n'
-        if reg.min is not None:
-            s += f'    @property\n'
-            s += f'    def {reg.name}_min(self) -> int:\n'
-            s += f'        return {to_python_source(reg.min)}\n\n'
-
     match reg.acc:
         case Acc.k:
             s += f'    @property\n'
             s += f'    def {reg.name}(self) -> {t_str}:\n'
             s += f'        return {reg_name}.{func_read_cached}()\n\n'
         case Acc.ro:
-            s += f'    def {reg.name}_read_cached(self) -> {t_str}:\n'
+            s += f'    def {reg.name}_read_cached{sfx}(self) -> {t_str}:\n'
             s += f'        return {reg_name}.{func_read_cached}()\n\n'
-            s += f'    async def {reg.name}_read(self) -> {t_str}:\n'
+            s += f'    async def {reg.name}_read{sfx}(self) -> {t_str}:\n'
             s += f'        return await {reg_name}.{func_read}()\n\n'
             if is_vec_int:
-                s += f'    def {reg.name}_read_idx_cached(self, idx : int) -> int:\n'
+                s += f'    def {reg.name}_read_idx_cached{sfx}(self, idx : int) -> int:\n'
                 s += f'        return {reg_name}.{func_read_idx_cached}(idx)\n\n'
-                s += f'    async def {reg.name}_read_idx(self, idx : int) -> int:\n'
+                s += f'    async def {reg.name}_read_idx{sfx}(self, idx : int) -> int:\n'
                 s += f'        return await {reg_name}.{func_read_idx}(idx)\n\n'
         case Acc.rc:
-            s += f'    def {reg.name}_read_cached(self) -> {t_str}:\n'
+            s += f'    def {reg.name}_read_cached{sfx}(self) -> {t_str}:\n'
             s += f'        return {reg_name}.{func_read_cached}()\n\n'
-            s += f'    async def {reg.name}_read(self, clear : bool) -> {t_str}:\n'
+            s += f'    async def {reg.name}_read{sfx}(self, clear : bool) -> {t_str}:\n'
             s += f'        val = await {reg_name}.{func_read}()\n'
             s += f'        if clear:\n'
             s += f'            await self.{reg.name}_clear()\n'
@@ -187,47 +250,91 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
             s += f'    async def {reg.name}_clear(self):\n'
             s += f'        await {reg_name}.write_zero()\n\n'
             if is_vec_int:
-                s += f'    def {reg.name}_read_idx_cached(self, idx : int) -> int:\n'
+                s += f'    def {reg.name}_read_idx_cached{sfx}(self, idx : int) -> int:\n'
                 s += f'        return {reg_name}.{func_read_idx_cached}(idx)\n\n'
-                s += f'    async def {reg.name}_read_idx(self, idx : int) -> int:\n'
+                s += f'    async def {reg.name}_read_idx{sfx}(self, idx : int) -> int:\n'
                 s += f'        return await {reg_name}.{func_read_idx}(idx)\n\n'
                 s += f'    async def {reg.name}_clear_idx(self, idx : int):\n'
                 s += f'        await {reg_name}.{func_write_idx}(idx, 0)\n\n'
         case Acc.rw:
-            s += f'    def {reg.name}_read_cached(self) -> {t_str}:\n'
+            s += f'    def {reg.name}_read_cached{sfx}(self) -> {t_str}:\n'
             s += f'        return {reg_name}.{func_read_cached}()\n\n'
-            s += f'    async def {reg.name}_read(self) -> {t_str}:\n'
+            s += f'    async def {reg.name}_read{sfx}(self) -> {t_str}:\n'
             s += f'        return await {reg_name}.{func_read}()\n\n'
-            s += f'    def {reg.name}_write_cached(self, value : {t_str}):\n'
+            s += f'    def {reg.name}_write_cached{sfx}(self, value : {t_str}):\n'
             s += f'        {reg_name}.{func_write_cached}(value)\n\n'
-            s += f'    async def {reg.name}_write(self, value : {t_str}):\n'
+            s += f'    async def {reg.name}_write{sfx}(self, value : {t_str}):\n'
             s += f'        await {reg_name}.{func_write}(value)\n\n'
             if is_vec_int:
-                s += f'    def {reg.name}_read_idx_cached(self, idx : int) -> int:\n'
+                s += f'    def {reg.name}_read_idx_cached{sfx}(self, idx : int) -> int:\n'
                 s += f'        return {reg_name}.{func_read_idx_cached}(idx)\n\n'
-                s += f'    async def {reg.name}_read_idx(self, idx : int) -> int:\n'
+                s += f'    async def {reg.name}_read_idx{sfx}(self, idx : int) -> int:\n'
                 s += f'        return await {reg_name}.{func_read_idx}(idx)\n\n'
-                s += f'    def {reg.name}_write_idx_cached(self, idx : int, val : int):\n'
+                s += f'    def {reg.name}_write_idx_cached{sfx}(self, idx : int, val : int):\n'
                 s += f'        {reg_name}.{func_write_idx_cached}(idx, val)\n\n'
-                s += f'    async def {reg.name}_write_idx(self, idx : int, val : int):\n'
+                s += f'    async def {reg.name}_write_idx{sfx}(self, idx : int, val : int):\n'
                 s += f'        await {reg_name}.{func_write_idx}(idx, val)\n\n'
         case Acc.wt:
-            s += f'    def {reg.name}_read_cached(self) -> {t_str}:\n'
+            s += f'    def {reg.name}_read_cached{sfx}(self) -> {t_str}:\n'
             s += f'        return {reg_name}.{func_read_cached}()\n\n'
-            s += f'    async def {reg.name}_read(self) -> {t_str}:\n'
+            s += f'    async def {reg.name}_read{sfx}(self) -> {t_str}:\n'
             s += f'        return await {reg_name}.{func_read}()\n\n'
             if not is_vec_int:
-                s += f'    async def {reg.name}_write_trigger(self, value : {t_str}):\n'
+                s += f'    async def {reg.name}_write_trigger{sfx}(self, value : {t_str}):\n'
                 s += f'        await {reg_name}.{func_write}(value)\n\n'
             if is_vec_int:
-                s += f'    def {reg.name}_read_idx_cached(self, idx : int) -> int:\n'
-                s += f'        return await {reg_name}.{func_read_idx_cached}(idx)\n\n'
-                s += f'    async def {reg.name}_read_idx(self, idx : int) -> int:\n'
+                s += f'    def {reg.name}_read_idx_cached{sfx}(self, idx : int) -> int:\n'
+                s += f'        return {reg_name}.{func_read_idx_cached}(idx)\n\n'
+                s += f'    async def {reg.name}_read_idx{sfx}(self, idx : int) -> int:\n'
                 s += f'        return await {reg_name}.{func_read_idx}(idx)\n\n'
-                s += f'    async def {reg.name}_write_trigger_idx(self, idx : int, val : int):\n'
+                s += f'    async def {reg.name}_write_trigger_idx{sfx}(self, idx : int, val : int):\n'
                 s += f'        await {reg_name}.{func_write_idx}(idx, val)\n\n'
         case _:
             assert False
+
+    if has_v_convert(reg):
+        # The functions above bypass the value conversion, the ones below take
+        # and give the user value: v_check it, then convert it with v_convert,
+        # a read converts the register value with the inverse of v_convert.
+        t_str_user     = value_user_type_str_py(reg)
+        t_str_user_one = value_user_type_str_py(reg, ignore_vec=True)
+        s += f'    # {reg.name}: value conversion, see the recipe v_convert / v_type\n'
+        match reg.acc:
+            case Acc.k:
+                assert False, 'a constant register cannot have a v_convert'
+            case Acc.ro | Acc.rc | Acc.rw | Acc.wt:
+                s += f'    def {reg.name}_read_cached(self) -> {t_str_user}:\n'
+                s += f'        return {reg_name}.read_converted_cached()\n\n'
+                if reg.acc == Acc.rc:
+                    s += f'    async def {reg.name}_read(self, clear : bool) -> {t_str_user}:\n'
+                    s += f'        val = await {reg_name}.read_converted()\n'
+                    s += f'        if clear:\n'
+                    s += f'            await self.{reg.name}_clear()\n'
+                    s += f'        return val\n\n'
+                else:
+                    s += f'    async def {reg.name}_read(self) -> {t_str_user}:\n'
+                    s += f'        return await {reg_name}.read_converted()\n\n'
+                if reg.acc == Acc.rw:
+                    s += f'    def {reg.name}_write_cached(self, value : {t_str_user}):\n'
+                    s += f'        {reg_name}.write_converted_cached(value)\n\n'
+                    s += f'    async def {reg.name}_write(self, value : {t_str_user}):\n'
+                    s += f'        await {reg_name}.write_converted(value)\n\n'
+                if reg.acc == Acc.wt and not is_vec_int:
+                    s += f'    async def {reg.name}_write_trigger(self, value : {t_str_user}):\n'
+                    s += f'        await {reg_name}.write_converted(value)\n\n'
+                if is_vec_int:
+                    s += f'    def {reg.name}_read_idx_cached(self, idx : int) -> {t_str_user_one}:\n'
+                    s += f'        return {reg_name}.read_converted_idx_cached(idx)\n\n'
+                    s += f'    async def {reg.name}_read_idx(self, idx : int) -> {t_str_user_one}:\n'
+                    s += f'        return await {reg_name}.read_converted_idx(idx)\n\n'
+                    if reg.acc == Acc.rw:
+                        s += f'    def {reg.name}_write_idx_cached(self, idx : int, val : {t_str_user_one}):\n'
+                        s += f'        {reg_name}.write_converted_idx_cached(idx, val)\n\n'
+                        s += f'    async def {reg.name}_write_idx(self, idx : int, val : {t_str_user_one}):\n'
+                        s += f'        await {reg_name}.write_converted_idx(idx, val)\n\n'
+                    if reg.acc == Acc.wt:
+                        s += f'    async def {reg.name}_write_trigger_idx(self, idx : int, val : {t_str_user_one}):\n'
+                        s += f'        await {reg_name}.write_converted_idx(idx, val)\n\n'
     return s
 
 def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
@@ -236,7 +343,9 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
     reg_name = reg_to_inst_str(reg)
 
     s = ''
-    s += f'    #{reg.name}: {reg.desc}"\n'
+    s += f'    # ------------------\n'
+    s += f'    # {reg.name}:Start\n'
+    s += f'    #    {reg.desc}"\n'
     if reg.acc != Acc.k:
 
         s += f'    @property\n'
@@ -307,6 +416,9 @@ def all_reg_value_functions_str_is_flag(reg : RecipeReg) -> str:
                 s += f'        {f_name}.{func_write_cached}(value)\n\n'
             case _:
                 assert False
+
+    s += f'    # {reg.name}:End\n'
+    s += f'    # ------------------\n\n'
 
     return s
     #     for f in reg.flags:
@@ -437,7 +549,7 @@ class {recipe.sw_module}(skmap.Module):
             else:
                 t_str = value_type_str(kv.t)
                 reg_type = 'RegVecK' if kv.t.is_vec else 'RegK'
-                py_f.write(f"        {name_k} = skmap.{reg_type}(self, name='{kv.name}', value_type={t_str}, desc='{kv.desc}')\n")
+                py_f.write(f"        {name_k} = skmap.{reg_type}(self, name='{kv.name}', value_type={t_str}, desc='{kv.desc}'{value_check_str_py(kv)})\n")
             py_f.write(f"        self._add_reg_k({name_k})\n\n")
 
         py_f.write("""    def _init_reg_map_var(self):\n""")
@@ -458,14 +570,10 @@ class {recipe.sw_module}(skmap.Module):
                 ass_str = ''
                 if varv.ass != Ass.none:
                     ass_str = f', ass=skmap.Ass.{varv.ass.to_str()}'
-                max_s = ''
-                min_s = ''
-                if varv.max is not None: max_s = f', max={to_python_source(varv.max)}'
-                if varv.min is not None: min_s = f', min={to_python_source(varv.min)}'
 
                 t_str = value_type_str(varv.t)
                 reg_type = 'RegVec' if varv.t.is_vec else 'Reg'
-                py_f.write(f"        {name_var} = skmap.{reg_type}(self, name='{varv.name}', value_type={t_str}{ass_str}{min_s}{max_s}, acc=skmap.Acc.{varv.acc}, desc='{varv.desc}')\n")
+                py_f.write(f"        {name_var} = skmap.{reg_type}(self, name='{varv.name}', value_type={t_str}{ass_str}, acc=skmap.Acc.{varv.acc}, desc='{varv.desc}'{value_check_str_py(varv)}{value_convert_str_py(varv)})\n")
             py_f.write(f"        self._add_reg_var({name_var})\n\n")
 
         py_f.write("    def _init_external_mem(self):\n")

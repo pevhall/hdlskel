@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.16)
 
 project(hdlskel LANGUAGES CXX)
 
+# C++ unit tests (sw/test), see ctest
+enable_testing()
+
 # --------------------------------------------------------------
 # Global C++20 configuration (must appear **before** any sub directory)
 # --------------------------------------------------------------
@@ -40,3 +43,4 @@ add_subdirectory(lib/cpp/skmap_autogen_test)
 
 add_subdirectory(app/regio_op)
 add_subdirectory(app/skmap)
+add_subdirectory(test)

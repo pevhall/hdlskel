@@ -85,4 +85,27 @@ std::string str(ValueKind v){
     return os.str();
 }
 
+std::string str(VType v){
+    switch (v) {
+        case VType::u: return "u";
+        case VType::s: return "s";
+        case VType::f: return "f";
+    }
+    return "";
+}
+
+VType value_kind_to_v_type(ValueKind kind) {
+    // Mirrors value_kind_to_v_type in pip/skmap/src/skmap/basic_types.py
+    switch (kind) {
+        case ValueKind::uint_:
+        case ValueKind::bits_:
+        case ValueKind::flag_:
+            return VType::u;
+        case ValueKind::sint_:
+        case ValueKind::char_:
+            return VType::s;
+    }
+    return VType::s;
+}
+
 }

@@ -10,6 +10,9 @@ def ceil_div(n : int, d : int) -> int:
 def ceil_multiple(num : int, multiple : int) -> int:
     return ceil_div(num, multiple)*multiple
 
+def round_multiple( n : int, d : int) -> int:
+    return (n + d//2) // d
+
 def promote_to_sw_w(w : int) -> int:
     return 2**ceil_log2(ceil_multiple(w, 8))
 

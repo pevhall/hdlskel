@@ -116,6 +116,12 @@ void Module::add_reg(std::shared_ptr<Reg> reg) {
 void Module::add_reg_k  (std::shared_ptr<Reg> reg) {
     add_reg(reg);
     m_vec_k.push_back(reg);
+    if (reg->v_check().has_value()) {
+        // A constant is normally not checked, a recipe `v_check` opts this
+        // register into the assert scan (see check_assert_cached), which
+        // validates the value the firmware reported
+        m_arr_reg_var_ass.push_back(reg);
+    }
 }
 void Module::add_reg_var(std::shared_ptr<Reg> reg) {
     add_reg(reg);

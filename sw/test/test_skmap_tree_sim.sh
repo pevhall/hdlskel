@@ -21,6 +21,19 @@ TB_DIR="../../fw/tb/skmap/tb_py_skmap_tree"
 HOST="127.0.0.1"
 PORT="${PORT:-39600}"   # regio PORT_DEFAULT = 0x9AB0
 
+# --- the port has to be free ------------------------------------------
+# A server that is still listening (a leftover simulation) would answer the
+# app instead of the simulation started here, the test would pass without
+# testing anything.
+for _ in $(seq 1 20); do
+    (echo > "/dev/tcp/$HOST/$PORT") 2>/dev/null || break
+    sleep 0.5
+done
+if (echo > "/dev/tcp/$HOST/$PORT") 2>/dev/null; then
+    echo "ERROR: something is still listening on $HOST:$PORT, stop it first (it would answer instead of this simulation)" >&2
+    exit 1
+fi
+
 # --- start the simulation in its own session / process group ---------
 cd "$(dirname "$0")"
 setsid python3 "$TB_DIR/run.py" -s &

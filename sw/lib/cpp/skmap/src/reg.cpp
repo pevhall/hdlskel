@@ -1,6 +1,8 @@
 
 #include "hdlskel/skmap/reg.hpp"
 #include "hdlskel/skmap/module.hpp"
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <iomanip>
 // #include <memory>
@@ -24,16 +26,27 @@ inline sint_t sint_sign_extend_w(uint64_t value, int w) {
 
 namespace hdlskel::skmap {
 
+// Round half away from zero, like python round() on a float. A v_convert with
+// a float v_type decides the register value with this.
+sint_t v_round_to_int(double value) {
+    return static_cast<sint_t>(value >= 0 ? std::floor(value + 0.5) : std::ceil(value - 0.5));
+}
+
 Reg::Reg(const std::string & name, Acc acc, ValueType value_type, const std::string & desc,
-    Ass ass, std::optional<sint_t> max, std::optional<sint_t> min)
+    Ass ass, std::optional<ValueCheck> v_check, std::optional<ValueConvert> v_convert, VType v_type)
     : m_value_type(value_type) 
     , m_acc(acc) 
     , m_name(name) 
     , m_desc(desc) 
     , m_ass(ass)
-    , m_max(max)
-    , m_min(min)
-{ }
+    , m_v_check(v_check)
+    , m_v_convert(v_convert)
+    , m_v_type(v_type)
+{
+    if (v_convert.has_value() && v_check.has_value() && v_convert->v_type != v_check->v_type) {
+        throw std::runtime_error("Reg "" + name + "" has a v_check and a v_convert with a different v_type");
+    }
+}
 
 void Reg::initalise(Module* module, addr_t addr_off) {
     m_module = module;
@@ -152,7 +165,9 @@ void Reg::write_uint_cached(uint_t value) {
         throw std::runtime_error("uint_t not large enough to fit register");
     }
     check_value_fits(value);
-    check_value_limit_u(value);
+    // The raw value is the user value when there is no v_convert, with one the
+    // written value has to be a raw value that came from a valid user value.
+    check_value_limit(from_raw(static_cast<sint_t>(value)));
     memcpy_to_cache(&value);
 }
 void Reg::write_sint_cached(sint_t value) { 
@@ -160,7 +175,7 @@ void Reg::write_sint_cached(sint_t value) {
         throw std::runtime_error("sint_t not large enough to fit register");
     }
     check_value_fits(value);
-    check_value_limit(value);
+    check_value_limit(from_raw(value));
     memcpy_to_cache(&value);
 }
 void Reg::write_bool_cached(bool v) {
@@ -193,6 +208,20 @@ void Reg::write_char(char v) {
 }
 // Mirrors Reg.write_zero_cached in pip/skmap/src/skmap/reg.py: zeros in the
 // cache only. write_zero() is this followed by a device write.
+// Raw byte access to the cache of the register, it bypasses v_check and
+// v_convert, mirrors Reg.read_bytes_cached / Reg.write_bytes_cached in python
+// (fw can put any value in a register, the reads report it as an assert).
+std::span<const std::byte> Reg::read_bytes_cached() const {
+    return cache_data();
+}
+
+void Reg::write_bytes_cached(std::span<const std::byte> data) {
+    if (data.size() != static_cast<size_t>(size())) {
+        throw std::runtime_error("Writing " + std::to_string(data.size()) + " bytes to reg "" + m_name + "" with a size of " + std::to_string(size()));
+    }
+    std::memcpy(cache_data().data(), data.data(), size());
+}
+
 void Reg::write_zero_cached() {
     check_value_limit(0);
     std::vector<std::byte> z(size(), std::byte{0});
@@ -229,24 +258,14 @@ std::vector<bool> Reg::read_vec_bool() {
 
 // --- Asserts and limits (mirrors Reg in pip/skmap/src/skmap/reg.py) ---
 
-Ass Reg::ass_check_value_limit_min(sint_t value) const {
-    if (!m_min.has_value()) {
+// v_check of the recipe, the only value limit a register can have (see the
+// python runtime: the value of a register is always the value of the module
+// user, min and max of the register value are replaced by v_check).
+Ass Reg::ass_check_value_check(double value) const {
+    if (!m_v_check.has_value()) {
         return Ass::none;
     }
-    if (value >= *m_min) {
-        return Ass::none;
-    }
-    if (m_ass != Ass::none) {
-        return m_ass;
-    }
-    return Ass::error;
-}
-
-Ass Reg::ass_check_value_limit_max(sint_t value) const {
-    if (!m_max.has_value()) {
-        return Ass::none;
-    }
-    if (value <= *m_max) {
+    if ((*m_v_check)(value)) {
         return Ass::none;
     }
     if (m_ass != Ass::none) {
@@ -255,84 +274,93 @@ Ass Reg::ass_check_value_limit_max(sint_t value) const {
     return Ass::error;
 }
 
-Ass Reg::ass_check_value_limit(sint_t value) const {
-    Ass ass_min = ass_check_value_limit_min(value);
-    Ass ass_max = ass_check_value_limit_max(value);
-    return (ass_min > ass_max) ? ass_min : ass_max;
+Ass Reg::ass_check_value_limit(double value) const {
+    return ass_check_value_check(value);
 }
 
-// Unsigned variants, see the comment in reg.hpp. A negative configured limit
-// can never be violated by an unsigned value (min) and always is (max).
-Ass Reg::ass_check_value_limit_min_u(uint_t value) const {
-    if (!m_min.has_value()) {
-        return Ass::none;
-    }
-    if (*m_min <= 0 || static_cast<uint_t>(*m_min) <= value) {
-        return Ass::none;
-    }
-    if (m_ass != Ass::none) {
-        return m_ass;
-    }
-    return Ass::error;
-}
-
-Ass Reg::ass_check_value_limit_max_u(uint_t value) const {
-    if (!m_max.has_value()) {
-        return Ass::none;
-    }
-    if (*m_max < 0 || value <= static_cast<uint_t>(*m_max)) {
-        return Ass::none;
-    }
-    if (m_ass != Ass::none) {
-        return m_ass;
-    }
-    return Ass::error;
-}
-
-Ass Reg::ass_check_value_limit_u(uint_t value) const {
-    Ass ass_min = ass_check_value_limit_min_u(value);
-    Ass ass_max = ass_check_value_limit_max_u(value);
-    return (ass_min > ass_max) ? ass_min : ass_max;
-}
-
-void Reg::check_value_limit(sint_t value) const {
+void Reg::check_value_limit(double value) const {
     if (ass_check_value_limit(value) >= Ass::error) {
-        std::ostringstream oss;
-        oss << "for reg " << m_name << " value " << value
-            << " is not in range [";
-        oss << (m_min.has_value() ? std::to_string(*m_min) : std::string("-inf"));
-        oss << " , ";
-        oss << (m_max.has_value() ? std::to_string(*m_max) : std::string("+inf"));
-        oss << "]";
-        throw std::runtime_error(oss.str());
+        std::stringstream ss;
+        ss << "v_check failed for reg \"" << m_name << "\"";
+        if (m_v_check.has_value()) {
+            ss << " (" << m_v_check->str << ")";
+        }
+        ss << ", value " << value;
+        throw std::runtime_error(ss.str());
     }
 }
 
 bool Reg::has_limit() const {
+    // Only a v_check is a value limit (flags have their own assert per flag)
     return m_value_type.kind() != ValueKind::char_ && m_value_type.kind() != ValueKind::flag_
-        && (m_min.has_value() || m_max.has_value());
+        && m_v_check.has_value();
 }
 
-void Reg::check_value_limit_u(uint_t value) const {
-    if (ass_check_value_limit_u(value) >= Ass::error) {
-        std::ostringstream oss;
-        oss << "for reg " << m_name << " value " << value
-            << " is not in range [";
-        oss << (m_min.has_value() ? std::to_string(*m_min) : std::string("-inf"));
-        oss << " , ";
-        oss << (m_max.has_value() ? std::to_string(*m_max) : std::string("+inf"));
-        oss << "]";
-        throw std::runtime_error(oss.str());
+// ---------- v_convert ----------
+
+double Reg::to_raw(double value) const {
+    // user value -> value of the register
+    if (!m_v_convert.has_value()) {
+        return value;
     }
+    return m_v_convert->to_raw(value);
+}
+
+double Reg::from_raw(sint_t value) const {
+    // value of the register -> user value
+    if (!m_v_convert.has_value()) {
+        return static_cast<double>(value);
+    }
+    return m_v_convert->from_raw(value);
+}
+
+void Reg::check_value_fits_reg(sint_t value) const {
+    if (m_value_type.kind() == ValueKind::sint_) {
+        check_value_fits(value);
+    } else {
+        check_value_fits(static_cast<uint_t>(value));
+    }
+}
+
+sint_t Reg::to_raw_checked(double value) const {
+    // v_check the user value, convert it, check the result
+    check_value_limit(value);
+    double value_raw = to_raw(value);
+    if (!std::isfinite(value_raw)) {
+        throw std::runtime_error("v_convert of reg "" + m_name + "" returned a value that is not a number");
+    }
+    sint_t value_raw_int = v_round_to_int(value_raw);
+    check_value_fits_reg(value_raw_int);
+    return value_raw_int;
+}
+
+double Reg::read_converted_cached() const {
+    return from_raw(m_value_type.kind() == ValueKind::sint_ ? read_sint_cached()
+                                                            : static_cast<sint_t>(read_uint_cached()));
+}
+
+double Reg::read_converted() {
+    update_cache();
+    return read_converted_cached();
+}
+
+void Reg::write_converted_cached(double value) {
+    sint_t value_raw = to_raw_checked(value);
+    if (m_value_type.kind() == ValueKind::sint_) {
+        write_sint_cached(value_raw);
+    } else {
+        write_uint_cached(static_cast<uint_t>(value_raw));
+    }
+}
+
+void Reg::write_converted(double value) {
+    write_converted_cached(value);
+    write_cache();
 }
 
 Ass Reg::ass_check_limit_cached() const {
-    // Signed registers are compared as signed, everything else as unsigned
-    // (python gets this for free with arbitrary precision ints).
-    if (m_value_type.kind() == ValueKind::sint_) {
-        return ass_check_value_limit(read_sint_cached());
-    }
-    return ass_check_value_limit_u(read_uint_cached());
+    // The v_check works on the value of the module user
+    return ass_check_value_limit(read_converted_cached());
 }
 
 Ass Reg::ass_check_cached(Ass log_ass, std::vector<std::shared_ptr<RFlag>> * log_flags) const {
@@ -367,6 +395,18 @@ std::string str_num(sint_t value, addr_t width, int base) {
         oss << value;
     }
     return oss.str();
+}
+
+// Mirrors skmap.value_to_str_from_int: a float v_type prints as a double,
+// everything else keeps the register formatting. Used to print the value a
+// v_convert gives the module user.
+std::string value_to_str_from_int(double value, addr_t width, int base, bool v_type_is_float) {
+    if (v_type_is_float) {
+        std::ostringstream oss;
+        oss << value;
+        return oss.str();
+    }
+    return str_num(static_cast<sint_t>(value), width, base);
 }
 
 std::string Reg::str_value_cached() const {
@@ -419,12 +459,15 @@ std::string Reg::str_value_cached() const {
     if (has_limit()) {
         Ass limit_ass = ass_check_limit_cached();
         if (limit_ass > ass) { ass = limit_ass; }
-        // (min <= v <= max)
-        ss << "(";
-        if (m_min.has_value()) { ss << str_num(*m_min, m_value_type.elem_width(), base) << " <= "; }
-        ss << "v";
-        if (m_max.has_value()) { ss << " <= " << str_num(*m_max, m_value_type.elem_width(), base); }
-        ss << ") ";
+        // The v_check is printed as its expression, with every recipe name
+        // resolved to a value, so it prints without the recipe
+        ss << m_v_check->str << " ";
+    }
+    if (has_v_convert()) {
+        // The user value is printed, the raw one is available through the
+        // *_raw functions
+        value_str = value_to_str_from_int(read_converted_cached(), m_value_type.elem_width(), base, m_v_type == VType::f);
+        have_int = false;
     }
 
     if (!value_str.empty()) {
@@ -536,6 +579,9 @@ void RegVec::write_vec_uint_cached(const  std::vector<uint_t> & vec) {
     std::span<std::byte> data = cache_data();
     addr_t ii = 0;
     for(const uint_t v : vec) {
+        // the v_check applies to every element (mirrors python
+        // RegVec.check_value_list), with the value of the module user
+        check_value_limit(from_raw(static_cast<sint_t>(v)));
         std::memcpy(&data[ii], &v, elem_size());
         ii += elem_off();
     }
@@ -546,7 +592,7 @@ void RegVec::write_vec_sint_cached(const  std::vector<sint_t> & vec) {
     std::span<std::byte> data = cache_data();
     addr_t ii = 0;
     for(const sint_t v : vec) {
-        // v = sint_sign_extend_w(v, elem_w());
+        check_value_limit(from_raw(v));
         std::memcpy(&data[ii], &v, elem_size());
         ii += elem_off();
     }
@@ -595,6 +641,23 @@ void RegVec::write_str(const std::string & str) {
     write_cache();
 }
 
+// Raw byte access to one element of a vector register (mirrors the python
+// RegVec.read_idx_bytes_cached / write_idx_bytes_cached), bypasses all checks.
+std::span<const std::byte> RegVec::read_idx_bytes_cached(addr_t idx) const {
+    check_idx(idx);
+    std::span<const std::byte> data = cache_data();
+    return data.subspan(idx*elem_off(), elem_size());
+}
+
+void RegVec::write_idx_bytes_cached(addr_t idx, std::span<const std::byte> data) {
+    check_idx(idx);
+    if (data.size() != static_cast<size_t>(elem_size())) {
+        throw std::runtime_error("Writing " + std::to_string(data.size()) + " bytes to element " + std::to_string(idx) + " of reg "" + name() + "" with an element size of " + std::to_string(elem_size()));
+    }
+    std::span<std::byte> cache = cache_data();
+    std::memcpy(&cache[idx*elem_off()], data.data(), elem_size());
+}
+
 void RegVec::memcpy_idx_from_cache(void * dest, addr_t idx) const {
     check_idx(idx);
     std::span<const std::byte> data = cache_data();
@@ -641,10 +704,72 @@ void RegVec::write_idx_cache(addr_t idx) {
     module()->write_cache(addr, elem_size());
 }
 void RegVec::write_idx_uint_cached(addr_t idx, uint_t val) {
+    check_value_limit(from_raw(static_cast<sint_t>(val)));
     memcpy_idx_to_cache(&val, idx);
 }
 void RegVec::write_idx_sint_cached(addr_t idx, sint_t val) {
+    check_value_limit(from_raw(val));
     memcpy_idx_to_cache(&val, idx);
+}
+
+// ---------- v_convert of a vector register, applied to every element ----------
+
+std::vector<double> RegVec::read_vec_converted_cached() const {
+    std::vector<double> vec;
+    vec.reserve(vec_len());
+    for(addr_t idx = 0; idx < vec_len(); idx++) {
+        vec.push_back(read_idx_converted_cached(idx));
+    }
+    return vec;
+}
+
+std::vector<double> RegVec::read_vec_converted() {
+    update_cache();
+    return read_vec_converted_cached();
+}
+
+double RegVec::read_idx_converted_cached(addr_t idx) const {
+    return from_raw(m_value_type.kind() == ValueKind::sint_ ? read_idx_sint_cached(idx)
+                                                            : static_cast<sint_t>(read_idx_uint_cached(idx)));
+}
+
+double RegVec::read_idx_converted(addr_t idx) {
+    update_idx_cache(idx);
+    return read_idx_converted_cached(idx);
+}
+
+void RegVec::write_vec_converted_cached(const std::vector<double> & vec) {
+    check_vec_len(vec.size());
+    if (m_value_type.kind() == ValueKind::sint_) {
+        std::vector<sint_t> vec_raw;
+        vec_raw.reserve(vec.size());
+        for(double v : vec) { vec_raw.push_back(to_raw_checked(v)); }
+        write_vec_sint_cached(vec_raw);
+    } else {
+        std::vector<uint_t> vec_raw;
+        vec_raw.reserve(vec.size());
+        for(double v : vec) { vec_raw.push_back(static_cast<uint_t>(to_raw_checked(v))); }
+        write_vec_uint_cached(vec_raw);
+    }
+}
+
+void RegVec::write_vec_converted(const std::vector<double> & vec) {
+    write_vec_converted_cached(vec);
+    write_cache();
+}
+
+void RegVec::write_idx_converted_cached(addr_t idx, double value) {
+    sint_t value_raw = to_raw_checked(value);
+    if (m_value_type.kind() == ValueKind::sint_) {
+        write_idx_sint_cached(idx, value_raw);
+    } else {
+        write_idx_uint_cached(idx, static_cast<uint_t>(value_raw));
+    }
+}
+
+void RegVec::write_idx_converted(addr_t idx, double value) {
+    write_idx_converted_cached(idx, value);
+    write_idx_cache(idx);
 }
 
 // Only the written element reaches the device (mirrors python
@@ -673,30 +798,29 @@ std::string RegVec::str_value_cached() const {
     if (has_limit()) {
         Ass limit_ass = ass_check_limit_cached();
         if (limit_ass > ass) { ass = limit_ass; }
-        // Range uses the min/max of the actual vector values (like py).
-        bool first = true;
-        sint_t value_min = 0, value_max = 0;
-        for (addr_t idx = 0; idx < vec_len(); idx++) {
-            sint_t v = (m_value_type.kind() == ValueKind::sint_)
-                ? read_idx_sint_cached(idx)
-                : static_cast<sint_t>(read_idx_uint_cached(idx));
-            if (first) { value_min = value_max = v; first = false; }
-            else { if (v < value_min) value_min = v; if (v > value_max) value_max = v; }
-        }
-        (void)value_min; (void)value_max;
-        int base = (m_value_type.kind() == ValueKind::bits_) ? 16 : 10;
-        ss << "(";
-        if (m_min.has_value()) { ss << str_num(*m_min, m_value_type.elem_width(), base) << " <= "; }
-        ss << "v";
-        if (m_max.has_value()) { ss << " <= " << str_num(*m_max, m_value_type.elem_width(), base); }
-        ss << ") ";
+        // One v_check expression for the whole vector, printed with every
+        // recipe name resolved to a value
+        ss << m_v_check->str << " ";
     }
+    // With a v_convert the user values are printed, the raw ones are
+    // available through the *_raw functions
+    const bool conv = has_v_convert();
+    const int base_conv = (m_value_type.kind() == ValueKind::bits_) ? 16 : 10;
 
     int base = 10;
     if (m_value_type.kind() == ValueKind::bits_) { base = 16; }
     ss << "[ ";
     switch(m_value_type.kind()) {
         case ValueKind::uint_: {
+            if (conv) {
+                bool first = true;
+                for (double v : read_vec_converted_cached()) {
+                    if (!first) { ss << ", "; }
+                    first = false;
+                    ss << value_to_str_from_int(v, m_value_type.elem_width(), base_conv, m_v_type == VType::f);
+                }
+                break;
+            }
             const auto vec = read_vec_uint_cached();
             for (size_t ii = 0; ii < vec.size(); ii++) {
                 if (ii) { ss << ", "; }
@@ -705,6 +829,15 @@ std::string RegVec::str_value_cached() const {
             break;
         }
         case ValueKind::sint_: {
+            if (conv) {
+                bool first = true;
+                for (double v : read_vec_converted_cached()) {
+                    if (!first) { ss << ", "; }
+                    first = false;
+                    ss << value_to_str_from_int(v, m_value_type.elem_width(), base_conv, m_v_type == VType::f);
+                }
+                break;
+            }
             const auto vec = read_vec_sint_cached();
             for (size_t ii = 0; ii < vec.size(); ii++) {
                 if (ii) { ss << ", "; }
@@ -728,6 +861,10 @@ std::string RegVec::str_value_cached() const {
             }
             break;
         };
+        case ValueKind::char_:
+            // Char vectors are printed as a string by the early return above
+            assert(false);
+            break;
     }
     ss << " ]";
     return ss.str();
@@ -736,10 +873,7 @@ std::string RegVec::str_value_cached() const {
 Ass RegVec::ass_check_limit_cached() const {
     Ass ass = Ass::none;
     for (addr_t idx = 0; idx < vec_len(); idx++) {
-        // Signed registers compare as signed, the rest as unsigned.
-        Ass v_ass = (m_value_type.kind() == ValueKind::sint_)
-            ? ass_check_value_limit(read_idx_sint_cached(idx))
-            : ass_check_value_limit_u(read_idx_uint_cached(idx));
+        Ass v_ass = ass_check_value_limit(read_idx_converted_cached(idx));
         if (v_ass > ass) { ass = v_ass; }
     }
     return ass;

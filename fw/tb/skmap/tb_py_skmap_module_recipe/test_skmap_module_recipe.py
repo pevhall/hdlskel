@@ -147,11 +147,24 @@ async def test_skmap_module_test_acc_types(dut):
         # RW_LEN = module.regs_rw_value_type.vec_len 
         # RW_VAL_W = module.regs_rw_value_type.width 
         assert RW_LEN is not None
-        await module.regs_rw_write_idx(0,module.regs_rw_max)
-        await module.regs_rw_write_idx(1,module.regs_rw_min)
+        # the recipe v_check of regs_rw only accepts even values between -2 and
+        # 100, min and max of the register value are replaced by it
+        await module.regs_rw_write_idx(0, 100)
+        await module.regs_rw_write_idx(1, -2)
         for ii in range(2,RW_LEN):
-            await module.regs_rw_write_idx(ii,module.regs_rw_min+10*ii)
+            await module.regs_rw_write_idx(ii,2*ii)
             # await module.regs_rw_write_idx(ii,(1<<RW_VAL_W)-1)
+        # a value that does not pass the v_check is rejected
+        try:
+            await module.regs_rw_write_idx(0, 3)
+            assert False, 'regs_rw_write_idx(0, 3) should have raised, 3 is not even'
+        except ValueError as e:
+            print(f'expected v_check error: {e}')
+        # temp has a v_convert, it works with a float, the raw register is s16
+        await module.temp_write(-4.25)
+        assert await module.temp_read_raw() == -4.25 * 16
+        assert await module.temp_read() == -4.25
+        print(f'{await module.temp_read()=}, {await module.temp_read_raw()=}')
         # print(f'{module.regs_rw_read_cached()=}')
         # print(f'{await module.regs_rw_read()=}')
         # print(f'{await module.regs_ro_read()=}')

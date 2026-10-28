@@ -30,6 +30,9 @@ RegFlags  = reg.RegFlags
 RegFlagsK = reg.RegFlagsK
 RFlag     = reg.RFlag
 RFlagK    = reg.RFlagK
+ValueCheck = reg.ValueCheck
+ValueConvert = reg.ValueConvert
+VType = basic_types.VType
 
 ExternalMem = external_mem.ExternalMem
 

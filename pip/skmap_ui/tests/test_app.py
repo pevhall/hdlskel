@@ -9,7 +9,7 @@ import asyncio
 import itertools
 import re
 
-from skmap import Acc, Ass, Head, RFlag, Reg, RegVec, ValueKind, ValueType
+from skmap import Acc, Ass, Head, RFlag, Reg, RegVec, ValueCheck, ValueConvert, ValueKind, ValueType, VType
 from skmap import register_Module
 from skmap.external_mem import ExternalMemVec
 from skmap_ui import SkmapUiApp
@@ -903,6 +903,7 @@ def make_edit_top():
     vt_u4 = ValueType(kind=ValueKind.uint, width=8, vec_len=4)
     vt_s2 = ValueType(kind=ValueKind.sint, width=8, vec_len=2)
     vt_lmt = ValueType(kind=ValueKind.bits, width=32)
+    vt_s16 = ValueType(kind=ValueKind.sint, width=16)
 
     class _EditTop(_DemoModule):
         mid = edit_mid
@@ -931,20 +932,36 @@ def make_edit_top():
             self._add_reg_var(
                 Reg(
                     self, "LMT", vt_lmt, acc=Acc.rw,
-                    desc="limited", max=100, min=2,
+                    desc="checked",
+                    # a recipe v_check is the value limit of the module user,
+                    # the replaced min / max of the register value are gone
+                    v_check=ValueCheck(lambda v: 2 <= v <= 100, "(v >= 2) && (v <= 100)"),
+                )
+            )
+            self._add_reg_var(
+                Reg(
+                    self, "TEMP", vt_s16, acc=Acc.rw, desc="scaled",
+                    # the value of the module user is a float, the register
+                    # holds it scaled by 16 (a recipe v_convert)
+                    v_type=VType.f,
+                    v_check=ValueCheck(lambda v: -1000 <= v <= 1000,
+                                       "((v >= -1000) && (v <= 1000))", VType.f),
+                    v_convert=ValueConvert(lambda v: v * 16, lambda v: v / 16,
+                                           "(v * 16)", "(v / 16)", VType.f),
                 )
             )
 
     register_Module(_EditTop)
 
     data = (
-        # 16 + 4 + 2 + 4 = 26 bytes of regs, word padded -> 7 words
-        _head_bytes(edit_mid, 1, 0, len_kids=0, len_sub=0, len_k=0, len_var=7)
+        # 16 + 4 + 2 + 4 + 4 = 30 bytes of regs, word padded -> 8 words
+        _head_bytes(edit_mid, 1, 0, len_kids=0, len_sub=0, len_k=0, len_var=8)
         + big.to_bytes(16, "little")
         + bytes([0xAA, 0xBB, 0xCC, 0xDD])
         + bytes([5, 0xAB])  # sint lanes: 5 and -85
         + b"\x00" * 2  # LMT is word aligned
-        + (30).to_bytes(4, "little")  # LMT within [2, 100]
+        + (30).to_bytes(4, "little")  # LMT passes (2 <= 30 <= 100)
+        + (-68).to_bytes(4, "little", signed=True)  # TEMP raw, -68/16 = -4.25
     )
     regio = MemRegio()
     regio.write_mem(0x70000000, data)
@@ -1066,11 +1083,11 @@ def test_value_cells_wrap_over_multiple_lines():
     _run(run())
 
 
-def test_edit_outside_min_max_aborted():
-    """A value outside a reg's configured min / max limits is caught
-    locally (the condition Reg.check_value_limit() would raise on) and
-    the write is aborted before it reaches the device; 't' picks random
-    values within the limits."""
+def test_edit_failing_v_check_aborted():
+    """A value that does not pass the v_check of a reg is caught locally
+    (the condition Reg.check_value_limit() would raise on) and the write
+    is aborted before it reaches the device; triggering picks random
+    values that pass the check."""
     async def run():
         top = make_edit_top()
         app = SkmapUiApp(top)
@@ -1078,7 +1095,7 @@ def test_edit_outside_min_max_aborted():
             await _wait_asserts(app, pilot)
             await _select_node(app, _find_node(app, top), pilot)
             lmt = top.arr_reg_var[3]
-            assert lmt.name == "LMT" and lmt.min == 2 and lmt.max == 100
+            assert lmt.name == "LMT" and lmt.v_check is not None
 
             app.table.focus()
             app.table.move_cursor(row=3, column=0)
@@ -1088,7 +1105,7 @@ def test_edit_outside_min_max_aborted():
             # ceil_div(32, 4) = 8 digits)
             assert app.value_input.value == "0x0000001E"
 
-            # 256 > max 100: rejected, the input stays open for a fix
+            # 256 fails the v_check: rejected, the input stays open for a fix
             app.value_input.value = "0x100"
             await pilot.press("enter")
             await pilot.pause()
@@ -1096,23 +1113,23 @@ def test_edit_outside_min_max_aborted():
             assert app.value_input.value == "0x100"
             assert lmt.read_uint_cached() == 30
 
-            # 1 < min 2: rejected as well
+            # 1 fails the v_check as well
             app.value_input.value = "1"
             await pilot.press("enter")
             await pilot.pause()
             assert app.app.focused is app.value_input
             assert lmt.read_uint_cached() == 30
 
-            # in range: written (the cell shows the limit range prefix)
+            # passing the check: written (the cell shows the check text)
             app.value_input.value = "100"
             await pilot.press("enter")
             await pilot.pause()
             await _wait_cell(
-                app, pilot, 3, VALUE, "(0x00000002 <= v <= 0x00000064) 0x00000064"
+                app, pilot, 3, VALUE, "(v >= 2) && (v <= 100) 0x00000064"
             )
             assert lmt.read_uint_cached() == 100
 
-            # trigger (no longer a key) picks random values within [2, 100]
+            # trigger (no longer a key) picks random values that pass the check
             for _ in range(5):
                 app.table.move_cursor(row=3, column=0)
                 app.action_trigger_selected()
@@ -1121,6 +1138,89 @@ def test_edit_outside_min_max_aborted():
                         break
                     await pilot.pause()
                 assert 2 <= lmt.read_uint_cached() <= 100
+    _run(run())
+
+
+def test_edit_v_convert_float():
+    """A reg with a recipe ``v_convert`` is shown, prefilled and edited with
+    the value of the module user (a float for ``v_type = 'f'``), not with the
+    raw value stored in the register."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            temp = top.arr_reg_var[4]
+            assert temp.name == "TEMP" and temp.has_v_convert
+
+            app.table.focus()
+            app.table.move_cursor(row=4, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            # prefilled with the user value of the raw -68 (a v / 16 inverse)
+            assert app.value_input.value == "-4.25"
+
+            # 1.55 -> raw 24.8, the value of a register is an int
+            app.value_input.value = "1.55"
+            await pilot.press("enter")
+            await pilot.pause()
+            await _wait_cell(
+                app, pilot, 4, VALUE,
+                "((v >= -1000) && (v <= 1000)) 1.5625",
+            )
+            assert temp.read_sint_cached() == 25
+            assert temp.read_converted_cached() == 25 / 16
+
+            # 2000 fails the v_check, the write is aborted
+            app.value_input.value = "2000"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.app.focused is app.value_input
+            assert temp.read_sint_cached() == 25
+
+            # bits display: the raw value of the register, prefixed with the
+            # conversion it stands for (-68 of a 16 bit sint is 0xFFBC)
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.press("v")
+            await pilot.pause()
+            await _wait_cell(app, pilot, 4, VALUE, "={ v * 16 } 0x0019")
+
+            # a hex value writes the bits of the register directly, it does not
+            # go through the conversion (0x10 = 16, not 16 * 16)
+            app.table.move_cursor(row=4, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.value_input.value == "0x0019"  # prefilled with the raw bits
+            app.value_input.value = "0x10"
+            await pilot.press("enter")
+            await pilot.pause()
+            await _wait_cell(app, pilot, 4, VALUE, "={ v * 16 } 0x0010")
+            assert temp.read_sint_cached() == 16
+            assert temp.read_converted_cached() == 1.0
+
+            # every bit pattern that stands for a valid user value can be set,
+            # 0xFFFF is -1 raw, -1/16 for the user
+            app.table.move_cursor(row=4, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            app.value_input.value = "0xFFFF"
+            await pilot.press("enter")
+            await pilot.pause()
+            await _wait_cell(app, pilot, 4, VALUE, "={ v * 16 } 0xFFFF")
+            assert temp.read_sint_cached() == -1
+
+            # 0x7FFF would be 2047.9375 for the user, above the v_check: the
+            # write fails (the reg checks the value the bits stand for)
+            app.table.move_cursor(row=4, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            app.value_input.value = "0x7FFF"
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+            assert temp.read_sint_cached() == -1
     _run(run())
 
 
@@ -1187,14 +1287,14 @@ def test_expand_vec_toggle():
         async with app.run_test(size=(90, 30)) as pilot:
             await _wait_asserts(app, pilot)
             await _select_node(app, _find_node(app, top), pilot)
-            # 4 registers -> 4 rows
-            assert len(app._row_keys) == 4
+            # 5 registers -> 5 rows
+            assert len(app._row_keys) == 5
             assert app._row_reg_idx == {}
             await pilot.press("e")
             await pilot.pause()
             # V4: header + 4 lanes (rows 1-5), S2: header + 2 lanes
-            # (rows 6-8) -> 10 rows
-            assert len(app._row_keys) == 10
+            # (rows 6-8) -> 11 rows
+            assert len(app._row_keys) == 11
             assert app._row_reg_idx == {
                 "r2": 0, "r3": 1, "r4": 2, "r5": 3, "r7": 0, "r8": 1,
             }
@@ -1214,7 +1314,7 @@ def test_expand_vec_toggle():
             # toggle back: one row per register again
             await pilot.press("e")
             await pilot.pause()
-            assert len(app._row_keys) == 4
+            assert len(app._row_keys) == 5
             assert _cell(app, 1, NAME) == "V4"
             assert app._row_reg_idx == {}
     _run(run())
@@ -1266,7 +1366,7 @@ def test_expand_vec_bits_display():
             await pilot.pause()
             await pilot.press("v")
             await pilot.pause()
-            assert len(app._row_keys) == 10
+            assert len(app._row_keys) == 11
             await _wait_cell(app, pilot, 2, VALUE, "0xAA")
             await _wait_cell(app, pilot, 5, VALUE, "0xDD")
             await _wait_cell(app, pilot, 7, VALUE, "0x05")

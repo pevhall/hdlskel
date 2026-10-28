@@ -84,12 +84,19 @@ performs no device reads and does not re-check the asserts, so it can
 neither trigger nor log any new assert (the shown values are just
 refreshed from the updated cache).  Register
 writes (``enter``) are **held** while a read-all / refresh is in
-progress and only go to the device once it has finished.  A value outside a register's configured
-min / max limits is caught locally (the same condition
+progress and only go to the device once it has finished.  A value that does not pass a register's
+configured ``v_check`` is caught locally (the same condition
 ``Reg.check_value_limit()`` raises on) and the write is aborted
-before it reaches the device.  Device I/O errors are reported on the
-console via ``logging`` so the log view only ever contains triggered
-asserts.
+before it reaches the device.  A register with a recipe ``v_convert``
+(see the recipe options ``v_type`` / ``v_check`` / ``v_convert``) is
+edited in the domain of the user of the module: a decimal input is the
+value of the user and the register converts it, a **0x-prefixed (hex)
+input sets the bits of the register directly** (the same as the
+generated ``<reg>_write_*_raw`` functions, no conversion).  In the bits
+(``v``) display such a register shows its raw value, prefixed with the
+conversion it stands for, eg. ``={ v * 16 } 0xFFFFFFBC``.  Device I/O
+errors are reported on the console via ``logging`` so the log view only
+ever contains triggered asserts.
 
 The tree starts fully expanded; ``enter``
 selects the module under the cursor and shows its register map (mirrors
@@ -121,8 +128,8 @@ addr, type, acc, name and description) plus one row per vector index
 header row it opens one input per lane; ``rc`` lanes are cleared
 (writes zero) on ``enter``.  Triggering the selected register row
 (``action_trigger_selected`` — no key): writable registers / flags
-are *written* (a register with min / max limits picks a random value
-*within* the limits), read-only ones are *read* (skmap's "trigger" =
+are *written* (a register with a ``v_check`` picks a random value that
+*passes* it), read-only ones are *read* (skmap's "trigger" =
 register write).  ``tab`` / ``shift+tab`` move the focus between the
 two panels only (the tree and the register map table).  In the bits
 (``v``) display, hex values have ``ceil_div(value_type.width, 4)``
@@ -155,7 +162,7 @@ import random
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 import regio.cli_utils
 import skmap.cli_utils
@@ -252,6 +259,40 @@ def _bits_str(value: int, width: int, kind: ValueKind) -> str:
     if kind is ValueKind.sint and v & (1 << (width - 1)):
         v |= (1 << (hex_digits * 4)) - (1 << width)
     return f"0x{v:0{hex_digits}X}"
+
+
+def _v_convert_marker(reg) -> str:
+    """``={ ... }`` prefix of the ``v_convert`` of a register (empty if it
+    has none).
+
+    The bits (hex) display shows the value *stored in the register*, this
+    says with which conversion it becomes the value of the module user,
+    eg. ``={ v * 16 }`` (as written in the recipe, with every recipe name
+    resolved to its value). Like the ``v_check`` prefix it is printed
+    before the value, so the value stays aligned in the value column.
+    """
+    if not isinstance(reg, Reg) or not reg.has_v_convert:
+        return ''
+    conv = str(reg.v_convert)  # resolved, eg '(v * 16)'
+    if conv.startswith('(') and conv.endswith(')'):
+        conv = conv[1:-1]
+    return f"={{ {conv} }} "
+
+
+def _is_raw_write(reg, text: str) -> bool:
+    """Does ``text`` write the bits of ``reg`` directly?
+
+    A 0x-prefixed (hex) input of a register with a recipe ``v_convert``
+    sets the bits of the register as typed, it does *not* go through the
+    conversion (the same as the generated ``<reg>_write_*_raw``
+    functions).  A decimal input stays in the domain of the user of the
+    module and is converted.
+    """
+    return (
+        isinstance(reg, Reg)
+        and reg.has_v_convert
+        and _is_hex_literal(text.strip())
+    )
 
 
 def _assert_value_str(obj: Union[Reg, RFlag]) -> str:
@@ -826,16 +867,20 @@ class SkmapUiApp(App):
         """
         kind = reg.value_type.kind
         if self._value_bits and kind in (ValueKind.uint, ValueKind.sint):
+            marker = _v_convert_marker(reg)
             if reg.value_type.is_vec:
                 values = reg.read_list_uint_cached()
                 return Text(
-                    "[ "
+                    marker
+                    + "[ "
                     + ", ".join(
                         _bits_str(v, reg.value_type.width, kind) for v in values
                     )
                     + " ]"
                 )
-            return Text(_bits_str(reg.read_uint_cached(), reg.value_type.width, kind))
+            return Text(
+                marker + _bits_str(reg.read_uint_cached(), reg.value_type.width, kind)
+            )
         return Text.from_markup(reg.read_rich_str_cached())
 
     def _reg_lane_value_text(self, reg: Reg, idx: int) -> Text:
@@ -843,7 +888,10 @@ class SkmapUiApp(App):
         register (see ``_reg_value_text``)."""
         kind = reg.value_type.kind
         if self._value_bits and kind in (ValueKind.uint, ValueKind.sint):
-            return Text(_bits_str(reg.read_idx_uint_cached(idx), reg.value_type.width, kind))
+            return Text(
+                _v_convert_marker(reg)
+                + _bits_str(reg.read_idx_uint_cached(idx), reg.value_type.width, kind)
+            )
         return Text(str(reg.read_idx_value_cached(idx)))
 
     def _mem_lane_value_text(self, mem: ExternalMemVec, idx: int) -> Text:
@@ -2073,6 +2121,10 @@ class SkmapUiApp(App):
         Hex for ``bits`` kinds (and for ``uint`` / ``sint`` while the
         ``v`` bits display is on), decimal otherwise — the same number
         bases the table shows.  The input accepts both hex and decimal.
+
+        A reg with a recipe ``v_convert`` is prefilled (and edited) with
+        the value of the module user, the number the table shows, not
+        with the raw value of the register.
         """
         kind = reg.value_type.kind
         if kind is ValueKind.bits or (
@@ -2084,6 +2136,12 @@ class SkmapUiApp(App):
                 else reg.read_uint_cached()
             )
             return _bits_str(raw, reg.value_type.width, kind)
+        if isinstance(reg, Reg) and reg.has_v_convert:
+            # the value of the module user, same as the value column
+            return str(
+                reg.read_converted_idx_cached(idx) if idx is not None
+                else reg.read_converted_cached()
+            )
         value = (
             reg.read_idx_value_cached(idx) if idx is not None
             else reg.read_value_cached()
@@ -2102,6 +2160,9 @@ class SkmapUiApp(App):
             "(0x-hex or decimal"
             + (", sint may be negative)"
                if vt.kind is ValueKind.sint else ")")
+            # say what a hex value means, it writes the bits of the register
+            + (" (0x-hex = bits, no conversion)"
+               if reg.has_v_convert else "")
         )
         # prefill with the current value so it can be edited in place
         self.value_input.value = self._value_str(reg)
@@ -2182,7 +2243,10 @@ class SkmapUiApp(App):
                         name=f"write {obj.name}[{idx}]",
                     )
                 else:
-                    self._write_vec_row(key, obj, [(idx, value)])
+                    self._write_vec_row(
+                        key, obj, [(idx, value)], "WRITE",
+                        raws=[_is_raw_write(obj, event.input.value)],
+                    )
             return
         obj = self._row_objs[self._row_keys[row]]
         if not isinstance(obj, Reg) or obj.acc not in (Acc.rw, Acc.wt):
@@ -2197,19 +2261,24 @@ class SkmapUiApp(App):
         if value is None:
             # keep focus + value so the user can fix the input
             return
+        raw = _is_raw_write(reg, inp.value)
         self.table.focus()
         inp.value = ""
-        self._write_row(row, reg, value, "WRITE")
+        self._write_row(row, reg, value, "WRITE", raw)
 
     async def _submit_vector_edit(self, reg: Reg, lanes) -> None:
-        values = [self._parse_lane(reg, str(l.value)) for l in lanes]
+        texts = [str(l.value) for l in lanes]
+        values = [self._parse_lane(reg, t) for t in texts]
         if any(v is None for v in values):
             # keep focus + values so the user can fix them
             return
+        raws = [_is_raw_write(reg, t) for t in texts]
         row = self.table.cursor_row
         await self._close_vector_inputs()
         self.table.focus()
-        self._write_vec_row(self._row_keys[row], reg, list(enumerate(values)))
+        self._write_vec_row(
+            self._row_keys[row], reg, list(enumerate(values)), "WRITE", raws
+        )
 
     async def on_value_input_canceled(self, event: ValueInput.Canceled) -> None:
         if self.value_inputs.query("ValueInput.lane"):
@@ -2219,9 +2288,13 @@ class SkmapUiApp(App):
         self.table.focus()
 
     @staticmethod
-    def _parse_lane(asset, text: str) -> int | None:
+    def _parse_lane(asset, text: str) -> int | float | None:
         """Parse a value for ``asset`` (Reg or ExternalMemVec): decimal
-        or 0x-prefixed hex.
+        or 0x-prefixed hex, a float for a recipe ``v_type = 'f'``.
+
+        A hex value of a register with a ``v_convert`` is the value of the
+        register (its bits), a decimal value the value of the user of the
+        module, see _is_raw_write.
 
         A ``sint`` value may be negative as decimal (``-8``) or as a hex
         *bit pattern*: a hex value only has to fit the value width, and
@@ -2231,12 +2304,24 @@ class SkmapUiApp(App):
         rejected.
 
         Returns ``None`` if the text does not fit the value kind / width
-        or, for a Reg, outside its configured min / max limits — the
-        same condition ``Reg.check_value_limit()`` would raise on, so
-        the write is aborted before it reaches the device.
+        or, for a Reg, does not pass its ``v_check`` — the same condition
+        ``Reg.check_value_limit()`` would raise on, so the write is
+        aborted before it reaches the device.  The bits of a register with
+        a ``v_convert`` (a hex input, see _is_raw_write) are not checked
+        against the ``v_check`` of the user value they stand for.
         """
         vt = asset.value_type
         t = text.strip()
+        is_reg = isinstance(asset, Reg)
+        # a hex input of a reg with a v_convert writes the bits of the
+        # register, it stays in the domain of the register
+        raw = is_reg and _is_raw_write(asset, t)
+        if is_reg and asset.v_type.is_float and not _is_hex_literal(t):
+            # the value of the module user is a float (recipe v_type 'f')
+            try:
+                return float(t)
+            except ValueError:
+                return None
         try:
             v = int(t, 0)
         except ValueError:
@@ -2254,40 +2339,50 @@ class SkmapUiApp(App):
                 v -= 1 << vt.width
         elif not 0 <= v < (1 << vt.width):
             return None
-        if (
-            isinstance(asset, Reg)
-            and asset.ass_check_value_limit(v) >= Ass.error
-        ):
+        if is_reg and not raw and asset.ass_check_value_limit(v) >= Ass.error:
             return None
         return v
 
-    @staticmethod
-    def _random_limit_value(reg: Reg) -> int | None:
-        """A random trigger value for ``reg``: within the value kind /
-        width range, clamped to the reg's configured min / max limits.
+    # tries to find a value that passes the v_check of a reg
+    _RANDOM_CHECK_TRIES = 64
 
-        Returns ``None`` if the limits leave no valid value.
+    @staticmethod
+    def _random_limit_value(reg: Reg) -> int | float | None:
+        """A random trigger value for ``reg``: within the value kind /
+        width range and passing the ``v_check`` of the reg.
+
+        The value is a value of the module user: a float for a recipe
+        ``v_type = 'f'``, an int otherwise (with a ``v_convert`` the reg
+        converts it when it is written).
+
+        Returns ``None`` if no value passes the ``v_check``.
         """
         vt = reg.value_type
         if vt.kind is ValueKind.sint:
             lo, hi = -(1 << (vt.width - 1)), (1 << (vt.width - 1)) - 1
         else:
             lo, hi = 0, (1 << vt.width) - 1
-        if reg.min is not None:
-            lo = max(lo, reg.min)
-        if reg.max is not None:
-            hi = min(hi, reg.max)
-        if lo > hi:
-            return None
-        return random.randint(lo, hi)
+        for _ in range(SkmapUiApp._RANDOM_CHECK_TRIES):
+            v: int | float = random.randint(lo, hi)
+            if reg.v_type.is_float:
+                v = float(v) + random.random()
+            if reg.ass_check_value_limit(v) >= Ass.error:
+                continue
+            if reg.has_v_convert:
+                # the converted value has to fit the register too
+                try:
+                    reg.check_value_fits_reg(reg.to_raw(v))
+                except ValueError:
+                    continue
+            return v
+        return None
 
     @staticmethod
-    def _parse_value(reg: Reg, text: str) -> int | None:
+    def _parse_value(reg: Reg, text: str) -> int | float | None:
         """Parse the input text for a scalar ``reg``.
 
-        Accepts decimal or 0x-prefixed hex.  Returns ``None`` if the
-        text does not fit the register (sint regs may be negative,
-        min / max limits included — see ``_parse_lane``).
+        Accepts decimal or 0x-prefixed hex (and a float for a recipe
+        ``v_type = 'f'``, see ``_parse_lane``).
         """
         return SkmapUiApp._parse_lane(reg, text)
 
@@ -2297,11 +2392,13 @@ class SkmapUiApp(App):
         reg: Reg,
         pairs: list[tuple[int, int]],
         op: str = "WRITE",
+        raws: Optional[list[bool]] = None,
     ) -> None:
         """Write (idx, value) lanes of a vector register to the device,
-        async (see ``_write_vec_row_async``)."""
+        async (see ``_write_vec_row_async``).  ``raws`` marks the lanes
+        that set the bits of the register directly (see _is_raw_write)."""
         self._run_regio(
-            self._write_vec_row_async(key, reg, pairs, op),
+            self._write_vec_row_async(key, reg, pairs, op, raws),
             name=f"{op.lower()} {reg.name}",
         )
 
@@ -2311,16 +2408,20 @@ class SkmapUiApp(App):
         )
         self._write_row(row, reg, value, "CLEAR")
 
-    def _write_row(self, row: int, reg: Reg, value, op: str) -> None:
+    def _write_row(self, row: int, reg: Reg, value, op: str, raw: bool = False) -> None:
         """Write ``value`` (or zero for ``CLEAR``) to the device, async.
 
         Uses skmap's non-cached ``write_*`` so the write reaches the
         regio (firmware / cache file); the row is then refreshed with a
         non-cached read so the table shows the real device state.
+
+        ``raw`` writes the bits of the register directly, without the
+        ``v_convert`` of the recipe (see _is_raw_write).
         """
         key = self._row_keys[row]
         self._run_regio(
-            self._write_row_async(key, reg, value, op), name=f"write {reg.name}"
+            self._write_row_async(key, reg, value, op, raw),
+            name=f"write {reg.name}",
         )
 
     async def _wait_refresh_idle(self) -> None:
@@ -2331,21 +2432,30 @@ class SkmapUiApp(App):
         while not self._refresh_idle.is_set():
             await self._refresh_idle.wait()
 
-    async def _write_row_async(self, key: str, reg: Reg, value, op: str) -> None:
+    async def _write_row_async(
+        self, key: str, reg: Reg, value, op: str, raw: bool = False
+    ) -> None:
         # hold the write until an in-flight refresh has finished
         await self._wait_refresh_idle()
-        # abort values outside the reg's configured min / max limits
-        # before the write (Reg.check_value_limit() would raise)
+        # abort values that do not pass the v_check of the reg before the
+        # write (Reg.check_value_limit() would raise). A raw write is not
+        # checked here: its value is the bits of the register, the reg
+        # checks the user value those bits stand for.
         values = value if isinstance(value, list) else [value]
-        if any(reg.ass_check_value_limit(v) >= Ass.error for v in values):
+        if not raw and any(reg.ass_check_value_limit(v) >= Ass.error for v in values):
             logging.warning(
-                "%s to %s @ %s aborted: value outside [%s, %s]",
-                op, reg.name, hex(reg.addr), reg.min, reg.max,
+                "%s to %s @ %s aborted: value does not pass the check '%s'",
+                op, reg.name, hex(reg.addr),
+                reg.v_check if reg.v_check is not None else '<no check>',
             )
             return
         try:
             if op == "CLEAR":
                 await self._regio(reg.write_zero())
+            elif reg.has_v_convert and not raw:
+                # the UI writes the value of the module user, the reg converts
+                # it with the recipe v_convert
+                await self._regio(reg.write_converted(value))
             elif isinstance(value, list):
                 if reg.value_type.kind is ValueKind.sint:
                     await self._regio(reg.write_list_sint(value))
@@ -2364,31 +2474,53 @@ class SkmapUiApp(App):
         await self._read_row_async(key, reg)
 
     async def _write_vec_row_async(
-        self, key: str, reg: Reg, pairs: list[tuple[int, int]], op: str = "WRITE"
+        self,
+        key: str,
+        reg: Reg,
+        pairs: list[tuple[int, int]],
+        op: str = "WRITE",
+        raws: Optional[list[bool]] = None,
     ) -> None:
         """Write the given (idx, value) lanes one at a time:
-        ``write_idx_uint`` / ``write_idx_sint`` (chosen by the value
-        kind), then read the register back (updates the register's own
-        row and every lane row)."""
+        ``write_idx_uint`` / ``write_idx_sint`` for a raw lane (the bits of
+        the register, what the generated ``*_write_*_raw`` functions call),
+        ``write_idx_converted`` for a lane of a reg with a ``v_convert``,
+        else the ``write_idx_*`` of the value kind. Then read the register
+        back (updates the register's own row and every lane row)."""
+        if raws is None:
+            raws = [False] * len(pairs)
+        assert len(raws) == len(pairs), \
+            f'{reg.name}: {len(pairs)} lanes, {len(raws)} raw flags' 
         # hold the write until an in-flight refresh has finished
         await self._wait_refresh_idle()
-        # abort values outside the reg's configured min / max limits
-        # before the write (see _write_row_async)
-        if any(reg.ass_check_value_limit(v) >= Ass.error for _idx, v in pairs):
+        # abort values that do not pass the v_check of the reg before the
+        # write (see _write_row_async, a raw lane is not checked here)
+        if any(
+            reg.ass_check_value_limit(v) >= Ass.error
+            for (idx, v), raw in zip(pairs, raws)
+            if not raw
+        ):
             logging.warning(
-                "%s to %s @ %s aborted: value outside [%s, %s]",
-                op, reg.name, hex(reg.addr), reg.min, reg.max,
+                "%s to %s @ %s aborted: value does not pass the check '%s'",
+                op, reg.name, hex(reg.addr),
+                reg.v_check if reg.v_check is not None else '<no check>',
             )
             return
-        writer = (
-            reg.write_idx_sint
-            if reg.value_type.kind is ValueKind.sint
-            else reg.write_idx_uint
-        )
+
+        def writer(idx: int, raw: bool):
+            if raw or not reg.has_v_convert:
+                # the bits of the register, without the v_convert
+                return (
+                    reg.write_idx_sint
+                    if reg.value_type.kind is ValueKind.sint
+                    else reg.write_idx_uint
+                )
+            return reg.write_converted_idx
+
         try:
             async with self._regio_lock:
-                for idx, value in pairs:
-                    await writer(idx, value)
+                for (idx, value), raw in zip(pairs, raws):
+                    await writer(idx, raw)(idx, value)
         except Exception as err:  # noqa: BLE001
             logging.warning(
                 "%s to %s @ %s failed: %s", op, reg.name, hex(reg.addr), err
@@ -2514,7 +2646,7 @@ class SkmapUiApp(App):
             values = value if isinstance(value, list) else [value]
             if any(v is None for v in values):
                 logging.warning(
-                    "trigger of %s @ %s skipped: no value fits its min / max limits",
+                    "trigger of %s @ %s skipped: no value fits the check / width of the register",
                     reg.name, hex(reg.addr),
                 )
                 return
@@ -2537,7 +2669,7 @@ class SkmapUiApp(App):
             value = self._random_limit_value(reg)
             if value is None:
                 logging.warning(
-                    "trigger of %s[%d] @ %s skipped: no value fits its min / max limits",
+                    "trigger of %s[%d] @ %s skipped: no value fits the check / width of the register",
                     reg.name, idx, hex(reg.addr),
                 )
                 return

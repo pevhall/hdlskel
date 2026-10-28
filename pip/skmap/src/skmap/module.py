@@ -262,6 +262,11 @@ class Module(ABC):
         self._byte_idx_align_addr_width(reg.value_type.width)
         reg.addr = self._byte_idx + self._base_addr
         self._arr_reg_k.append(reg)
+        if reg.v_check is not None:
+            # A constant is normally not checked, a recipe `v_check` opts this
+            # register into the assert scan (see check_assert_cached), which
+            # validates the value the firmware reported
+            self._arr_reg_var_ass.append(reg)
         # self.map_reg_k[reg.name] = reg
         self._byte_idx_add_reg(reg)
         self._byte_idx_align_addr_width(reg.value_type.width)

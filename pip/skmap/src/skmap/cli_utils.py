@@ -1,7 +1,7 @@
 import argparse
 import logging
 # import importlib
-from typing import Optional
+from typing import Optional, Union
 
 from regio.tcp import PORT_DEFAULT
 from regio import RegioOptions
@@ -21,21 +21,29 @@ from pathlib import Path
 def auto_int(s : str) -> int:
     return int(s, 0)
 
-def parse_args(parser : Optional[argparse.ArgumentParser] = None, return_parser : bool = False):
+def add_parser_args_make_module(parser : argparse.ArgumentParser, add_addr : bool = True) -> argparse.ArgumentParser:
+
+    regio.cli_utils.add_parser_args(parser)
+
+    if add_addr:
+        parser.add_argument(
+            "-a", "--addr",
+            type=auto_int,
+            default=0,
+            help="Regio Address # (defaults to 0)"
+        )
+
+    return parser
+
+def parse_args_skmap_cli_main(parser : Optional[argparse.ArgumentParser] = None, return_parser : bool = False)  -> Union[argparse.Namespace, argparse.ArgumentParser]:
     if parser is None:
         parser = argparse.ArgumentParser(
             prog="Skmap Utility",
             description="Interact with skamp regio server or cached skmap files"
         )
 
-    regio.cli_utils.add_parser_args(parser)
-
-    parser.add_argument(
-        "-a", "--addr",
-        type=auto_int,
-        default=0,
-        help="Regio Address" # (defaults to 0)"
-    )
+    parser = add_parser_args_make_module(parser=parser, add_addr=True)
+    assert(isinstance(parser, argparse.ArgumentParser))
 
     parser.add_argument(
         "-m", "--map",

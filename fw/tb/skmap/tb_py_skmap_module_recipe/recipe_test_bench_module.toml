@@ -9,17 +9,21 @@ fw_opts = { size_reserved=0x1000}
 ipkg = [
   # {name = "INT_11", value = 11 },
   {name = "INT_2", value = 2 },
+  {name = "INT_16", value = "{INT_2*8}" },
   # {name = "INT_33", value = "{INT11}*{INT3}" },
   {name = "INT_11", value = 11 },
   {name = "INT_33", value = "{INT_11*3}" },
   {name = "INT_TEST", value = "{$clog2(INT_11+$cdiv(1+INT_11*3-2,INT_2))}" },
-  {name = "STR_TESTING", value = "TESTING" }
+  {name = "STR_TESTING", value = "TESTING" },
+  {name = "RW_MULT",   value = 2, desc = "RW mutliple"},
 ]
 
 k = [
   {name = "RO_LEN",   t = "u{4 + 4}", desc = "RO length"},
   {name = "RO_VAL_W", t = "u8", desc = "RO value width"},
-  {name = "RW_LEN",   t = "u8", desc = "RW length"},
+  # v_check is the value limit of a register, it replaces the old min / max
+  # options. v is the register value, its type comes from v_type (here u8 -> 'u')
+  {name = "RW_LEN",   t = "u8", desc = "RW length", v_check="{ (v % RW_MULT) == 0}"},
   {name = "RW_VAL_W", t = "u8", desc = "RW value width"},
   {name = "MEM_RW_VAL_W", t = "u8", desc = "MEM RW value width"},
   {name = "MEM_RW_LEN", t = "u8", desc = "MEM RW length"},
@@ -47,7 +51,12 @@ var = [
      { name = "ctrl_flag_16_vec", bit = 16, desc = "ctrl_flag_vec 16", vec_len = 5},
   ]},
   {name = "regs_ro",  t = "[{RO_LEN}]s{RO_VAL_W}", ass = "debug", acc = "ro", desc = "RO registers"},
-  {name = "regs_rw",  t = "[{RW_LEN}]s{RW_VAL_W}", acc = "rw", desc = "RW registers", min = "{-1*INT_2}", max=100},
+  # The old min = "{-1*INT_2}" / max = 100 range is now one v_check expression
+  {name = "regs_rw",  t = "[{RW_LEN}]s{RW_VAL_W}", acc = "rw", desc = "RW registers", v_check="{ (v >= (-1*INT_2)) && (v <= 100) && ((v % RW_MULT) == 0) }"},
+  # A float register: v_type "f" makes v a float (a double in c++), v_convert
+  # converts the user value into the register value (v * 16) and a read uses its
+  # inverse (v / 16), so writing 1.5 stores 24 and reading gives 1.5 back.
+  {name = "temp",     t = "s16", acc = "rw", desc = "Temp, Q4 float scale", v_type = "f", v_convert = "{ v * INT_16 }", v_check = "{ (v >= -1000) && (v <= 1000) }"},
   {name = "regs_wt",  t = "b5", acc = "wt", desc = "WT registers", fw_init="k_int"},
   {name = "regs_rc",  t = "[{RW_LEN}]s{RW_VAL_W}", acc = "rc", desc = "RC registers"},
   # {name = "reg_s_wt",  t = "s40", acc = "wt", desc = "RC registers"},
