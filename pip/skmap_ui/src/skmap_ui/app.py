@@ -84,8 +84,8 @@ lane row steps that lane, the header row of a vector every lane, and a
 value that does not pass the ``v_check`` of the register is not
 written.  Holding ``+`` / ``-`` is safe: a press only *queues* the
 step and a single pump worker runs the steps one at a time (each write
-and its read-back finishes before the next step computes its value
-from the updated cache), so holding a key writes a strictly stepping
+finishes — updating the skmap cache — before the next step computes
+its value from that cache), so holding a key writes a strictly stepping
 series of values to the device — never overlapping operations, never
 the same value twice in a row.  The ``C`` (clear RC) key is *write-only*: it calls ``Module.clear_reg_rc()`` on
 the *shown* module and ``Module.clear_assert_tree()`` on the top
@@ -151,7 +151,7 @@ register / flag / mem device accesses use skmap's async *non-cached*
 regio reads/writes (never ``*_cached``), so the value really goes to
 / comes from the regio (live TCP server or cache file) and the skmap
 cache is refreshed; ``k`` (hardwired) and ``na`` (no access) assets
-are never read back.  Everything is resizable with the mouse: the
+are never read from the device.  Everything is resizable with the mouse: the
 divider between tree and table, the one between the table and the log,
 and the boundary between the *Value* and the *Description* column of the
 register map (double-click that boundary to give the value column its
@@ -732,7 +732,7 @@ class SkmapUiApp(App):
         self._regio_lock = asyncio.Lock()
         # '+' / '-' key steps queued as (obj, key, idx, delta) jobs, run
         # one at a time by a single pump worker (_step_pump): each write
-        # (and its read-back) finishes before the next step starts, so
+        # (and its cache update) finishes before the next step starts, so
         # holding a key writes a strictly stepping series of values and
         # never writes the same value twice in a row (the stepped value
         # is computed when the job RUNS, not when the key was pressed)
@@ -1950,8 +1950,8 @@ class SkmapUiApp(App):
 
         A press does NOT start the device I/O directly: the step is
         queued and a single pump worker (_step_pump) runs the steps one
-        at a time — each write (and its read-back) finishes before the
-        next queued step computes its value from the now-updated cache.
+        at a time — each write finishes (updating the skmap cache) before
+        the next queued step computes its value from the now-updated cache.
         Holding '+' or '-' therefore writes a strictly stepping series
         of values, never the same value twice in a row (and never N
         overlapping device operations).
@@ -2016,8 +2016,8 @@ class SkmapUiApp(App):
     async def _step_pump(self) -> None:
         """Run the queued '+' / '-' steps one at a time (see _queue_step).
 
-        Each step — write and read-back — completes before the next
-        queued step computes its stepped value from the (now updated)
+        Each step — the write and its cache update — completes before the
+        next queued step computes its stepped value from the (now updated)
         cache, so holding a key writes a strictly stepping series of
         values instead of N overlapping writes of the same value.
         """
@@ -2228,21 +2228,40 @@ class SkmapUiApp(App):
                 "read of %s failed: %s", getattr(obj, "name", "?"), err
             )
             return
+        self._refresh_rows_from_cache(key, obj)
+        if log_asserts:
+            self._log_read_asserts(obj)
+
+    def _refresh_rows_from_cache(self, key: str, obj: RowObj) -> None:
+        """Refresh the shown table cells of a row's asset from the skmap
+        cache — no device I/O.
+
+        A write already updates the skmap cache, so after a write the
+        shown value is refreshed straight from it (there is no read-back
+        from the device).  A flag row (a RegFlags, or one of its RFlag
+        bits) refreshes every flag under the RegFlags, a lane row just
+        that lane.
+        """
+        flag_reg = (
+            obj.reg_flags
+            if isinstance(obj, RFlag)
+            else (obj if isinstance(obj, RegFlags) else None)
+        )
         if flag_reg is not None:
             self._update_flags_reg_rows(flag_reg)
         elif self._row_objs.get(key) is not obj:
             return  # the row was replaced meanwhile (module switched)
-        elif mem_idx is not None:
-            self._update_row_value(key, self._mem_lane_value_text(obj, mem_idx))
+        elif isinstance(obj, ExternalMemVec):
+            idx = self._row_mem_idx.get(key)
+            if idx is not None:
+                self._update_row_value(key, self._mem_lane_value_text(obj, idx))
         elif isinstance(obj, ExternalMem):
-            data = obj.read_cached(0, n)
+            data = obj.read_cached(0, min(8, obj.size))
             self._update_row_value(
                 key, Text(f"(Mem {data.hex(' ')})", style="dim")
             )
         else:
             self._update_reg_rows(obj)
-        if log_asserts:
-            self._log_read_asserts(obj)
 
     def _log_read_asserts(self, obj: RowObj) -> None:
         """After a read, append any triggered assert of the read asset to
@@ -2858,8 +2877,9 @@ class SkmapUiApp(App):
                 "%s to %s @ %s failed: %s", op, reg.name, hex(reg.addr), err
             )
             return
-        # read the value back from the device (updates the cache too)
-        await self._read_row_async(key, reg)
+        # the write updated the skmap cache: refresh the shown value from
+        # it (no read-back from the device)
+        self._refresh_rows_from_cache(key, reg)
 
     async def _write_vec_row_async(
         self,
@@ -2873,8 +2893,8 @@ class SkmapUiApp(App):
         ``write_idx_uint`` / ``write_idx_sint`` for a raw lane (the bits of
         the register, what the generated ``*_write_*_raw`` functions call),
         ``write_idx_converted`` for a lane of a reg with a value conversion,
-        else the ``write_idx_*`` of the value kind. Then read the register
-        back (updates the register's own row and every lane row)."""
+        else the ``write_idx_*`` of the value kind. The shown cells are
+        then refreshed from the skmap cache (no read-back)."""
         if raws is None:
             raws = [False] * len(pairs)
         assert len(raws) == len(pairs), \
@@ -2914,15 +2934,16 @@ class SkmapUiApp(App):
                 "%s to %s @ %s failed: %s", op, reg.name, hex(reg.addr), err
             )
             return
-        # read the value back from the device (updates the cache too)
-        await self._read_row_async(key, reg)
+        # the write updated the skmap cache: refresh the shown value (and
+        # every lane row) from it (no read-back from the device)
+        self._refresh_rows_from_cache(key, reg)
 
     async def _write_mem_lanes_async(
         self, mem: ExternalMemVec, pairs: list[tuple[str, int, int]]
     ) -> None:
         """Write (row key, lane, value) pairs to an ExternalMemVec with
         ``write_idx_uint`` / ``write_idx_sint`` (chosen by the value
-        kind), then read the lanes back from the device."""
+        kind), then refresh the shown lanes from the skmap cache."""
         # hold the write until an in-flight refresh has finished
         await self._wait_refresh_idle()
         writer = (
@@ -2943,16 +2964,11 @@ class SkmapUiApp(App):
                 err,
             )
             return
+        # refresh the shown lanes from the cache (the write updated it;
+        # there is no read-back from the device)
         for key, idx, _value in pairs:
             if self._row_objs.get(key) is not mem:
                 continue  # the view was switched meanwhile
-            try:
-                await self._regio(mem.read_idx_bytes(idx))
-            except Exception as err:  # noqa: BLE001
-                logging.warning("read of %s[%d] failed: %s", mem.name, idx, err)
-                continue
-            if self._row_objs.get(key) is not mem:
-                continue
             self._update_row_value(key, self._mem_lane_value_text(mem, idx))
 
     def _clear_mem_lanes(
@@ -2973,7 +2989,7 @@ class SkmapUiApp(App):
     async def _clear_mem_lanes_async(
         self, mem: ExternalMemVec, pairs: list[tuple[str, int]]
     ) -> None:
-        """Write zero to the lanes, then read them back from the device."""
+        """Write zero to the lanes, then refresh them from the skmap cache."""
         # hold the write until an in-flight refresh has finished
         await self._wait_refresh_idle()
         writer = (
@@ -2990,14 +3006,9 @@ class SkmapUiApp(App):
                 "clear of %s @ %s failed: %s", mem.name, hex(mem.base_addr), err
             )
             return
+        # refresh the shown lanes from the cache (the write updated it;
+        # there is no read-back from the device)
         for key, idx in pairs:
-            if self._row_objs.get(key) is not mem:
-                continue
-            try:
-                await self._regio(mem.read_idx_bytes(idx))
-            except Exception as err:  # noqa: BLE001
-                logging.warning("read of %s[%d] failed: %s", mem.name, idx, err)
-                continue
             if self._row_objs.get(key) is not mem:
                 continue
             self._update_row_value(key, self._mem_lane_value_text(mem, idx))
@@ -3099,8 +3110,9 @@ class SkmapUiApp(App):
                 reg.name, flag.name, hex(reg.addr), err,
             )
             return
-        # read the value back from the device (updates the cache too)
-        await self._read_row_async(key, flag)
+        # the write updated the skmap cache: refresh the whole RegFlags
+        # (its header row and every flag under it) from it (no read-back)
+        self._refresh_rows_from_cache(key, flag)
 
     def _trigger_mem(self, row: int, mem: ExternalMem) -> None:
         """Trigger an external mem row: read it from the device (a lane

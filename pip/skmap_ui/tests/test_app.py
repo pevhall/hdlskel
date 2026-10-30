@@ -658,8 +658,8 @@ def test_trigger_writable_reg():
             app.table.move_cursor(row=1, column=0)
 
             # async: the (random) write reaches the (fake) device in a
-            # worker; the read-back updates the skmap cache. The trigger
-            # writes a random value, so it can (very unlikely) pick the value
+            # worker; the write updates the skmap cache (no read-back). The
+            # trigger writes a random value, so it can (very unlikely) pick the value
             # that is already there, another trigger picks a different one.
             for _try in range(3):
                 app.action_trigger_selected()
@@ -670,8 +670,7 @@ def test_trigger_writable_reg():
                 if v_reset.read_uint_cached() != before:
                     break
             assert v_reset.read_uint_cached() != before
-            # the cell shows the value as read back from the (fake) device
-            # the cell shows the value as read back from the (fake) device,
+            # the cell shows the written value (from the skmap cache),
             # the number of hex digits comes from the width of the register
             await _wait_cell(
                 app, pilot, 1, VALUE,
@@ -909,7 +908,7 @@ def test_enter_edits_rw_value():
                     break
                 await pilot.pause()
             assert ctrl.read_uint_cached() == 0x2F
-            # the cell is refreshed by the device read-back
+            # the cell is refreshed from the skmap cache (no read-back)
             await _wait_cell(app, pilot, 1, VALUE, "0x0000002F")
 
     _run(run())
@@ -938,7 +937,7 @@ def test_enter_clears_rc_value():
                     break
                 await pilot.pause()
             assert v_event.read_uint_cached() == 0
-            # the cell is refreshed by the device read-back
+            # the cell is refreshed from the skmap cache (no read-back)
             # (V_EVENT has an ass, so the cell carries the ass prefix)
             from rich.text import Text
 
@@ -1516,7 +1515,7 @@ def test_expand_vec_toggle():
 def test_expand_vec_lane_edit():
     """enter on a lane row of an expanded vector register prefills and
     edits just that lane (write_idx_uint); the header row and the other
-    lanes are updated by the read-back, the untouched lanes keep their
+    lanes are updated from the register cache, the untouched lanes keep their
     values."""
     async def run():
         top = make_edit_top()
@@ -1670,7 +1669,7 @@ def test_bits_display_sign_extends_sint():
 def test_edit_scalar_sint_negative_decimal():
     """A sint scalar accepts a negative decimal: the value is written
     with Reg.write_sint and the device holds the two's-complement bits
-    (12-bit -8 -> 0xFF8), read back as the signed value."""
+    (12-bit -8 -> 0xFF8), interpreted as the signed value."""
     async def run():
         top = make_sintw_top()
         app = SkmapUiApp(top)
@@ -2605,7 +2604,7 @@ def _row_of_mem(app, mem, lane=None) -> int:
 
 
 async def _settles(pilot, cond, n=500) -> None:
-    """Wait until ``cond()`` holds (a device write + read back is async)."""
+    """Wait until ``cond()`` holds (the device write is async, via a worker)."""
     for _ in range(n):
         if cond():
             return
@@ -3244,9 +3243,9 @@ def test_regio_tab_footer_and_clear():
 
 def test_step_keys_hold_writes_each_value_once():
     """Holding '+' / '-' must not fire overlapping device operations:
-    the step pump runs the queued steps one at a time — each write (and
-    its read-back) finishes and the next step computes its value from
-    the updated cache — so the device sees a strictly stepping series
+    the step pump runs the queued steps one at a time — each write
+    finishes (updating the cache) and the next step computes its value from
+    that cache — so the device sees a strictly stepping series
     and the same value is never written twice in a row."""
 
     async def run():
@@ -3283,7 +3282,7 @@ def test_step_keys_hold_writes_each_value_once():
 
             start = v_reset.read_uint_cached()
             # holding '+': four presses queue up (all land before the
-            # first write + read-back can finish)
+            # first write can finish)
             await pilot.press("+", "+", "+", "+")
             for _ in range(1000):  # wait for the step queue to drain
                 if not app._step_queue and not app._step_pumping:
@@ -3449,5 +3448,70 @@ def test_value_col_resize_refits_row_heights():
             app.table.reset_value_col_width()
             await pilot.pause()
             assert app.table.get_row_height("r0") >= 2
+
+    _run(run())
+
+
+def test_write_does_not_read_back():
+    """Writing a value must NOT issue a device read: the write already
+    updates the skmap cache, so the shown value is refreshed straight
+    from the cache (no read-back transaction on the regio)."""
+
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(140, 36)) as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            await pilot.pause()
+
+            v_reset = next(
+                o
+                for o in app._row_objs.values()
+                if getattr(o, "name", "") == "V_RESET"
+            )
+            key = next(k for k, o in app._row_objs.items() if o is v_reset)
+            row = app._row_keys.index(key)
+            app.table.focus()
+            app.table.move_cursor(row=row, column=0)
+            await pilot.pause()
+
+            # count every device read / write from here on
+            reads: list[int] = []
+            writes: list[int] = []
+            real_read = top._regio.dev_read
+            real_write = top._regio.dev_write
+
+            async def spy_read(addr, size):
+                reads.append(addr)
+                return await real_read(addr, size)
+
+            async def spy_write(addr, data):
+                writes.append(addr)
+                return await real_write(addr, data)
+
+            top._regio.dev_read = spy_read
+            top._regio.dev_write = spy_write
+
+            # write a new value through the value input line
+            await pilot.press("enter")          # open + focus the input
+            await pilot.pause()
+            reads.clear()                       # ignore any prefill read
+            app.value_input.value = "0x1234"
+            await pilot.press("enter")          # submit -> write
+
+            for _ in range(500):                # wait for the write
+                if v_reset.read_uint_cached() == 0x1234:
+                    break
+                await pilot.pause()
+            assert v_reset.read_uint_cached() == 0x1234
+
+            # the value really went to the device ...
+            assert writes, "expected a device write"
+            # ... and NOT one read was issued for it (no read-back)
+            assert not reads, f"a write must not read back, got {reads}"
+
+            # the shown cell is refreshed from the cache (no read needed)
+            await _wait_cell(app, pilot, row, VALUE, "0x00001234")
 
     _run(run())
