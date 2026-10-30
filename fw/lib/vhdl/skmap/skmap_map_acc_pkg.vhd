@@ -288,10 +288,12 @@ package body skmap_map_acc_pkg is
       if b = 0 then
         val := k_vec_int_io(reg_idx);
       end if;
-      if b /= 31 then
-        val := val + to_int(val_i(ii))*2**b;
-      else
-        val := val + (-2147483648); -- -2**31 Max negetive int32 value
+      if val_i(ii) then
+        if b /= 31 then
+          val := val + 2**b;
+        else
+          val := val + (-2147483648); -- -2**31 Max negetive int32 value
+        end if;
       end if;
       inc(b);
       if b = 32 then

@@ -2,6 +2,7 @@
 #include "hdlskel/skmap/reg.hpp"
 #include "hdlskel/skmap/module.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <iomanip>
@@ -26,8 +27,8 @@ inline sint_t sint_sign_extend_w(uint64_t value, int w) {
 
 namespace hdlskel::skmap {
 
-// Round half away from zero, like python round() on a float. A v_convert with
-// a float v_type decides the register value with this.
+// Round half away from zero, like python round() on a float. A v_convert_wr
+// with a float v_type decides the register value with this.
 sint_t v_round_to_int(float_t value) {
     return static_cast<sint_t>(value >= 0 ? std::floor(value + 0.5) : std::ceil(value - 0.5));
 }
@@ -165,8 +166,9 @@ void Reg::write_uint_cached(uint_t value) {
         throw std::runtime_error("uint_t not large enough to fit register");
     }
     check_value_fits(value);
-    // The raw value is the user value when there is no v_convert, with one the
-    // written value has to be a raw value that came from a valid user value.
+    // The raw value is the user value when there is no v_convert_wr, with one
+    // the written value has to be a raw value that came from a valid user
+    // value (it is converted back with v_convert_rd and checked).
     check_value_limit(from_raw(static_cast<sint_t>(value)));
     memcpy_to_cache(&value);
 }
@@ -208,8 +210,9 @@ void Reg::write_char(char v) {
 }
 // Mirrors Reg.write_zero_cached in pip/skmap/src/skmap/reg.py: zeros in the
 // cache only. write_zero() is this followed by a device write.
-// Raw byte access to the cache of the register, it bypasses v_check and
-// v_convert, mirrors Reg.read_bytes_cached / Reg.write_bytes_cached in python
+// Raw byte access to the cache of the register, it bypasses v_check and the
+// value conversion (v_convert_wr / v_convert_rd), mirrors
+// Reg.read_bytes_cached / Reg.write_bytes_cached in python
 // (fw can put any value in a register, the reads report it as an assert).
 std::span<const std::byte> Reg::read_bytes_cached() const {
     return cache_data();
@@ -283,7 +286,7 @@ void Reg::check_value_limit(float_t value) const {
         std::stringstream ss;
         ss << "v_check failed for reg \"" << m_name << "\"";
         if (m_v_check.has_value()) {
-            ss << " (" << m_v_check->str << ")";
+            ss << " (" << resolve_expr_names(m_v_check->str) << ")";
         }
         ss << ", value " << value;
         throw std::runtime_error(ss.str());
@@ -296,15 +299,55 @@ bool Reg::has_limit() const {
         && m_v_check.has_value();
 }
 
-// ---------- v_convert ----------
+// ---------- v_convert_wr / v_convert_rd ----------
+
+std::string Reg::resolve_expr_names(std::string text) const {
+    if (!m_module) {
+        return text;
+    }
+    auto is_ident = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+    };
+    // The k registers of the module, a name is replaced as a whole word only
+    // (RW_LEN is the suffix of MEM_RW_LEN)
+    for (const auto & reg_k : m_module->vec_k()) {
+        const std::string name = reg_k->name();
+        if (name.empty()) {
+            continue;
+        }
+        std::string value;
+        try {
+            value = (reg_k->value_type().kind() == ValueKind::sint_)
+                      ? std::to_string(reg_k->read_sint_cached())
+                      : std::to_string(reg_k->read_uint_cached());
+        } catch (...) {
+            continue;
+        }
+        size_t pos = 0;
+        while ((pos = text.find(name, pos)) != std::string::npos) {
+            const size_t end = pos + name.size();
+            const bool word_left  = (pos == 0) || !is_ident(text[pos-1]);
+            const bool word_right = (end >= text.size()) || !is_ident(text[end]);
+            if (word_left && word_right) {
+                text.replace(pos, name.size(), value);
+                pos += value.size();
+            } else {
+                pos = end;
+            }
+        }
+    }
+    return text;
+}
 
 std::string Reg::v_convert_marker() const {
     if (!m_v_convert.has_value()) {
         return "";
     }
-    // the recipe source with every recipe name resolved to its value, eg
+    // the write side (v_convert_wr) with every parameter resolved to its
+    // number (the k registers of the module are resolved here, only `v`
+    // stays), eg
     // "(v * 16)", printed the way a recipe writes it: ={ v * 16 }
-    std::string conv = m_v_convert->str;
+    std::string conv = resolve_expr_names(m_v_convert->str);
     if (conv.size() > 2 && (conv.front() == '(' || conv.front() == '{')
         && (conv.back() == ')' || conv.back() == '}')) {
         conv = conv.substr(1, conv.size() - 2);
@@ -415,7 +458,7 @@ std::string str_num(sint_t value, addr_t width, int base) {
 
 // Mirrors skmap.value_to_str_from_int: a float v_type prints as a float_t,
 // everything else keeps the register formatting. Used to print the value a
-// v_convert gives the module user.
+// v_convert_rd gives the module user.
 std::string value_to_str_from_int(float_t value, addr_t width, int base, bool v_type_is_float) {
     if (v_type_is_float) {
         std::ostringstream oss;
@@ -475,9 +518,9 @@ std::string Reg::str_value_cached() const {
     if (has_limit()) {
         Ass limit_ass = ass_check_limit_cached();
         if (limit_ass > ass) { ass = limit_ass; }
-        // The v_check is printed as its expression, with every recipe name
-        // resolved to a value, so it prints without the recipe
-        ss << m_v_check->str << " ";
+        // The v_check is printed as its expression, every parameter resolved
+        // to a number (see resolve_expr_names), only `v` stays
+        ss << resolve_expr_names(m_v_check->str) << " ";
     }
     if (has_v_convert()) {
         // The user value is printed, the raw one is available through the
@@ -728,7 +771,7 @@ void RegVec::write_idx_sint_cached(addr_t idx, sint_t val) {
     memcpy_idx_to_cache(&val, idx);
 }
 
-// ---------- v_convert of a vector register, applied to every element ----------
+// ---------- v_convert_wr / v_convert_rd of a vector register, applied to every element ----------
 
 std::vector<float_t> RegVec::read_vec_converted_cached() const {
     std::vector<float_t> vec;
@@ -815,10 +858,10 @@ std::string RegVec::str_value_cached() const {
         Ass limit_ass = ass_check_limit_cached();
         if (limit_ass > ass) { ass = limit_ass; }
         // One v_check expression for the whole vector, printed with every
-        // recipe name resolved to a value
-        ss << m_v_check->str << " ";
+        // parameter resolved to a number (see resolve_expr_names)
+        ss << resolve_expr_names(m_v_check->str) << " ";
     }
-    // With a v_convert the user values are printed, the raw ones are
+    // With a value conversion the user values are printed, the raw ones are
     // available through the *_raw functions
     const bool conv = has_v_convert();
     const int base_conv = (m_value_type.kind() == ValueKind::bits_) ? 16 : 10;

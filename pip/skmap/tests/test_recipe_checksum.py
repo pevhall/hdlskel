@@ -88,13 +88,13 @@ def test_access_is_hashed(tmp_path):
     assert len(checksums) == 3
 
 def test_recipe_names_are_hashed_by_value(tmp_path):
-    """An ipkg constant used in a `v_check` / `v_convert` is hashed as its
+    """An ipkg constant used in a `v_check` / `v_convert_wr` is hashed as its
     value: the same conversion written with a name or with the number has the
     same checksum, a different value of that name has not."""
     check = ', v_type="f", v_check="{ (v >= -100) && (v <= 100) }"'
-    by_name  = checksum_of(tmp_path, t = 's16', v_extra=check + ', v_convert="{ v * SCALED }"')
-    by_value = checksum_of(tmp_path, t = 's16', v_extra=check + ', v_convert="{ v * 2 }"')
-    other    = checksum_of(tmp_path, t = 's16', value = 8, v_extra=check + ', v_convert="{ v * SCALED }"')
+    by_name  = checksum_of(tmp_path, t = 's16', v_extra=check + ', v_convert_wr="{ v * SCALED }"')
+    by_value = checksum_of(tmp_path, t = 's16', v_extra=check + ', v_convert_wr="{ v * 2 }"')
+    other    = checksum_of(tmp_path, t = 's16', value = 8, v_extra=check + ', v_convert_wr="{ v * SCALED }"')
     assert by_name == by_value
     assert by_name != other
 
@@ -121,8 +121,15 @@ def test_v_check_is_hashed(tmp_path):
 
 def test_v_convert_is_hashed(tmp_path):
     v_check = ', v_type="f", v_check="{ (v >= -1000) && (v <= 1000) }"'
-    assert checksum_of(tmp_path, t = 's16', v_extra=v_check + ', v_convert="{ v * 16 }"') != \
-           checksum_of(tmp_path, t = 's16', v_extra=v_check + ', v_convert="{ v * 8 }"')
+    assert checksum_of(tmp_path, t = 's16', v_extra=v_check + ', v_convert_wr="{ v * 16 }"') != \
+           checksum_of(tmp_path, t = 's16', v_extra=v_check + ', v_convert_wr="{ v * 8 }"')
+
+def test_v_convert_wr_and_rd_have_the_same_checksum(tmp_path):
+    """`v_convert_wr` and `v_convert_rd` are inverses of each other, one of
+    them is always derived from the other, so the same conversion written from
+    either side is the same module and has the same checksum."""
+    assert checksum_of(tmp_path, t = 's16', v_extra=', v_type="f", v_convert_wr="{ v * 16 }"') == \
+           checksum_of(tmp_path, t = 's16', v_extra=', v_type="f", v_convert_rd="{ v / 16 }"')
 
 def test_v_type_is_hashed(tmp_path):
     """`v_type` says what the value of the module user is (an unsigned int, a

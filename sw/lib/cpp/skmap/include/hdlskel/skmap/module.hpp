@@ -122,6 +122,10 @@ public:
     void write_zero_all_rc();
     // Regs that have an ass level or min/max limits (checked by check_assert_*).
     const std::vector<std::shared_ptr<Reg>> & arr_reg_var_ass() const { return m_arr_reg_var_ass; }
+    // The constant (k) registers of the module, their values are reported by
+    // the firmware (used to resolve the k names of printed v_check /
+    // v_convert_wr / v_convert_rd expressions, see Reg::resolve_expr_names).
+    const std::vector<std::shared_ptr<Reg>> & vec_k() const { return m_vec_k; }
 
     // --- Printing ---
     std::string info_line_str() const;

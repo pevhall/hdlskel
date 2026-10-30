@@ -106,13 +106,14 @@ check_has "external mem rows"           "Mem size:"                 "$TMP/recipe
 # value (the recipe is not needed to print a module): min / max of the register
 # value are replaced by the v_check of the value of the module user
 check_has_f "v_check of regs_rw shown"  "(((v >= (-1 * 2)) && (v <= 100)) && ((v % 2) == 0))" "$TMP/recipe.txt"
-# temp has a v_convert, the map shows the value of the module user (a float),
+# temp has a v_convert_wr, the map shows the value of the module user (a float),
 # not the raw value of the register
-check_has_f "v_convert prints the user value" "((v >= -1000) && (v <= 1000)) -4.25" "$TMP/recipe.txt"
-# the description of a reg with a v_convert starts with the conversion (like
-# the python reg map), the marker is not printed anywhere else
-check_has_f "v_convert in the description" "={ v * 16 } Temp, Q4 float scale" "$TMP/recipe.txt"
-check_absent_f "no marker for a reg without a v_convert" "={ v * 16 } RW registers" "$TMP/recipe.txt"
+check_has_f "v_convert_wr prints the user value" "((v >= -1000) && (v <= (10 * 32))) -4.25" "$TMP/recipe.txt"
+# the description of a reg with a value conversion starts with it (like
+# the python reg map), the marker is not printed anywhere else, the k
+# parameter RO_VAL_W (12) is resolved in the marker
+check_has_f "value conversion in the description" "={ v * 12 } Temp, float scale" "$TMP/recipe.txt"
+check_absent_f "no marker for a reg without a conversion" "={ v * 12 } RW registers" "$TMP/recipe.txt"
 # RW_LEN has v_check="{ (v % RW_MULT) == 0}" and the firmware value 3 is odd, so
 # the worst assert of the module is the error of that failed check
 check_has "asserts listed"              "Asserts (max error)"       "$TMP/recipe.txt"
@@ -206,10 +207,10 @@ check_has    "info logging with -vv"      "Creating module" "$TMP/vv.txt"
 
 echo
 echo "--- skmap: recipe value check (C++ unit test) ---"
-# The recipe v_check / v_convert options (ValueCheck / ValueConvert): a failing
-# check is an assert when reading and rejects a write, a v_convert converts the
+# The recipe v_check / v_convert_wr / v_convert_rd options (ValueCheck / ValueConvert):
+# a failing check is an assert when reading and rejects a write, v_convert_wr
 # written value and every read. Also runnable with `meson test -C build`.
-check "v_check / v_convert unit test" "$BUILD/test/test_skmap_check" "$RECIPE"
+check "v_check / v_convert_wr unit test" "$BUILD/test/test_skmap_check" "$RECIPE"
 
 echo
 echo "--- error handling ---"

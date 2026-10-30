@@ -21,11 +21,13 @@ class RFlag;
 // an individual RFlag of a RegFlags reg.
 using RegOrFlag = std::variant<std::shared_ptr<Reg>, std::shared_ptr<RFlag>>;
 
-// v_check / v_convert of the recipe, mirrors skmap.ValueCheck / ValueConvert in
-// the python library: the value of the module user and the value of the
-// register are two different things. `v_check` validates the user value,
-// `v_convert` converts between the user value and the value of the register
-// (every read applies its inverse).
+// v_check / v_convert_wr / v_convert_rd of the recipe, mirrors skmap.ValueCheck /
+// ValueConvert in the python library: the value of the module user and the
+// value of the register are two different things. `v_check` validates the user
+// value, `v_convert_wr` (write side) converts the user value into the value of
+// the register and `v_convert_rd` (read side) is its inverse, applied by every
+// read. A register has at most one of the two conversion sides in the recipe,
+// the other one is derived while parsing it.
 //
 // The user value travels as a float_t in both directions: for an integer v_type
 // the functions receive and return integral values, see VType.
@@ -53,10 +55,11 @@ struct ValueCheck {
 };
 
 struct ValueConvert {
-    // user value -> value of the register, may return a fractional value, the
-    // Reg rounds it like the python runtime does
+    // user value -> value of the register (`v_convert_wr` of the recipe), may
+    // return a fractional value, the Reg rounds it like the python runtime does
     std::function<float_t(float_t)> to_raw;
-    // value of the register -> user value, the inverse of to_raw
+    // value of the register -> user value (`v_convert_rd` of the recipe), the
+    // inverse of to_raw
     std::function<float_t(sint_t)> from_raw;
     // both directions as text with every recipe name resolved to its value
     std::string str;
@@ -113,25 +116,34 @@ public:
     void write_bool(bool v);
     void write_char(char v);
     void write_zero();
-    // Raw bytes of the register, they bypass v_check and v_convert (the same
-    // access a firmware can do), mirrors Reg.read_bytes_cached and
-    // Reg.write_bytes_cached in python.
+    // Raw bytes of the register, they bypass v_check and the value conversion
+    // v_convert_wr / v_convert_rd (the same access a firmware can do), mirrors
+    // Reg.read_bytes_cached and Reg.write_bytes_cached in python.
     std::span<const std::byte> read_bytes_cached() const;
     void write_bytes_cached(std::span<const std::byte> data);
     // Zeros in the cache only, mirrors Reg.write_zero_cached in python
     // (write_zero() is this followed by a device write).
     void write_zero_cached();
 
-    // v_convert (see the recipe): the functions without a postfix work with
-    // the value of the module user (v_check it, then convert it, a read
-    // converts with the inverse), the *_raw functions bypass the conversion.
+    // value conversion of the recipe (v_convert_wr / v_convert_rd): the
+    // functions without a postfix work with the value of the module user
+    // (v_check it, convert it with v_convert_wr, a read converts with
+    // v_convert_rd), the *_raw functions bypass the conversion.
     bool has_v_convert() const { return m_v_convert.has_value(); }
-    // `={ v * 16 } ` text of the v_convert, '' when there is none: printed at
-    // the start of the description in the reg map, like desc_cell() of
-    // pip/skmap/src/skmap/reg_map_table.py
+    // `={ v * 16 } ` text of the write side (v_convert_wr), '' when there is
+    // none: printed at the start of the description in the reg map, like
+    // desc_cell() of pip/skmap/src/skmap/reg_map_table.py
     std::string v_convert_marker() const;
+    // Resolve the parameters of a printed v_check / v_convert_wr /
+    // v_convert_rd expression to their numbers: the ipkg values are already
+    // numbers in the text, a k register has its value only at runtime (the
+    // firmware reports it) so its name is resolved here from the cache of the
+    // module. Only the value parameter v stays. Mirrors Reg.resolve_expr_names
+    // in python.
+    std::string resolve_expr_names(std::string text) const;
     float_t to_raw(float_t value) const;
-    // v_check the user value, convert it and check that it fits the register
+    // v_check the user value, convert it with v_convert_wr and check that it
+    // fits the register
     sint_t to_raw_checked(float_t value) const;
     float_t from_raw(sint_t value) const;
     float_t read_converted_cached() const;
@@ -157,7 +169,7 @@ public:
     // OverflowError from int.to_bytes(self.size).
     void check_value_fits(uint_t value) const;
     void check_value_fits(sint_t value) const;
-    // Same for the value of the register of a v_convert write
+    // Same for the value of the register of a v_convert_wr write
     void check_value_fits_reg(sint_t value) const;
     Ass ass() const { return m_ass; }
     const std::optional<ValueCheck> & v_check() const { return m_v_check; }
@@ -230,8 +242,8 @@ public:
     void write_str(const std::string & str);
  
     void update_idx_cache(addr_t idx);
-    // Raw bytes of one element, they bypass v_check and v_convert (like python
-    // RegVec.read_idx_bytes_cached / write_idx_bytes_cached)
+    // Raw bytes of one element, they bypass v_check and the value conversion
+    // (like python RegVec.read_idx_bytes_cached / write_idx_bytes_cached)
     std::span<const std::byte> read_idx_bytes_cached(addr_t idx) const;
     void write_idx_bytes_cached(addr_t idx, std::span<const std::byte> data);
     uint_t read_idx_uint_cached(addr_t idx) const;
@@ -245,7 +257,8 @@ public:
     void write_idx_sint_cached(addr_t idx, sint_t val);
     void write_idx_sint(addr_t idx, sint_t val);
 
-    // v_convert of the recipe, same as Reg, applied to every element
+    // value conversion of the recipe (v_convert_wr / v_convert_rd), same as
+    // Reg, applied to every element
     std::vector<float_t> read_vec_converted_cached() const;
     std::vector<float_t> read_vec_converted();
     void write_vec_converted_cached(const std::vector<float_t> & vec);
@@ -385,7 +398,8 @@ inline std::shared_ptr<RegVec> make_reg_vec(const std::string & name, Acc acc, V
     std::optional<ValueConvert> v_convert = std::nullopt, VType v_type = VType::s) {
     return std::make_shared<RegVec>(name, acc, value_type, desc, ass, v_check, v_convert, v_type);
 }
-// A constant register has no v_convert, only a v_check of the value the firmware reports
+// A constant register has no value conversion (v_convert_wr / v_convert_rd),
+// only a v_check of the value the firmware reports
 inline std::shared_ptr<Reg> make_reg_k(const std::string & name, ValueType value_type, const std::string & desc,
     std::optional<ValueCheck> v_check = std::nullopt, VType v_type = VType::s) {
     return make_reg(name, Acc::k, value_type, desc, Ass::none, v_check, std::nullopt, v_type);

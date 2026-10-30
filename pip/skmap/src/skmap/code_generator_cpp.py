@@ -56,7 +56,7 @@ def to_cpp_source(node: ResolvableT) -> str:
             # C++ has no ** operator, std::pow returns double, recipe math is integer
             return f'static_cast<int>(std::pow({to_cpp_source(node.lhs)}, {to_cpp_source(node.rhs)}))'
         if node.op == BultiInOperation.div and contains_float_value(node):
-            # The inverse of a float v_convert divides an integer register value,
+            # A float v_convert_rd divides an integer register value,
             # it has to be a float division (the recipe `/` is an integer one).
             return f'(static_cast<float_t>({to_cpp_source(node.lhs)}) / {to_cpp_source(node.rhs)})'
         return f'({to_cpp_source(node.lhs)} {node.op} {to_cpp_source(node.rhs)})'
@@ -118,9 +118,10 @@ def is_vec_int(t : Union[ValueType, ValueTypeUnresolved]) -> bool:
 def value_check_str_cpp(reg : RecipeReg) -> str:
     """The `v_check` ctor argument (a ValueCheck), 'std::nullopt' when there is none.
 
-    The lambda gets the user value as `v`, recipe k / ipkg values are read
-    through `this`. An integer v_type gets an `sint_t v`, a float one a
-    `float_t v` (ValueCheck takes both).
+    The lambda gets the user value as `v`, recipe k / ipkg values can be used
+    as parameters of the expression and are read through `this`. An integer
+    v_type gets an `sint_t v`, a float one a `float_t v` (ValueCheck takes
+    both).
     """
     if reg.v_check is None:
         return 'std::nullopt'
@@ -135,19 +136,21 @@ def value_check_str_cpp(reg : RecipeReg) -> str:
 def value_convert_str_cpp(reg : RecipeReg) -> str:
     """The `v_convert` ctor argument (a ValueConvert), 'std::nullopt' when there is none.
 
-    The first lambda converts the user value into the value of the register,
-    the second one is its inverse and is used by every read, both are generated
-    from the same recipe expression.
+    The first lambda is the write side, it converts the user value into the
+    value of the register (`v_convert_wr` of the recipe), the second one is the
+    read side used by every read (`v_convert_rd` of the recipe). The recipe
+    gives one of them, the other side is its derived inverse, both are
+    generated from the same parsed pair.
     """
-    if reg.v_convert is None:
+    if reg.v_convert_wr is None:
         return 'std::nullopt'
     v_arg = 'float_t v' if reg.v_type.is_float else 'sint_t v'
-    return (f'ValueConvert{{[this]({v_arg}) {{ return {to_cpp_source(reg.v_convert)}; }}, '
-            f'[this](sint_t v) {{ return {to_cpp_source(reg.v_convert_inv)}; }}, '
-            f'"{reg.v_convert_str}", "{reg.v_convert_inv_str}", VType::{reg.v_type.value}}}')
+    return (f'ValueConvert{{[this]({v_arg}) {{ return {to_cpp_source(reg.v_convert_wr)}; }}, '
+            f'[this](sint_t v) {{ return {to_cpp_source(reg.v_convert_rd)}; }}, '
+            f'"{reg.v_convert_wr_str}", "{reg.v_convert_rd_str}", VType::{reg.v_type.value}}}')
 
 def has_v_convert(reg : RecipeReg) -> bool:
-    return getattr(reg, 'v_convert', None) is not None
+    return getattr(reg, 'v_convert_wr', None) is not None
 
 def value_user_ret_type_str_cpp(reg : RecipeReg, wr : bool = False, ignore_vec : bool = False) -> str:
     """Return / argument type of the user facing functions, see the recipe v_type."""
@@ -196,9 +199,9 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     func_write_idx = f'write_idx_{kind_f_s}'
 
     s = ''
-    # A register with a v_convert converts in the default functions and gives
-    # the plain register value in the *_raw ones, all other registers only have
-    # the functions below, with their original names.
+    # A register with a v_convert_wr / v_convert_rd converts in the default
+    # functions and gives the plain register value in the *_raw ones, all
+    # other registers only have the functions below, with their original names.
     sfx = '_raw' if has_v_convert(reg) else ''
     s += f'    //{reg.name}: {reg.desc}\n'
     s += f'    std::shared_ptr<{reg_inst_type_str(reg)}> {reg.name}_inst() const {{ return {reg_name}; }}\n'
@@ -253,14 +256,14 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
     if has_v_convert(reg):
         # The functions above bypass the value conversion, the ones below take
         # and give the value of the module user: v_check it, then convert it
-        # with v_convert, a read converts with the inverse of v_convert.
+        # with v_convert_wr, a read converts with v_convert_rd.
         t_user     = value_user_ret_type_str_cpp(reg)
         t_user_wr  = value_user_ret_type_str_cpp(reg, wr=True)
         t_user_one = value_user_ret_type_str_cpp(reg, ignore_vec=True)
-        s += f'    // {reg.name}: value conversion, see the recipe v_convert / v_type\n'
+        s += f'    // {reg.name}: value conversion, see the recipe v_convert_wr / v_convert_rd / v_type\n'
         match reg.acc:
             case Acc.k:
-                assert False, 'a constant register cannot have a v_convert'
+                assert False, 'a constant register cannot have a value conversion'
             case Acc.ro | Acc.rc | Acc.rw | Acc.wt:
                 s += f'    {t_user} {reg.name}_read_cached() const {{ return {reg_name}->read_converted_cached(); }}\n'
                 if reg.acc == Acc.rc:
@@ -551,9 +554,10 @@ bool {recipe.sw_module}::registered = Module::register_module(std::make_shared<{
                 t_str = value_type_str(varv.t)
                 reg_make = 'make_reg_vec' if varv.t.is_vec else 'make_reg'
                 extra = ''
-                if varv.ass != Ass.none or varv.v_check is not None or varv.v_convert is not None:
-                    # the value options are v_check / v_convert, the replaced
-                    # min and max of the register value are gone
+                if varv.ass != Ass.none or varv.v_check is not None or varv.v_convert_wr is not None:
+                    # the value options are v_check / v_convert_wr /
+                    # v_convert_rd, the replaced min and max of the register
+                    # value are gone
                     ass_s = f'Ass::{varv.ass.to_str()}'
                     extra = (f', {ass_s}, {value_check_str_cpp(varv)}, {value_convert_str_cpp(varv)}'
                              f', VType::{varv.v_type.value}')

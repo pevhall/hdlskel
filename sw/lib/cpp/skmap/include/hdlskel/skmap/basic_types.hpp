@@ -124,6 +124,11 @@ enum class VType {
 };
 using uint_t = uint64_t;
 using sint_t = int64_t;
+// User value type of VType::f. <cmath> / <math.h> also define a ::float_t
+// (there: the type a float expression is evaluated in, a double on this
+// platform). This alias lives in the hdlskel::skmap namespace and shadows it
+// on purpose: the two agree on being a double, and it keeps the user value
+// type of the generated code in a single place.
 using float_t = double;
 std::string str(VType v);
 // Default v_type of a register: the signedness of its value type

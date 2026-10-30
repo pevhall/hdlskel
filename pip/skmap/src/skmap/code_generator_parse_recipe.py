@@ -16,7 +16,8 @@ from .basic_types import Acc, Ass, ValueKind, ValueType, SKMAP_ID_LEN, SKMAP_VER
 from .head import SIZE_CHECKSUM
 from .code_generator_parse_resolvable import (
     ResolvableT, make_resolvable_function, BultiInOperation, parse_resolvable, NameToKT,
-    VType, value_kind_to_v_type, parse_resolvable_v_check, parse_resolvable_v_convert,
+    VType, value_kind_to_v_type, parse_resolvable_v_check,
+    parse_resolvable_v_convert_wr, parse_resolvable_v_convert_rd,
     resolvable_to_int, resolvable_print_source,
 )
 
@@ -84,13 +85,13 @@ class RecipeK:
         flags, flags_width  = parse_recipe_flags(d, name_to_k=name_to_k)
         self.flags : Optional[list[RecipeFlag]] = flags
         # `v_check` is the value limit of the register (it replaces the old
-        # `min` / `max` options), `v_convert` maps the user value to the value
-        # stored in the register, see parse_recipe_v_options
+        # `min` / `max` options), `v_convert_wr` / `v_convert_rd` map the user
+        # value to the value stored in the register, see parse_recipe_v_options
         (self.v_type, self.v_check, self.v_check_str,
-         self.v_convert, self.v_convert_str,
-         self.v_convert_inv, self.v_convert_inv_str) = parse_recipe_v_options(d, name_to_k, self.t.kind, self.flags is not None)
-        assert self.v_convert is None, \
-            f'v_convert is not supported on constant registers ({self.name}), it converts values written to the module'
+         self.v_convert_wr, self.v_convert_wr_str,
+         self.v_convert_rd, self.v_convert_rd_str) = parse_recipe_v_options(d, name_to_k, self.t.kind, self.flags is not None)
+        assert self.v_convert_wr is None and self.v_convert_rd is None, \
+            f'v_convert_wr / v_convert_rd is not supported on constant registers ({self.name}), they convert values written to the module'
         if self.t.width is not None:
             if self.flags is not None:
                 if isinstance(flags_width, int) and isinstance(self.t.width, int):
@@ -315,26 +316,43 @@ def parse_recipe_flags(d : dict, name_to_k : NameToKT) -> tuple[Optional[list[Re
     return flags, width
 
 def parse_recipe_v_options(d : dict, name_to_k : NameToKT, value_kind, is_flag : bool) -> tuple[VType, Optional[ResolvableT], Optional[str], Optional[ResolvableT], Optional[str], Optional[ResolvableT], Optional[str]]:
-    """Parse the optional `v_type`, `v_check` and `v_convert` recipe options.
+    """Parse the optional `v_type`, `v_check`, `v_convert_wr` and
+    `v_convert_rd` recipe options.
 
-    Returns (v_type, v_check, v_check_str, v_convert, v_convert_str,
-    v_convert_inv, v_convert_inv_str):
+    Returns (v_type, v_check, v_check_str, v_convert_wr, v_convert_wr_str,
+    v_convert_rd, v_convert_rd_str):
 
-      * `v_type`    type of the value parameter `v`, 'u', 's' or 'f' (float, a
-                    float_t in c++), defaults to the type of the register
-      * `v_check`   boolean expression of `v`, the value limits, replacing the
-                    old `min` / `max` options, eg v_check="{ v <= 100 }".
-                    A value that fails it is an assert on a read and is
-                    rejected on a write.
-      * `v_convert` int expression of `v` converting a user value into the raw
-                    register value, eg v_convert="{ v * 8 }". A read uses the
-                    inverse, which is derived here and returned as `v_convert_inv`.
+      * `v_type`        type of the value parameter `v`, 'u', 's' or 'f'
+                        (float, a float_t in c++), defaults to the type of the
+                        register
+      * `v_check`       boolean expression of `v`, the value limits, replacing
+                        the old `min` / `max` options, eg v_check="{ v <= 100 }".
+                        A value that fails it is an assert on a read and is
+                        rejected on a write.
+      * `v_convert_wr`  int expression of `v` converting a user value into the
+                        raw register value (write side), eg
+                        v_convert_wr="{ v * 8 }". The read side is its inverse,
+                        derived here and returned as `v_convert_rd`.
+      * `v_convert_rd`  the inverse form, it converts the raw register value
+                        into the user value (read side), eg
+                        v_convert_rd="{ v / 8 }". The write side is derived as
+                        its inverse and returned as `v_convert_wr`.
 
-    The `_str` texts have every name resolved to a value (a `v_check` using an
-    ipkg scale prints the scale, not its name) and are used for printing and
-    error messages.
+    `v_convert_wr` and `v_convert_rd` are inverses of each other, a register
+    can have at most one of them, the other side is always derived (both
+    directions are returned in both cases).
+
+    All three expressions can use the constants of the recipe as parameters,
+    the `ipkg` values and the `k` registers, next to the value `v`.
+
+    The `_str` texts have the parameters resolved to numbers: the `ipkg`
+    values resolve here, a `k` register has its value only at runtime (it is
+    reported by the firmware) so it keeps its name in the text and the
+    runtime resolves it when the expression is printed (see
+    Reg.resolve_expr_names in the python and c++ libraries). The value
+    parameter `v` is never simplified.
     """
-    for opt in ('v_type', 'v_check', 'v_convert'):
+    for opt in ('v_type', 'v_check', 'v_convert_wr', 'v_convert_rd'):
         assert not is_flag or opt not in d, \
             f'{opt} is not supported on flag registers ({d["name"]})'
     # min / max of the register value and the first version of the value check
@@ -344,21 +362,34 @@ def parse_recipe_v_options(d : dict, name_to_k : NameToKT, value_kind, is_flag :
             (f'{removed} is not a recipe option anymore ({d["name"]}), '
              f'write the same limit as a v_check of the value v, '
              f'eg. min = 2, max = 100 becomes v_check="{{ (v >= 2) && (v <= 100) }}"')
+    assert 'v_convert' not in d, \
+        (f'v_convert is not a recipe option anymore ({d["name"]}), it is split into '
+         f'its two sides: v_convert_wr (value_convert_write_side) converts the user '
+         f'value into the register value, v_convert_rd (value_convert_read_side) is '
+         f'its inverse and converts the register value into the user value')
+    assert not ('v_convert_wr' in d and 'v_convert_rd' in d), \
+        (f'{d["name"]}: v_convert_wr and v_convert_rd are inverses of each other, '
+         f'give at most one of them and the other side is derived')
     v_type = VType.from_str(d['v_type']) if 'v_type' in d else value_kind_to_v_type(value_kind)
     if 'v_check' in d:
         v_check, v_check_str = parse_resolvable_v_check(d['v_check'], name_to_k, v_type)
     else:
         v_check, v_check_str = None, None
-    if 'v_convert' in d:
+    if 'v_convert_wr' in d or 'v_convert_rd' in d:
+        given = 'v_convert_wr' if 'v_convert_wr' in d else 'v_convert_rd'
         assert v_check is not None or v_type.is_float, \
-            f'v_convert of {d["name"]} needs a v_check or a float v_type'
-        v_convert, v_convert_str, v_convert_inv, v_convert_inv_str = \
-            parse_resolvable_v_convert(d['v_convert'], name_to_k, v_type)
+            f'{given} of {d["name"]} needs a v_check or a float v_type'
+        if 'v_convert_wr' in d:
+            v_convert_wr, v_convert_wr_str, v_convert_rd, v_convert_rd_str = \
+                parse_resolvable_v_convert_wr(d['v_convert_wr'], name_to_k, v_type)
+        else:
+            v_convert_wr, v_convert_wr_str, v_convert_rd, v_convert_rd_str = \
+                parse_resolvable_v_convert_rd(d['v_convert_rd'], name_to_k, v_type)
     else:
         assert v_type.is_float is False, \
-            f'{d["name"]}: a float register (v_type="f") needs a v_convert to map it to the register value'
-        v_convert = v_convert_str = v_convert_inv = v_convert_inv_str = None
-    return v_type, v_check, v_check_str, v_convert, v_convert_str, v_convert_inv, v_convert_inv_str
+            f'{d["name"]}: a float register (v_type="f") needs a v_convert_wr or a v_convert_rd to map it to the register value'
+        v_convert_wr = v_convert_wr_str = v_convert_rd = v_convert_rd_str = None
+    return v_type, v_check, v_check_str, v_convert_wr, v_convert_wr_str, v_convert_rd, v_convert_rd_str
 
 class RecipeVar:
 
@@ -376,11 +407,11 @@ class RecipeVar:
         flags, flags_width  = parse_recipe_flags(d, name_to_k=name_to_k)
         self.flags : Optional[list[RecipeFlag]] = flags
         # `v_check` is the value limit of the register (it replaces the old
-        # `min` / `max` options), `v_convert` maps the user value to the value
-        # stored in the register, see parse_recipe_v_options
+        # `min` / `max` options), `v_convert_wr` / `v_convert_rd` map the user
+        # value to the value stored in the register, see parse_recipe_v_options
         (self.v_type, self.v_check, self.v_check_str,
-         self.v_convert, self.v_convert_str,
-         self.v_convert_inv, self.v_convert_inv_str) = parse_recipe_v_options(d, name_to_k, self.t.kind, self.flags is not None)
+         self.v_convert_wr, self.v_convert_wr_str,
+         self.v_convert_rd, self.v_convert_rd_str) = parse_recipe_v_options(d, name_to_k, self.t.kind, self.flags is not None)
 
         if self.t.width is not None:
             if self.flags is not None:
@@ -427,6 +458,9 @@ class Recipe:
         self.k    : list[RecipeK]    = []
         self.var  : list[RecipeVar]  = []
         self.name_to_k : NameToKT = {}
+        # every name of the recipe (ipkg, k, var and mem), they have to be
+        # unique, see _check_unique_name
+        self._names : set[str] = set()
 
         # if 'with_external_mem' in d:
         #     self.with_external_mem = d['with_external_mem']
@@ -458,24 +492,37 @@ class Recipe:
         if 'ipkg' in d:
             for dnv in d['ipkg']:
                 ipkgv = RecipeIpkg(dnv, self.name_to_k)
-                assert ipkgv.name not in self.name_to_k
+                self._check_unique_name(ipkgv.name, 'ipkg')
                 self.ipkg.append(ipkgv)
                 self.name_to_k[ipkgv.name] = ipkgv
 
         for dkv in d['k']:
             kv = RecipeK(dkv, self.name_to_k)
+            self._check_unique_name(kv.name, 'k')
             self.k.append(kv)
             self.name_to_k[kv.name] = kv
 
         for dvv in d['var']:
-            self.var.append(RecipeVar(dvv, self.name_to_k))
+            varv = RecipeVar(dvv, self.name_to_k)
+            self._check_unique_name(varv.name, 'var')
+            self.var.append(varv)
 
         self.mem = []
         if 'mem' in d:
             for memv in d['mem']:
-                self.mem.append(RecipeMem(memv, self.name_to_k))
+                memv_parsed = RecipeMem(memv, self.name_to_k)
+                self._check_unique_name(memv_parsed.name, 'mem')
+                self.mem.append(memv_parsed)
 
         self._checksum = self._caculate_checksum()
+
+    def _check_unique_name(self, name : str, kind : str):
+        """Every name of the recipe (ipkg, k, var and mem) has to be unique, a
+        duplicate is an error and not a silent overwrite."""
+        if name in self._names:
+            raise ValueError(f'recipe has a duplicate name {name!r} (in {kind}), '
+                             f'the ipkg, k, var and mem names have to be unique')
+        self._names.add(name)
 
     def _checksum_update_reg(self, m, r):
         """Update the checksum with one register (a `k` or a `var` entry)."""
@@ -485,14 +532,20 @@ class Recipe:
         md5_update(m, checksum_hash_of(r.t.width))
         # The vector length is part of the layout of the module (how many
         # elements a register has), the assert level, the value type (v_type),
-        # the value check (v_check) and the value conversion (v_convert) are
-        # baked into the generated code of the firmware and the software, so a
-        # module and the code that parses it have to agree on all of them.
+        # the value check (v_check) and the value conversions (v_convert_wr /
+        # v_convert_rd) are baked into the generated code of the firmware and
+        # the software, so a module and the code that parses it have to agree
+        # on all of them.
         md5_update(m, checksum_hash_of(r.t.vec_len))
         md5_update(m, checksum_hash_of(getattr(r, 'ass', Ass.none)))
         md5_update(m, checksum_hash_of(r.v_type))
         md5_update(m, checksum_hash_of(r.v_check_str))
-        md5_update(m, checksum_hash_of(r.v_convert_str))
+        # v_convert_wr and v_convert_rd are inverses of each other, one of
+        # them is always derived from the other, hashing one of the two sides
+        # hashes the conversion pair (a recipe that gives the read side gets
+        # the same checksum as the one that writes the same conversion as the
+        # write side)
+        md5_update(m, checksum_hash_of(r.v_convert_wr_str))
         # the flags of a flag register (a flag is only visible through its
         # register, its bit, length and assert belong to the module)
         if r.flags is None:
@@ -515,7 +568,7 @@ class Recipe:
         ipkg / `k` constants (and the type of their value), and for every
         register the name, the access type, the value kind, width and vector
         length, the assert level, the value options (`v_type`, `v_check`,
-        `v_convert`) and the flags.
+        `v_convert_wr` / `v_convert_rd`) and the flags.
 
         Not hashed: the *value* of the ipkg / `k` constants (a constant value
         is a parameter of the design, changing it usually changes the layout

@@ -1,4 +1,5 @@
 import ast
+import re
 from typing import Optional, Type, Literal, Union, Callable, TYPE_CHECKING
 
 from .basic_types import Acc, Ass, ValueKind, ValueType, VType, value_kind_to_v_type, value_type_u8, value_type_x32
@@ -24,12 +25,16 @@ class ValueCheck:
     The recipe v_check="{ (v % RW_MULT) == 0}" generates
     `skmap.ValueCheck(lambda v: ((v % 2) == 0), '(v % 2) == 0')` (and the
     matching `ValueCheck{...}` of the c++ library, see reg.hpp). The text has
-    every name resolved to its value so the check prints the same in every
-    language and does not need the recipe at runtime.
+    the `ipkg` values resolved to numbers, the `k` registers keep their name
+    (a k register has its value only at runtime, it is reported by the
+    firmware). Printing resolves the rest, see Reg.resolve_expr_names, only
+    the value parameter `v` is never simplified.
 
     Args:
         fn : takes the register value, True when the value is allowed
-        str : expression text with resolved values, for printing and errors
+        str : expression text, for printing and errors (`ipkg` values resolved
+              to numbers, `k` names resolved when printed, see
+              Reg.resolve_expr_names)
         v_type : type of the value, 'f' is a float (see the recipe v_type)
     """
     def __init__(self, fn : Callable[[Union[int, float]], bool], str : str = '', v_type : VType = VType.s):
@@ -44,20 +49,24 @@ class ValueCheck:
         return self._str
 
 class ValueConvert:
-    """A recipe `v_convert` option: converts a user value to a register value.
+    """A recipe `v_convert_wr` / `v_convert_rd` option: converts between a user
+    value and a register value.
 
-    A register stores an integer, `v_convert` maps the value the user of the
-    module works with into that integer, eg v_convert="{ v * 16 }" for a Q4
-    fixed point temperature. Reading uses the *inverse* of the same expression
-    (derived while parsing the recipe, see invert_resolvable), so writing 1.5
-    stores 24 and reading gives 1.5 back.
+    A register stores an integer, the conversion maps the value the user of the
+    module works with to that integer, eg v_convert_wr="{ v * 16 }" (or its
+    inverse written as v_convert_rd="{ v / 16 }") for a Q4 fixed point
+    temperature. Writing 1.5 stores 24 and reading gives 1.5 back.
 
-      * `fn`     user value -> register value, a float result is rounded
-      * `fn_inv` register value -> user value, what a read returns
+      * `fn`     user value -> register value (`v_convert_wr`, the write side,
+                 a float result is rounded)
+      * `fn_inv` register value -> user value (`v_convert_rd`, the read side,
+                 what a read returns)
 
     Args:
         fn, fn_inv : the conversion and its inverse
-        str, str_inv : their text (names resolved to values), for printing
+        str, str_inv : their text (the `ipkg` values resolved to numbers, the
+                       `k` names resolved when printed, see
+                       Reg.resolve_expr_names), for printing
         v_type : type of the user value (see the recipe v_type)
     """
     def __init__(self, fn : Callable[[Union[int, float]], Union[int, float]], fn_inv : Callable[[int], Union[int, float]],
@@ -102,7 +111,7 @@ class Reg:
         assert v_check is None or value_type.kind in (ValueKind.uint, ValueKind.sint, ValueKind.bits), \
             f'a v_check is only supported on int registers ({name})'
         assert v_convert is None or value_type.kind in (ValueKind.uint, ValueKind.sint, ValueKind.bits), \
-            f'a v_convert is only supported on int registers ({name})'
+            f'a value conversion (v_convert_wr / v_convert_rd) is only supported on int registers ({name})'
         self.v_check = v_check
         self.v_convert = v_convert
         self.v_type = v_type if v_type is not None else value_kind_to_v_type(value_type.kind)
@@ -122,18 +131,43 @@ class Reg:
     def has_v_convert(self) -> bool:
         return self.v_convert is not None
 
+    def resolve_expr_names(self, text : Optional[str]) -> Optional[str]:
+        """Resolve the parameters of a printed `v_check` / `v_convert_wr` /
+        `v_convert_rd` expression to their numbers.
+
+        The `ipkg` values are already resolved to numbers when the recipe is
+        parsed, a `k` register has its value only at runtime (it is reported
+        by the firmware), so the `k` names that are left in the text are
+        resolved here from the cache of the module. Only the value parameter
+        `v` is never simplified, it is the value the expression is checked
+        against. Mirrors Reg::resolve_expr_names of the c++ library.
+        """
+        if text is None:
+            return text
+        for reg_k in getattr(self.module, 'arr_reg_k', []):
+            if not re.search(rf'\b{re.escape(reg_k.name)}\b', text):
+                continue
+            try:
+                value = reg_k.read_value_cached()
+            except Exception:
+                continue
+            text = re.sub(rf'\b{re.escape(reg_k.name)}\b', str(value), text)
+        return text
+
     def v_convert_marker(self) -> str:
-        """`= { v * 16 } ` text of the `v_convert` of the register, '' when it
-        has none.
+        """`= { v * 16 } ` text of the write side (`v_convert_wr`) of the
+        register, '' when it has none.
 
         Printed at the start of the description in the reg map, where the value
         of the register and the value of the module user are shown next to each
-        other. The text is the recipe source with every recipe name resolved to
-        its value. See RegMapTable and the c++ print_reg_map.
+        other. The text is the recipe source with every parameter resolved to
+        its number (the `k` registers of the module are resolved here, see
+        resolve_expr_names), only `v` stays. See RegMapTable and the c++
+        print_reg_map.
         """
         if self.v_convert is None:
             return ''
-        conv = str(self.v_convert)      # resolved, eg '(v * 16)'
+        conv = self.resolve_expr_names(str(self.v_convert))    # resolved, eg '(v * 16)'
         if len(conv) > 2 and conv[0] in '({' and conv[-1] in '})':
             conv = conv[1:-1].strip()
         return f'={{ {conv} }} '
@@ -235,13 +269,13 @@ class Reg:
         """Raise when a (user) value does not pass the recipe `v_check`."""
         ass = self.ass_check_value_limit(value)
         if (ass >= Ass.error):
-            raise ValueError(f"for reg {self.name} {value=} does not pass the check '{self.v_check}'")
+            raise ValueError(f"for reg {self.name} {value=} does not pass the check '{self.resolve_expr_names(str(self.v_check))}'")
 
     def check_value_fits_reg(self, value : int):
         """Raise when a register value does not fit the width of the register.
 
-        A `v_convert` result is not bounded by the conversion, so the value that
-        goes into the register is checked here.
+        A `v_convert_wr` result is not bounded by the conversion, so the value
+        that goes into the register is checked here.
         """
         value_int = int(value)
         width = self.value_type.width
@@ -250,7 +284,7 @@ class Reg:
         else:
             lo, hi = 0, (1<<width)-1
         if not lo <= value_int <= hi:
-            conv = f' (converted from {value} with v_convert {self.v_convert})' if self.has_v_convert else ''
+            conv = f' (converted from {value} with v_convert_wr {self.resolve_expr_names(str(self.v_convert))})' if self.has_v_convert else ''
             raise ValueError(f'for reg {self.name} register value {value_int} does not fit '
                              f'{self.value_type_str()} [{lo} , {hi}]{conv}')
 
@@ -278,11 +312,13 @@ class Reg:
             case 16: return f'0x{value:0{ceil_div(self.value_type.width,4)}X}'
 
     def _v_check_bound_str(self, v_color : str) -> str:
-        """The `v_check` printed as its expression, names resolved to values.
+        """The `v_check` printed as its expression, every parameter resolved to
+        its number (see resolve_expr_names), only `v` stays.
 
-        Coloured with the assert of the value, which includes this check.
+        Coloured by the caller: the `Ass.passed` color when the value
+        passes the check, the assert color when it does not.
         """
-        return f"{to_rich_str(str(self.v_check), v_color)} "
+        return f"{to_rich_str(self.resolve_expr_names(str(self.v_check)), v_color)} "
 
     def read_rich_str_cached(self) -> str:
         value_str = None
@@ -311,8 +347,13 @@ class Reg:
             ass = self.ass_check_cached()
             s += to_rich_str(str(self.ass), ass.color)+": "
         if self.has_limit():
-            ass = max(ass, self.ass_check_limit_cached())
-            s += self._v_check_bound_str(ass.color)
+            ass_limit = self.ass_check_limit_cached()
+            ass = max(ass, ass_limit)
+            # a value that passes the v_check prints it in the Ass.passed
+            # color (none is returned when it passes), a failing one in
+            # the assert color
+            s += self._v_check_bound_str(
+                Ass.passed.color if ass_limit is Ass.none else ass.color)
         if self.has_v_convert:
             # The user value is printed, the raw register value is available
             # through the `*_raw` functions
@@ -366,8 +407,8 @@ class Reg:
     def read_converted_cached(self):
         """Value of the register as the user of the module sees it.
 
-        Without a `v_convert` this is the value of the register itself, with one
-        it is the register value converted by the inverse of `v_convert`.
+        Without a value conversion this is the value of the register itself,
+        with one it is the register value converted by `v_convert_rd`.
         """
         return self.from_raw(self.read_value_cached())
 
@@ -376,7 +417,8 @@ class Reg:
         return self.read_converted_cached()
 
     def write_converted_cached(self, value : Union[int, float]):
-        """Write a user value: `v_check` it, convert it with `v_convert` and write it.
+        """Write a user value: `v_check` it, convert it with `v_convert_wr` and
+        write it.
 
         Raises when the value does not pass the check, or when the converted
         value does not fit the register.
@@ -390,7 +432,7 @@ class Reg:
             case ValueKind.uint | ValueKind.bits | ValueKind.flag:
                 self.write_uint_cached(value_raw)
             case _:
-                assert False, f'a v_convert is not supported on {self.value_type_str()} registers ({self.name})'
+                assert False, f'a value conversion (v_convert_wr / v_convert_rd) is not supported on {self.value_type_str()} registers ({self.name})'
 
     async def write_converted(self, value : Union[int, float]):
         self.write_converted_cached(value)
@@ -553,7 +595,7 @@ class RegVec(Reg):
         await self.write_idx_cache(idx)
 
     def read_converted_idx_cached(self, idx : int):
-        """One element as the user of the module sees it (see v_convert)."""
+        """One element as the user of the module sees it (see v_convert_rd)."""
         return self.from_raw(self.read_idx_value_cached(idx))
 
     async def read_converted_idx(self, idx : int):
@@ -561,7 +603,7 @@ class RegVec(Reg):
         return self.read_converted_idx_cached(idx)
 
     def write_converted_idx_cached(self, idx : int, value : Union[int, float]):
-        """Write one element with the user value (v_check, then v_convert)."""
+        """Write one element with the user value (v_check, then v_convert_wr)."""
         self.check_value_limit(value)
         value_raw = self.to_raw(value)
         self.check_value_fits_reg(value_raw)
@@ -571,7 +613,7 @@ class RegVec(Reg):
             case ValueKind.uint | ValueKind.bits | ValueKind.flag:
                 self.write_idx_uint_cached(idx, value_raw)
             case _:
-                assert False, f'a v_convert is not supported on {self.value_type_str()} registers ({self.name})'
+                assert False, f'a value conversion (v_convert_wr / v_convert_rd) is not supported on {self.value_type_str()} registers ({self.name})'
 
     async def write_converted_idx(self, idx : int, value : Union[int, float]):
         self.write_converted_idx_cached(idx, value)
@@ -608,7 +650,7 @@ class RegVec(Reg):
             self.check_value_limit(v)
 
     def read_converted_cached(self) -> list[Union[int, float]]:
-        """All elements as the user of the module sees them (see v_convert)."""
+        """All elements as the user of the module sees them (see v_convert_rd)."""
         return [self.from_raw(v) for v in self._read_list_raw_cached()]
 
     async def read_converted(self) -> list[Union[int, float]]:
@@ -624,7 +666,7 @@ class RegVec(Reg):
             case _: assert False, f'{self.value_type_str()} registers have no int value list ({self.name})'
 
     def write_converted_cached(self, value : list[Union[int, float]]):
-        """Write all elements with the user values (v_check, then v_convert)."""
+        """Write all elements with the user values (v_check, then v_convert_wr)."""
         assert isinstance(self.value_type.vec_len, int)
         assert len(value) == self.value_type.vec_len, \
             f'{self.name} expects {self.value_type.vec_len} values, got {len(value)}'
@@ -640,7 +682,7 @@ class RegVec(Reg):
             case ValueKind.uint | ValueKind.bits:
                 self.write_list_uint_cached(value_raw)
             case _:
-                assert False, f'a v_convert is not supported on {self.value_type_str()} registers ({self.name})'
+                assert False, f'a value conversion (v_convert_wr / v_convert_rd) is not supported on {self.value_type_str()} registers ({self.name})'
 
     async def write_converted(self, value : list[Union[int, float]]):
         self.write_converted_cached(value)
@@ -732,8 +774,12 @@ class RegVec(Reg):
             ass_checked = self.ass_check_cached()
             s += to_rich_str(f'{self.ass}', ass_checked.color)+": "
         if self.has_limit():
-            ass = max(ass, self.ass_check_limit_cached())
-            s += self._v_check_bound_str(ass.color)
+            ass_limit = self.ass_check_limit_cached()
+            ass = max(ass, ass_limit)
+            # like the scalar read_rich_str_cached: the printed v_check is
+            # Ass.passed colored when the values pass the check
+            s += self._v_check_bound_str(
+                Ass.passed.color if ass_limit is Ass.none else ass.color)
         if self.has_v_convert:
             # The user values are printed, the raw values are available through
             # the `*_raw` functions

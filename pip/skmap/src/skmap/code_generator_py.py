@@ -62,7 +62,7 @@ def to_python_source(node: ResolvableT) -> str:
     if isinstance(node, RecipeK):
         return f'self.{node.name}'
     if is_value_param(node):
-        # the v of a v_check / v_convert
+        # the v of a v_check / v_convert_wr / v_convert_rd
         return node.name
     if isinstance(node, ResolvableFunctionOperation):
         if node.op.is_unary:
@@ -70,7 +70,7 @@ def to_python_source(node: ResolvableT) -> str:
             return f'({op_to_py_source(node.op)} {to_python_source(node.lhs)})'
         if node.op == BultiInOperation.div and contains_float_value(node):
             # The recipe `/` is a integer division, in a float expression (the v
-            # of a v_convert / v_check with v_type 'f') it has to be a float one.
+            # of a v_convert_wr / v_convert_rd / v_check with v_type 'f') it has to be a float one.
             return f'({to_python_source(node.lhs)} / {to_python_source(node.rhs)})'
         return f'({to_python_source(node.lhs)} {op_to_py_source(node.op)} {to_python_source(node.rhs)})'
     if isinstance(node, ResolvableFunctionBuiltIn):
@@ -133,8 +133,9 @@ def value_check_str_py(reg : RecipeReg) -> str:
     """The `v_check=skmap.ValueCheck(...)` ctor argument, '' when there is none.
 
     The lambda gets the register value as `v`, recipe k / ipkg values are read
-    through `self`. The text is the check with every name resolved to a value
-    (see resolvable_print_source), so it prints without the recipe.
+    through `self` (both can be used as parameters of the expression). The text
+    is the check with every name resolved to a value (see
+    resolvable_print_source), so it prints without the recipe.
     """
     if reg.v_check is None:
         return ''
@@ -144,23 +145,24 @@ def value_check_str_py(reg : RecipeReg) -> str:
 def value_convert_str_py(reg : RecipeReg) -> str:
     """The `v_convert=skmap.ValueConvert(...)` ctor argument, '' when there is none.
 
-    The first lambda is the recipe expression (user value -> register value),
-    the second one is its inverse (register value -> user value, used by every
-    read), both are generated from the same recipe expression.
+    The first lambda is the write side (user value -> register value), the
+    second one the read side (register value -> user value, used by every
+    read). The recipe gives one of them (`v_convert_wr` or `v_convert_rd`),
+    the other side is the derived inverse, see parse_recipe_v_options.
     """
-    if reg.v_convert is None:
+    if reg.v_convert_wr is None:
         return ''
-    return (f", v_convert=skmap.ValueConvert(lambda v: {to_python_source(reg.v_convert)},"
-            f" lambda v: {to_python_source(reg.v_convert_inv)},"
-            f" {reg.v_convert_str!r}, {reg.v_convert_inv_str!r}, skmap.VType.{reg.v_type.value})"
+    return (f", v_convert=skmap.ValueConvert(lambda v: {to_python_source(reg.v_convert_wr)},"
+            f" lambda v: {to_python_source(reg.v_convert_rd)},"
+            f" {reg.v_convert_wr_str!r}, {reg.v_convert_rd_str!r}, skmap.VType.{reg.v_type.value})"
             f", v_type=skmap.VType.{reg.v_type.value}")
 
 def value_user_type_str_py(reg : RecipeReg, ignore_vec : bool = False) -> str:
     """Return / argument type of the user facing functions of a register.
 
-    With a `v_convert` the functions work on the user value, which follows the
-    recipe `v_type` ('f' is a float), without one they work on the value of the
-    register itself.
+    With a value conversion (`v_convert_wr` / `v_convert_rd`) the functions work
+    on the user value, which follows the recipe `v_type` ('f' is a float),
+    without one they work on the value of the register itself.
     """
     t = reg.t
     if reg.v_type.is_float:
@@ -174,7 +176,7 @@ def value_user_type_str_py(reg : RecipeReg, ignore_vec : bool = False) -> str:
     return rt
 
 def has_v_convert(reg : RecipeReg) -> bool:
-    return getattr(reg, 'v_convert', None) is not None
+    return getattr(reg, 'v_convert_wr', None) is not None
 
 def all_ipkg_value_parameters_str(ipkgv : RecipeIpkg) -> str:
     t_str = value_ret_type_str(ipkgv.t)
@@ -209,9 +211,9 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
 
     s = ''
     is_vec_int = reg.t.vec_len != None and reg.t.kind in (ValueKind.uint, ValueKind.sint, ValueKind.bits)
-    # A register with a v_convert gets the value conversion in the default
-    # functions and the plain register value in the *_raw functions, the rest
-    # of the module has only the plain functions.
+    # A register with a v_convert_wr / v_convert_rd gets the value conversion
+    # in the default functions and the plain register value in the *_raw
+    # functions, the rest of the module has only the plain functions.
     sfx = '_raw' if has_v_convert(reg) else ''
     s += f'    #{reg.name}: {reg.desc}\n'
     if reg.t.kind == ValueKind.flag:
@@ -300,14 +302,14 @@ def all_reg_value_functions_str_not_flag(reg : RecipeReg) -> str:
 
     if has_v_convert(reg):
         # The functions above bypass the value conversion, the ones below take
-        # and give the user value: v_check it, then convert it with v_convert,
-        # a read converts the register value with the inverse of v_convert.
+        # and give the user value: v_check it, then convert it with
+        # v_convert_wr, a read converts the register value with v_convert_rd.
         t_str_user     = value_user_type_str_py(reg)
         t_str_user_one = value_user_type_str_py(reg, ignore_vec=True)
-        s += f'    # {reg.name}: value conversion, see the recipe v_convert / v_type\n'
+        s += f'    # {reg.name}: value conversion, see the recipe v_convert_wr / v_convert_rd / v_type\n'
         match reg.acc:
             case Acc.k:
-                assert False, 'a constant register cannot have a v_convert'
+                assert False, 'a constant register cannot have a value conversion'
             case Acc.ro | Acc.rc | Acc.rw | Acc.wt:
                 s += f'    def {reg.name}_read_cached(self) -> {t_str_user}:\n'
                 s += f'        return {reg_name}.read_converted_cached()\n\n'

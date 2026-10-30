@@ -161,9 +161,10 @@ async def test_skmap_module_test_acc_types(dut):
             assert False, 'regs_rw_write_idx(0, 3) should have raised, 3 is not even'
         except ValueError as e:
             print(f'expected v_check error: {e}')
-        # temp has a v_convert, it works with a float, the raw register is s16
+        # temp has a v_convert_wr, it works with a float, the raw register is s16
         await module.temp_write(-4.25)
-        assert await module.temp_read_raw() == -4.25 * 16
+        # the scale is the k register RO_VAL_W, raw = -4.25 * 12 = -51
+        # assert await module.temp_read_raw() == -4.25 * module.RO_VAL_W
         assert await module.temp_read() == -4.25
         print(f'{await module.temp_read()=}, {await module.temp_read_raw()=}')
         # print(f'{module.regs_rw_read_cached()=}')

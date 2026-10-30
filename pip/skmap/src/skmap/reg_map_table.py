@@ -10,9 +10,10 @@ from .console import console
 def desc_cell(obj : Union[Reg, RFlag, ExternalMem]):
     """Description cell of the reg map.
 
-    A register with a `v_convert` shows the conversion in front of its
-    description, in the color of Ass.none: the value in the value column is the
-    value of the module user, not the value stored in the register.
+    A register with a value conversion (`v_convert_wr` / `v_convert_rd` of the
+    recipe) shows the conversion in front of its description, in the color of
+    Ass.none: the value in the value column is the value of the module user,
+    not the value stored in the register.
     """
     marker = obj.v_convert_marker() if isinstance(obj, Reg) else ''
     if not marker:

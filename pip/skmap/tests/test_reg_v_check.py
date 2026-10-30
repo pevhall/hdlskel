@@ -1,8 +1,11 @@
-"""Tests for the recipe value options `v_type`, `v_check` and `v_convert`.
+"""Tests for the recipe value options `v_type`, `v_check`, `v_convert_wr`
+and `v_convert_rd`.
 
-`v_check` is a boolean expression of the register value `v`, `v_convert`
-converts a user value into the value stored in the register (and every read
-applies its inverse). They replaced the old `min` / `max` options.
+`v_check` is a boolean expression of the register value `v`, `v_convert_wr`
+(value convert write side) converts a user value into the value stored in the
+register and `v_convert_rd` (value convert read side) is its inverse, used by
+every read. Each register gives at most one of the two conversion sides, the
+other one is derived. They replaced the old `min` / `max` options.
 
 Run with: python3 -m pytest pip/skmap/tests -q
 """
@@ -21,7 +24,7 @@ from skmap.basic_types import ValueKind, promote_to_sw_w         # noqa: E402
 from skmap.reg import ValueCheck, ValueConvert                   # noqa: E402
 from skmap.code_generator_parse_recipe import parse_recipe_file, parse_recipe_v_options   # noqa: E402
 from skmap.code_generator_parse_resolvable import (               # noqa: E402
-    parse_resolvable_v_check, parse_resolvable_v_convert,
+    parse_resolvable_v_check, parse_resolvable_v_convert_wr, parse_resolvable_v_convert_rd,
     resolvable_print_source, resolvable_to_int, NotInvertibleError,
 )
 
@@ -37,6 +40,8 @@ class ModuleStub:
         self._byte_align = 1
         self._cache = bytearray(1024)
         self.base_addr = 0
+        # the constant (k) registers, Reg.resolve_expr_names prints with these
+        self.arr_reg_k = []
 
     def _byte_aligment_from_val_width(self, width):
         return max(self._byte_align, promote_to_sw_w(width) // 8)
@@ -147,7 +152,7 @@ def test_raw_write_checks_the_user_value():
         reg.write_sint_cached(3)
 
 
-# ---------- v_convert ----------
+# ---------- v_convert_wr / v_convert_rd ----------
 
 def test_convert_write_read_round_trip():
     conv = ValueConvert(lambda v: v * 2, lambda v: v / 2, '(v * 2)', '(v / 2)', skmap.VType.f)
@@ -266,7 +271,8 @@ def test_recipe_parses_v_options():
     assert str(resolvable_print_source(rw_len.v_check)) == '((v % 2) == 0)'
     assert rw_len.v_check_str == '((v % 2) == 0)'
     assert rw_len.v_type == skmap.VType.u   # uint register -> u by default
-    assert rw_len.v_convert is None
+    assert rw_len.v_convert_wr is None
+    assert rw_len.v_convert_rd is None
 
     regs_rw = by_name['regs_rw']
     assert regs_rw.v_type == skmap.VType.s
@@ -279,8 +285,11 @@ def test_recipe_v_convert_is_invertible():
     by_name = {var.name: var for var in recipe.var}
     temp = by_name['temp']
     assert temp.v_type == skmap.VType.f
-    assert str(resolvable_print_source(temp.v_convert)) == '(v * 16)'
-    assert str(resolvable_print_source(temp.v_convert_inv)) == '(v / 16)'
+    # temp converts with the k register RO_VAL_W (a float Q scale), the k keeps
+    # its name in the printed text (it has its value only at runtime, see
+    # test_k_parameters_are_resolved_when_printed), the read side is its inverse
+    assert str(resolvable_print_source(temp.v_convert_wr)) == '(v * RO_VAL_W)'
+    assert str(resolvable_print_source(temp.v_convert_rd)) == '(v / RO_VAL_W)'
 
 def test_recipe_old_options_are_gone():
     recipe = parse_recipe_file(RECIPE)
@@ -298,16 +307,213 @@ def test_v_check_must_use_v():
 
 def test_v_convert_must_use_v():
     with pytest.raises((AssertionError, KeyError)):
-        parse_resolvable_v_convert('{ RW_LEN * 2 }', {})
+        parse_resolvable_v_convert_wr('{ RW_LEN * 2 }', {})
 
 def test_v_convert_that_loses_values_is_rejected():
     # an integer v can not be recovered from a scaled one
     with pytest.raises(NotInvertibleError):
-        parse_resolvable_v_convert('{ v * 2 }', {}, v_type=skmap.VType.s)
+        parse_resolvable_v_convert_wr('{ v * 2 }', {}, v_type=skmap.VType.s)
+    # the same conversion written from the read side
+    with pytest.raises(NotInvertibleError):
+        parse_resolvable_v_convert_rd('{ v / 2 }', {}, v_type=skmap.VType.s)
 
 def test_v_convert_non_affine_is_rejected():
     with pytest.raises(NotInvertibleError):
-        parse_resolvable_v_convert('{ v * v }', {}, v_type=skmap.VType.f)
+        parse_resolvable_v_convert_wr('{ v * v }', {}, v_type=skmap.VType.f)
+    with pytest.raises(NotInvertibleError):
+        parse_resolvable_v_convert_rd('{ v * v }', {}, v_type=skmap.VType.f)
+
+# ---------- v_convert_wr and v_convert_rd are inverses ----------
+
+def test_v_convert_rd_is_the_inverse_of_v_convert_wr():
+    """The same conversion written from either side gives the same pair, both
+    sides print with the parameters resolved to numbers, only `v` stays."""
+    wr_a, wr_a_s, rd_a, rd_a_s = parse_resolvable_v_convert_wr('{ v * 16 }', {}, v_type=skmap.VType.f)
+    wr_b, wr_b_s, rd_b, rd_b_s = parse_resolvable_v_convert_rd('{ v / 16 }', {}, v_type=skmap.VType.f)
+    assert wr_a_s == wr_b_s == '(v * 16)'
+    assert rd_a_s == rd_b_s == '(v / 16)'
+
+def test_v_convert_rd_derives_the_write_side_exactly():
+    """A Q4 scale written as a read conversion, the derived write side is the
+    exact scale (no integer division by zero, no lost values)."""
+    wr, wr_s, rd, rd_s = parse_resolvable_v_convert_rd('{ v / 16 }', {}, v_type=skmap.VType.f)
+    assert wr_s == '(v * 16)'
+    assert rd_s == '(v / 16)'
+    # an offset stays exact through the rational inversion
+    wr, wr_s, rd, rd_s = parse_resolvable_v_convert_rd('{ (v + 2) / 4 }', {}, v_type=skmap.VType.f)
+    assert wr_s == '((v * 4) - 2)'
+    assert rd_s == '((v + 2) / 4)'
+
+def make_recipe(tmp_path : Path, var : str, ipkg : str = '', k : str = '') -> 'skmap.code_generator_parse_recipe.Recipe':
+    from skmap.code_generator_parse_recipe import parse_recipe_file
+    text = f'''
+id = "TVConv"
+version = 1
+name = "v_convert_test"
+sw_module = "VConvertTest"
+fw_module = "v_convert_test"
+ipkg = [ {ipkg} ]
+k = [ {{name = "RW_LEN", t = "u8", desc = "len"}} {k} ]
+var = [
+  {{name = "temp", t = "s16", acc = "rw", desc = "temp"{var}}},
+]
+'''
+    p = tmp_path / 'recipe.toml'
+    p.write_text(text)
+    return parse_recipe_file(p)
+
+def test_recipe_v_convert_rd_option(tmp_path):
+    """A recipe with v_convert_rd generates the same conversion as the one
+    with v_convert_wr, the write side is derived."""
+    recipe_wr = make_recipe(tmp_path, var=', v_type="f", v_convert_wr="{ v * 16 }"')
+    recipe_rd = make_recipe(tmp_path, var=', v_type="f", v_convert_rd="{ v / 16 }"')
+    wr = recipe_wr.var[0]
+    rd = recipe_rd.var[0]
+    assert str(resolvable_print_source(wr.v_convert_wr)) == '(v * 16)'
+    assert str(resolvable_print_source(rd.v_convert_wr)) == '(v * 16)'
+    assert str(resolvable_print_source(wr.v_convert_rd)) == '(v / 16)'
+    assert str(resolvable_print_source(rd.v_convert_rd)) == '(v / 16)'
+    # the same conversion is the same module, written from either side
+    assert recipe_wr.checksum_str() == recipe_rd.checksum_str()
+
+def test_recipe_v_convert_wr_and_rd_together_are_rejected(tmp_path):
+    """A register never has both sides, they are inverses of each other."""
+    with pytest.raises(AssertionError, match='inverses of each other'):
+        make_recipe(tmp_path, var=', v_type="f", v_convert_wr="{ v * 16 }", v_convert_rd="{ v / 16 }"')
+
+def test_recipe_old_v_convert_option_is_rejected(tmp_path):
+    """The old `v_convert` names the new options in the error."""
+    with pytest.raises(AssertionError, match='v_convert_wr'):
+        make_recipe(tmp_path, var=', v_type="f", v_convert="{ v * 16 }"')
+
+def test_v_options_use_ipkg_and_k_parameters(tmp_path):
+    """`v_check`, `v_convert_wr` and `v_convert_rd` can use the `ipkg` values
+    and the `k` registers of the recipe as parameters of the expression."""
+    # an ipkg value resolves to its number at recipe parse time, a k register
+    # has its value only at runtime so it keeps its name in the text (it is
+    # read through the module in the generated code and resolved when
+    # printed, see test_k_parameters_are_resolved_when_printed)
+    recipe = make_recipe(tmp_path,
+                         ipkg = '{name = "SCALE", value = 8 },',
+                         var  = (', v_check="{ (v >= (-1*SCALE)) && (v <= 100) && ((v % RW_LEN) == 0) }"'
+                                 ', v_convert_wr="{ v + SCALE }"'))
+    reg = recipe.var[0]
+    assert reg.v_check_str == '(((v >= (-1 * 8)) && (v <= 100)) && ((v % RW_LEN) == 0))'
+    assert reg.v_convert_wr_str == '(v + 8)'
+    assert reg.v_convert_rd_str == '(v - 8)'
+
+    recipe = make_recipe(tmp_path,
+                         ipkg = '{name = "SCALE", value = 8 },',
+                         var  = ', v_type="f", v_convert_rd="{ v / SCALE }"')
+    reg = recipe.var[0]
+    assert reg.v_convert_wr_str == '(v * 8)'
+    assert reg.v_convert_rd_str == '(v / 8)'
+
+def test_v_options_print_resolved_numbers(tmp_path):
+    """The printed text of the three options resolves the recipe `ipkg` names
+    to their number, only the value parameter `v` can not be simplified (a
+    `k` register is resolved when printed, see
+    test_k_parameters_are_resolved_when_printed)."""
+    recipe = make_recipe(tmp_path,
+                         ipkg = '{name = "SCALE", value = 8 },',
+                         var  = (', v_type="f", v_check="{ v <= SCALE }"'
+                                 ', v_convert_wr="{ v * SCALE + SCALE }"'))
+    reg = recipe.var[0]
+    assert 'SCALE' not in reg.v_check_str and 'v' in reg.v_check_str
+    assert reg.v_check_str == '(v <= 8)'
+    assert reg.v_convert_wr_str == '((v * 8) + 8)'
+    assert reg.v_convert_rd_str == '((v - 8) / 8)'
+
+def test_k_parameters_are_resolved_when_printed():
+    """A `k` register has its value only at runtime, its name stays in the
+    text of `v_check` / `v_convert_wr` / `v_convert_rd` and the runtime
+    resolves it from the module cache when printing, only `v` stays."""
+    module = ModuleStub()
+    reg_k = skmap.RegK(module, name='RW_LEN',
+                       value_type=skmap.ValueType(kind=ValueKind.uint, width=8),
+                       desc='k reg')
+    reg_k.addr = 16
+    module.write_bytes_cached(16, bytes([3]))       # the firmware reported 3
+    module.arr_reg_k = [reg_k]
+    reg = skmap.Reg(module, name='test', value_type=skmap.ValueType(kind=ValueKind.sint, width=8),
+                    acc=skmap.Acc.rw, desc='test reg',
+                    v_check=ValueCheck(lambda v: (v % 3) == 0, '((v % RW_LEN) == 0)'),
+                    v_convert=ValueConvert(lambda v: v * 4, lambda v: v / 4,
+                                           '(v * RW_LEN)', '(v / RW_LEN)'))
+    reg.addr = 0
+    # the k name resolves to the value of the module, `v` stays
+    assert reg.resolve_expr_names('((v % RW_LEN) == 0)') == '((v % 3) == 0)'
+    # only whole words, RW_LEN is the suffix of MEM_RW_LEN and stays
+    assert reg.resolve_expr_names('MEM_RW_LEN') == 'MEM_RW_LEN'
+    assert reg.resolve_expr_names('(v + OTHER)') == '(v + OTHER)'
+    # the `= ... ` marker of the reg map
+    assert reg.v_convert_marker() == '={ v * 3 } '
+    # the check printed with the value in the reg map
+    assert '(v % 3) == 0' in plain(reg._v_check_bound_str(''))
+    # and the error messages
+    with pytest.raises(ValueError) as e:
+        reg.check_value_limit(1)
+    assert '((v % 3) == 0)' in str(e.value)
+
+# ---------- unique names ----------
+
+def write_named_recipe(tmp_path : Path, ipkg : str, k : str, var : str, mem : str = '') -> Path:
+    from skmap.code_generator_parse_recipe import parse_recipe_file
+    text = f'''
+id = "TName"
+version = 1
+name = "name_test_module"
+sw_module = "NameTestModule"
+fw_module = "name_test_module"
+ipkg = [ {ipkg} ]
+k = [ {k} ]
+var = [ {var} ]
+mem = [ {mem} ]
+'''
+    p = tmp_path / 'recipe.toml'
+    p.write_text(text)
+    return parse_recipe_file(p)
+
+def mem_of(name : str) -> str:
+    return (f'{{name = "{name}", t = "[8]u8", acc = "rw", desc = "m", '
+            f'fw_depth = 8, fw_width = 8, fw_latency = 1}}')
+
+def test_duplicate_names_are_rejected(tmp_path):
+    """Every ipkg, k, var and mem name of a recipe has to be unique."""
+    ipkg = '{name = "DUP", value = 2 }, {name = "DUP", value = 3 }'
+    with pytest.raises(ValueError, match='duplicate name'):
+        write_named_recipe(tmp_path, ipkg = ipkg, k = '', var = '')
+    with pytest.raises(ValueError, match='duplicate name'):
+        write_named_recipe(tmp_path, ipkg = '{name = "DUP", value = 2 },',
+                           k = '{name = "DUP", t = "u8", desc = "x"}', var = '')
+    with pytest.raises(ValueError, match='duplicate name'):
+        write_named_recipe(tmp_path, ipkg = '',
+                           k = '{name = "DUP", t = "u8", desc = "x"}, {name = "DUP", t = "u8", desc = "y"}',
+                           var = '')
+    with pytest.raises(ValueError, match='duplicate name'):
+        write_named_recipe(tmp_path, ipkg = '',
+                           k = '{name = "DUP", t = "u8", desc = "x"}',
+                           var = '{name = "DUP", t = "u8", acc = "rw", desc = "v"}')
+    with pytest.raises(ValueError, match='duplicate name'):
+        write_named_recipe(tmp_path, ipkg = '', k = '',
+                           var = ('{name = "DUP", t = "u8", acc = "rw", desc = "v"}, '
+                                  '{name = "DUP", t = "u8", acc = "ro", desc = "w"}'))
+    with pytest.raises(ValueError, match='duplicate name'):
+        write_named_recipe(tmp_path, ipkg = '{name = "DUP", value = 2 },', k = '',
+                           var = '{name = "DUP", t = "u8", acc = "rw", desc = "v"}')
+    # a mem name is unique against the other mems and every other name
+    with pytest.raises(ValueError, match='duplicate name'):
+        write_named_recipe(tmp_path, ipkg = '', k = '', var = '',
+                           mem = f'{mem_of("DUP")}, {mem_of("DUP")}')
+    with pytest.raises(ValueError, match='duplicate name'):
+        write_named_recipe(tmp_path, ipkg = '', k = '',
+                           var = '{name = "DUP", t = "u8", acc = "rw", desc = "v"}',
+                           mem = mem_of('DUP'))
+    # unique names across all four kinds are fine
+    write_named_recipe(tmp_path, ipkg = '{name = "I", value = 2 },',
+                       k = '{name = "K", t = "u8", desc = "x"}',
+                       var = '{name = "V", t = "u8", acc = "rw", desc = "v"}',
+                       mem = mem_of('M'))
 
 
 # ---------- generated module ----------
@@ -353,7 +559,7 @@ def test_v_convert_marker_text():
     assert make_reg().v_convert_marker() == ''
     assert make_reg(v_check=EVEN_U).v_convert_marker() == ''
     # a check is not a conversion: it stays in the value column
-    assert make_reg(v_check=EVEN_U).read_rich_str_cached().startswith('[default](v % 2) == 0')
+    assert make_reg(v_check=EVEN_U).read_rich_str_cached().startswith('[green](v % 2) == 0')
     # braces (the way a recipe writes it) are normalised to the same text
     braced = ValueConvert(lambda v: v * 2, lambda v: v / 2, '{ v * 2 }', '{ v / 2 }')
     assert make_reg(v_convert=braced).v_convert_marker() == '={ v * 2 } '

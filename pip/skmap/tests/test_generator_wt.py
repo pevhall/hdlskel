@@ -5,9 +5,9 @@ the regio sees. `<reg>_write_cached` writes only the cache of the module, the
 same function a `rw` register has. For a vector `wt` register the functions are
 per lane (`<reg>_write_idx_cached`, `<reg>_write_trigger_idx`).
 
-With a recipe `v_convert` the default functions take the value of the module
-user and the `*_raw` functions the bits of the register, without a `v_convert`
-there are no `*_raw` functions at all.
+With a recipe value conversion (`v_convert_wr` / `v_convert_rd`) the default
+functions take the value of the module user and the `*_raw` functions the bits
+of the register, without one there are no `*_raw` functions at all.
 
 Run with: python3 -m pytest pip/skmap/tests -q
 """
@@ -37,8 +37,8 @@ k = []
 var = [
   {name = "wt_s",   t = "u8",     acc = "wt", desc = "scalar wt"},
   {name = "wt_v",   t = "[4]u8",  acc = "wt", desc = "vector wt"},
-  {name = "wt_cv",  t = "s16",    acc = "wt", desc = "wt with a v_convert", v_type = "f", v_convert = "{ v * 16 }", v_check = "{ (v >= -100) && (v <= 100) }"},
-  {name = "wt_cvv", t = "[3]s16", acc = "wt", desc = "vector wt with a v_convert", v_convert = "{ v + 8 }", v_check = "{ (v >= -100) && (v <= 100) }"},
+  {name = "wt_cv",  t = "s16",    acc = "wt", desc = "wt with a v_convert_wr", v_type = "f", v_convert_wr = "{ v * 16 }", v_check = "{ (v >= -100) && (v <= 100) }"},
+  {name = "wt_cvv", t = "[3]s16", acc = "wt", desc = "vector wt with a v_convert_wr", v_convert_wr = "{ v + 8 }", v_check = "{ (v >= -100) && (v <= 100) }"},
 ]
 """
 
@@ -102,7 +102,7 @@ def test_py_wt_scalar(tmp_path):
     assert 'wt_s.write_uint_cached(value)' in py
     assert 'async def wt_s_write_trigger(self, value : int):' in py
     assert 'await self._var_wt_s.write_uint(value)' in py
-    # no v_convert, so no raw functions
+    # no value conversion, so no raw functions
     assert 'wt_s_write_cached_raw' not in py
     assert 'wt_s_write_trigger_raw' not in py
 

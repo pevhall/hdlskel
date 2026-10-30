@@ -65,7 +65,8 @@ class Ass(IntEnum):
         # rich colors
 
 class VType(Enum):
-    """Type of the `v` parameter of the `v_check` / `v_convert` recipe options.
+    """Type of the `v` parameter of the `v_check` / `v_convert_wr` / `v_convert_rd`
+    recipe options.
 
     Recipe option `v_type`: 'u' unsigned int, 's' signed int, 'f' float (a
     float_t in c++). It decides the type the user facing read / write functions

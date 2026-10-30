@@ -53,10 +53,14 @@ var = [
   {name = "regs_ro",  t = "[{RO_LEN}]s{RO_VAL_W}", ass = "debug", acc = "ro", desc = "RO registers"},
   # The old min = "{-1*INT_2}" / max = 100 range is now one v_check expression
   {name = "regs_rw",  t = "[{RW_LEN}]s{RW_VAL_W}", acc = "rw", desc = "RW registers", v_check="{ (v >= (-1*INT_2)) && (v <= 100) && ((v % RW_MULT) == 0) }"},
-  # A float register: v_type "f" makes v a float (a double in c++), v_convert
-  # converts the user value into the register value (v * 16) and a read uses its
-  # inverse (v / 16), so writing 1.5 stores 24 and reading gives 1.5 back.
-  {name = "temp",     t = "s16", acc = "rw", desc = "Temp, Q4 float scale", v_type = "f", v_convert = "{ v * INT_16 }", v_check = "{ (v >= -1000) && (v <= 1000) }"},
+  # A float register: v_type "f" makes v a float (a double in c++), v_convert_wr
+  # (value convert write side) converts the user value into the register value
+  # (v * RO_VAL_W) and a read uses its inverse v_convert_rd (v / RO_VAL_W),
+  # the scale is the k register RO_VAL_W, its value comes from the firmware.
+  # The same conversion can be written from the other side,
+  # v_convert_rd = "{ v / RO_VAL_W }", it is the inverse of v_convert_wr,
+  # a register never has both.
+  {name = "temp",     t = "s16", acc = "rw", desc = "Temp, float scale", v_type = "f", v_convert_wr = "{ v * RO_VAL_W }", v_check = "{ (v >= -1000) && (v <= 10*MEM_RW_LEN) }"},
   # A wt register is a trigger, the write that reaches the regio is
   # <reg>_write_trigger (<reg>_write_trigger_idx for a vector), while
   # <reg>_write_cached only writes the cache of the module.

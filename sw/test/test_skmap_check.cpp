@@ -1,6 +1,7 @@
 // Test the recipe value options of the C++ library: `v_check` (value limit of
-// the module user) and `v_convert` (conversion between the user value and the
-// value of the register). Runs on a captured regio file, no simulation needed:
+// the module user) and `v_convert_wr` / `v_convert_rd` (conversion between the
+// user value and the value of the register). Runs on a captured regio file,
+// no simulation needed:
 //   sw/build/test/test_skmap_check test/data/test_recipe.skmap
 #include "hdlskel/regio/cache.hpp"
 #include "hdlskel/skmap/module.hpp"
@@ -85,7 +86,7 @@ static void test_v_check_vec(autogen::RecipeTestBenchModule & m) {
     CHECK(regs->v_type() == VType::s);
 
     // every element is checked, the value of the module user is the value of
-    // the register here (no v_convert)
+    // the register here (no value conversion)
     regs->write_vec_sint_cached({2, 4, 6});
     CHECK_THROWS(regs->write_vec_sint_cached({2, 4, 5}));
     CHECK_THROWS(regs->write_vec_sint_cached({2, 2, 102}));   // > 100
@@ -102,49 +103,66 @@ static void test_v_check_vec(autogen::RecipeTestBenchModule & m) {
 }
 
 static void test_v_convert_scalar(autogen::RecipeTestBenchModule & m) {
-    // temp: v_type 'f', v_convert "{ v * 16 }", a Q4 style fixed point scale
+    // temp: v_type 'f', v_convert_wr "{ v * RO_VAL_W }", the scale is a k
+    // register, its value comes from the firmware (12 in this cached image),
+    // the v_check uses the k register MEM_RW_LEN (32 in this image)
+    const sint_t scale = m.RO_VAL_W();
+    ASSERT(scale == 12);
+    ASSERT(m.MEM_RW_LEN() == 32);
+    // printing resolves the k parameters of the expressions to their numbers,
+    // only `v` stays (the v_check is printed with the value of MEM_RW_LEN)
+    const std::string temp_check = "((v >= -1000) && (v <= (10 * 32)))";
     auto temp = m.temp_inst();
     CHECK(temp->has_v_convert());
     CHECK(temp->v_type() == VType::f);
-    ASSERT(temp->v_convert()->str == "(v * 16)");
-    ASSERT(temp->v_convert()->str_inv == "(v / 16)");
+    // the stored texts keep the k names (a k register has its value only at
+    // runtime), they are resolved when printed, see resolve_expr_names
+    ASSERT(temp->v_convert()->str == "(v * RO_VAL_W)");
+    ASSERT(temp->v_convert()->str_inv == "(v / RO_VAL_W)");
+    ASSERT(temp->v_check()->str == "((v >= -1000) && (v <= (10 * MEM_RW_LEN)))");
+    ASSERT(temp->resolve_expr_names("(v * RO_VAL_W)") == "(v * 12)");
 
     // the default functions are the user domain (float_t), the *_raw ones the
     // register domain
     m.temp_write(1.5);
-    CHECK(m.temp_read_raw() == 24);
+    CHECK(m.temp_read_raw() == 1.5*scale);
     CHECK(m.temp_read_cached() == 1.5);
-    m.temp_write_cached_raw(-16);
+    m.temp_write_cached_raw(-scale);
     CHECK(m.temp_read_cached() == -1.0);
 
     // the rounding is the python one, half away from zero (raw 1.5 -> 2)
     // a *_cached write only writes the cache, so it is read back with a *_cached read
-    m.temp_write_cached(1.5/16);
+    m.temp_write_cached(1.5/scale);
     CHECK(m.temp_read_cached_raw() == 2);
-    m.temp_write_cached(-1.5/16);
+    m.temp_write_cached(-1.5/scale);
     CHECK(m.temp_read_cached_raw() == -2);
 
-    // the user value is v_check'ed before it is converted
+    // the user value is v_check'ed before it is converted (the bound is
+    // 10*MEM_RW_LEN = 320, far below the s16 overflow of the converted value,
+    // so a user value that does not fit the register is not reachable here)
     CHECK_THROWS(m.temp_write(2000.0));
-    // and the raw value has to fit the register
-    CHECK_THROWS(m.temp_write(30000.0));    // raw 480000 does not fit in s16
 
     // a raw write gets the value of the register, its user value is checked too
-    CHECK_THROWS(m.temp_write_raw(20000));  // 20000/16 = 1250, above the check
+    CHECK_THROWS(m.temp_write_raw(20000));  // 20000/12 is above the check
 
     // the raw bytes are what a firmware can write, they bypass the check, the
     // read has to assert
-    const std::array<std::byte, 2> raw_1250 = {static_cast<std::byte>(0x20), static_cast<std::byte>(0x4E)};
+    const std::array<std::byte, 2> raw_1250 = {static_cast<std::byte>(0x98), static_cast<std::byte>(0x3A)}; // 15000 = 1250*scale
     temp->write_bytes_cached(raw_1250);
     CHECK(m.temp_read_cached() == 1250.0);
     CHECK(temp->ass_check_cached(Ass::none, nullptr) == Ass::error);
     auto s = temp->str_value_cached();
-    ASSERT(s == "((v >= -1000) && (v <= 1000)) 1250");
+    ASSERT(s == temp_check + " 1250");
 
     m.temp_write(12.25);
-    CHECK(m.temp_read_raw() == 196);
-    ASSERT(temp->str_value_cached() == "((v >= -1000) && (v <= 1000)) 12.25");
+    CHECK(m.temp_read_raw() == 147);       // 12.25*12
+    ASSERT(temp->str_value_cached() == temp_check + " 12.25");
     CHECK(temp->ass_check_cached(Ass::none, nullptr) == Ass::none);
+
+    // whole words only, RW_LEN is the suffix of MEM_RW_LEN and stays
+    ASSERT(temp->resolve_expr_names("(v % MEM_RW_LEN)") == "(v % 32)");
+    ASSERT(temp->resolve_expr_names("(v % RW_LENX)") == "(v % RW_LENX)");
+    ASSERT(temp->resolve_expr_names("(v)") == "(v)");
 }
 
 // the value conversion works with float_t, the type of a recipe `v_type = "f"`,
@@ -176,7 +194,7 @@ static void test_recipe_values(autogen::RecipeTestBenchModule & m) {
     CHECK(vec[0] == 2);
     CHECK(vec[1] == 4);
     CHECK(vec[2] == 6);
-    // the vector without a v_convert keeps its int interface
+    // the vector without a value conversion keeps its int interface
     m.regs_rw_write_idx_cached(1, 8);
     CHECK(m.regs_rw_read_idx_cached(1) == 8);
     CHECK(m.regs_rw_read_idx_cached(0) == 2);
