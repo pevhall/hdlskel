@@ -73,7 +73,8 @@ the register map focused it reads the asset under the table cursor,
 and with the tree focused it calls ``Module.read_all()`` on the module
 under the tree cursor (the read refreshes the skmap cache, and the
 shown value is refreshed from it).  The ``+`` / ``-`` keys add /
-subtract one to the value under the table cursor and write the result.
+subtract the *step increment* (1 by default, set with the ``s`` key)
+to / from the value under the table cursor and write the result.
 The step is done on the *bits* of the register (like the hex display
 and a hex input) and the result *wraps* in the width of the value (all
 ones + 1 is 0, 0 - 1 is all ones), so on a bool / flag — a single bool,
@@ -96,8 +97,9 @@ writes (``enter``) are **held** while a read-all / refresh is in
 progress and only go to the device once it has finished.  A value that does not pass a register's
 configured ``v_check`` is caught locally (the same condition
 ``Reg.check_value_limit()`` raises on) and the write is aborted
-before it reaches the device.  A register with a recipe ``v_convert``
-(see the recipe options ``v_type`` / ``v_check`` / ``v_convert``) is
+before it reaches the device.  A register with a recipe value conversion
+(see the recipe options ``v_type`` / ``v_check`` / ``v_convert_wr`` /
+``v_convert_rd``) is
 edited in the domain of the user of the module: a decimal input is the
 value of the user and the register converts it, a **0x-prefixed (hex)
 input sets the bits of the register directly** (the same as the
@@ -277,7 +279,7 @@ def _bits_str(value: int, width: int, kind: ValueKind) -> str:
 def _is_raw_write(reg, text: str) -> bool:
     """Does ``text`` write the bits of ``reg`` directly?
 
-    A 0x-prefixed (hex) input of a register with a recipe ``v_convert``
+    A 0x-prefixed (hex) input of a register with a recipe value conversion
     sets the bits of the register as typed, it does *not* go through the
     conversion (the same as the generated ``<reg>_write_*_raw``
     functions).  A decimal input stays in the domain of the user of the
@@ -478,12 +480,26 @@ class RegMapTable(DataTable):
         only a row that is re-rendered for another reason (the cursor or the
         hover moving over it) would show the new width, all the other rows
         would keep the old Value | Description split.
+
+        The height of an auto-height row is only measured when the row is
+        added, so every row is re-measured here too: a value / description
+        cell that wraps to a different number of lines at the new width
+        changes the height of its row.
         """
         col = self.columns[COL_VALUE]
         col.auto_width = False        # a fixed width (not the content width)
         col.width = width
         self._require_update_dimensions = True    # the total width changed
         self._clear_caches()
+        # re-measure the auto-height rows at the new width: the DataTable
+        # only measures rows whose height is 0 (a row with a height keeps
+        # rendering at exactly that many lines), so the heights go back
+        # to 0 first — _update_dimensions then renders the rows and
+        # stores the resulting height in row.height
+        auto_rows = [key for key, row in self.rows.items() if row.auto_height]
+        for key in auto_rows:
+            self.rows[key].height = 0
+        self._update_dimensions(auto_rows)
         self.refresh(layout=True)
 
     def value_col_width_for_pointer(
@@ -649,6 +665,7 @@ class SkmapUiApp(App):
         ("r", "read_selected", "Read"),
         ("+", "value_step_up", "v++"),
         ("-", "value_step_down", "v--"),
+        ("s", "set_step_value", "Step"),
         ("u", "cycle_refresh", "Update"),
         ("C", "clear_triggered", "Clear RC"),
         ("x", "toggle_value_bits", "Hex"),
@@ -662,6 +679,17 @@ class SkmapUiApp(App):
         # table) each install a key_tab / _key_shift_tab handler (see
         # ModuleTree / RegMapTable) that cycles between the two panels only.
     ]
+
+    #: the value input line's default placeholder — a class constant so
+    #: the 's' step-increment prompt can restore it (see
+    #: action_set_step_value / on_input_submitted)
+    _VALUE_PLACEHOLDER = (
+        "enter: edit (rw/wt) / clear (rc) | l: assert "
+        "level | u: update | R: read all | r: read | "
+        "+/-: step value | s: step increment | C: clear RC | tab: panels | "
+        "a: check asserts | x: show hex | "
+        "e: expand vec | 2: regio view"
+    )
 
     #: mouse hit-zone (cells) around a pane divider that starts a drag
     _RESIZE_EDGE = 3
@@ -710,6 +738,10 @@ class SkmapUiApp(App):
         # is computed when the job RUNS, not when the key was pressed)
         self._step_queue: list[tuple[RowObj, str, int | None, int]] = []
         self._step_pumping = False
+        # the '+' / '-' step increment, 1 by default — the 's' key sets
+        # it (the value input line doubles as the prompt, _step_prompt)
+        self._step_value = 1
+        self._step_prompt = False
         # the table row to restore the cursor to after a tree-rebuild
         # re-select (set by the read-all / assert-check workers): the
         # re-select's NodeSelected message is processed *after* the
@@ -786,13 +818,7 @@ class SkmapUiApp(App):
                 with Horizontal(id="value-inputs"):
                     yield ValueInput(
                         id="value-input",
-                        placeholder=(
-                            "enter: edit (rw/wt) / clear (rc) | l: assert "
-                            "level | u: update | R: read all | r: read | "
-                            "+/-: step value | C: clear RC | tab: panels | "
-                            "a: check asserts | x: show hex | "
-                            "e: expand vec | 2: regio view"
-                        ),
+                        placeholder=self._VALUE_PLACEHOLDER,
                     )
                 # the assert log lives inside the registers pane (not
                 # below the tabs): the regio tab then uses the full
@@ -1006,7 +1032,7 @@ class SkmapUiApp(App):
         return Text(mem.read_idx_rich_str_cached(idx))
 
     def _reg_desc_text(self, reg: Reg) -> Text:
-        """Rich description cell: a register with a recipe ``v_convert``
+        """Rich description cell: a register with a recipe value conversion
         starts with the conversion (``={ v * 16 }``) in the color of
         ``Ass.none``, the same text as the skmap reg map (see
         ``Reg.v_convert_marker``)."""
@@ -1699,6 +1725,7 @@ class SkmapUiApp(App):
             "read_selected",
             "value_step_up",
             "value_step_down",
+            "set_step_value",
             "cycle_refresh",
             "clear_triggered",
             "toggle_value_bits",
@@ -1877,19 +1904,38 @@ class SkmapUiApp(App):
             self._refresh_idle.set()
 
     def action_value_step_up(self) -> None:
-        """'+' key: add one to the value under the table cursor."""
-        self._step_selected(1)
+        """'+' key: add the step increment (1 by default, set with 's')
+        to the value under the table cursor."""
+        self._step_selected(self._step_value)
 
     def action_value_step_down(self) -> None:
-        """'-' key: subtract one from the value under the table cursor."""
-        self._step_selected(-1)
+        """'-' key: subtract the step increment (set with 's') from the
+        value under the table cursor."""
+        self._step_selected(-self._step_value)
+
+    def action_set_step_value(self) -> None:
+        """'s' key: set the '+' / '-' step increment (1 by default).
+
+        The value input line doubles as the prompt: prefilled with the
+        current increment, enter parses the text (decimal or 0x-hex,
+        at least one) and esc keeps the current one — a text that is
+        not a number of at least one is rejected (logged).
+        """
+        self._step_prompt = True
+        self.value_input.placeholder = (
+            f"step increment (current {self._step_value}): decimal or "
+            "0x-hex, >= 1 — enter sets, esc keeps"
+        )
+        # prefill with the current increment so it can be edited in place
+        self.value_input.value = str(self._step_value)
+        self.value_input.focus()
 
     def _step_selected(self, delta: int) -> None:
         """'+' / '-' keys: add / subtract ``delta`` to the value under the
         table cursor and write the result to the device.
 
         The step is done on the *bits* of the register, like the hex
-        display and a hex input (so the ``v_convert`` of a recipe is not
+        display and a hex input (so the ``v_convert_wr`` / ``v_convert_rd`` of a recipe are not
         applied, see _is_raw_write), and the result wraps in the width of
         the value (all ones + 1 is 0, 0 - 1 is all ones).  A bool / flag
         is one bit — or a list of bits — so there the step is a toggle
@@ -2437,7 +2483,7 @@ class SkmapUiApp(App):
         ``x`` bits display is on), decimal otherwise — the same number
         bases the table shows.  The input accepts both hex and decimal.
 
-        A reg with a recipe ``v_convert`` is prefilled (and edited) with
+        A reg with a recipe value conversion (``v_convert_wr`` / ``v_convert_rd``) is prefilled (and edited) with
         the value of the module user, the number the table shows, not
         with the raw value of the register.
         """
@@ -2511,6 +2557,29 @@ class SkmapUiApp(App):
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if not isinstance(event.input, ValueInput):
             return  # the regio tab's form inputs (handled by the view)
+        if self._step_prompt:
+            # the value input line doubled as the step increment prompt
+            # (action_set_step_value): a number of at least one sets it,
+            # anything else keeps the current increment
+            self._step_prompt = False
+            self.value_input.placeholder = self._VALUE_PLACEHOLDER
+            self.value_input.value = ""
+            try:
+                step = int(event.value.strip(), 0)   # decimal or 0x-hex
+            except ValueError:
+                step = 0
+            if step < 1:
+                logging.warning(
+                    "step increment %r rejected (need a decimal or 0x-hex "
+                    "number >= 1): the step stays %d",
+                    event.value, self._step_value,
+                )
+            else:
+                self._step_value = step
+                self.notify(f"step increment = {step}", timeout=3)
+            if self.table.row_count:
+                self.table.focus()
+            return
         if self.table.row_count == 0:
             return
         row = self.table.cursor_row
@@ -2596,6 +2665,10 @@ class SkmapUiApp(App):
         )
 
     async def on_value_input_canceled(self, event: ValueInput.Canceled) -> None:
+        if self._step_prompt:
+            # esc on the 's' step increment prompt: the increment stays
+            self._step_prompt = False
+            self.value_input.placeholder = self._VALUE_PLACEHOLDER
         if self.value_inputs.query("ValueInput.lane"):
             await self._close_vector_inputs()
         self._edit_lane = None
@@ -2607,7 +2680,7 @@ class SkmapUiApp(App):
         """Parse a value for ``asset`` (Reg or ExternalMemVec): decimal
         or 0x-prefixed hex, a float for a recipe ``v_type = 'f'``.
 
-        A hex value of a register with a ``v_convert`` is the value of the
+        A hex value of a register with a value conversion is the value of the
         register (its bits), a decimal value the value of the user of the
         module, see _is_raw_write.
 
@@ -2622,13 +2695,13 @@ class SkmapUiApp(App):
         or, for a Reg, does not pass its ``v_check`` — the same condition
         ``Reg.check_value_limit()`` would raise on, so the write is
         aborted before it reaches the device.  The bits of a register with
-        a ``v_convert`` (a hex input, see _is_raw_write) are not checked
+        a value conversion (a hex input, see _is_raw_write) are not checked
         against the ``v_check`` of the user value they stand for.
         """
         vt = asset.value_type
         t = text.strip()
         is_reg = isinstance(asset, Reg)
-        # a hex input of a reg with a v_convert writes the bits of the
+        # a hex input of a reg with a value conversion writes the bits of the
         # register, it stays in the domain of the register
         raw = is_reg and _is_raw_write(asset, t)
         if is_reg and asset.v_type.is_float and not _is_hex_literal(t):
@@ -2667,7 +2740,7 @@ class SkmapUiApp(App):
         width range and passing the ``v_check`` of the reg.
 
         The value is a value of the module user: a float for a recipe
-        ``v_type = 'f'``, an int otherwise (with a ``v_convert`` the reg
+        ``v_type = 'f'``, an int otherwise (with a value conversion the reg
         converts it when it is written).
 
         Returns ``None`` if no value passes the ``v_check``.
@@ -2731,7 +2804,7 @@ class SkmapUiApp(App):
         non-cached read so the table shows the real device state.
 
         ``raw`` writes the bits of the register directly, without the
-        ``v_convert`` of the recipe (see _is_raw_write).
+        ``v_convert_wr`` / ``v_convert_rd`` of the recipe (see _is_raw_write).
         """
         key = self._row_keys[row]
         self._run_regio(
@@ -2769,7 +2842,7 @@ class SkmapUiApp(App):
                 await self._regio(reg.write_zero())
             elif reg.has_v_convert and not raw:
                 # the UI writes the value of the module user, the reg converts
-                # it with the recipe v_convert
+                # it with the recipe v_convert_wr
                 await self._regio(reg.write_converted(value))
             elif isinstance(value, list):
                 if reg.value_type.kind is ValueKind.sint:
@@ -2799,7 +2872,7 @@ class SkmapUiApp(App):
         """Write the given (idx, value) lanes one at a time:
         ``write_idx_uint`` / ``write_idx_sint`` for a raw lane (the bits of
         the register, what the generated ``*_write_*_raw`` functions call),
-        ``write_idx_converted`` for a lane of a reg with a ``v_convert``,
+        ``write_idx_converted`` for a lane of a reg with a value conversion,
         else the ``write_idx_*`` of the value kind. Then read the register
         back (updates the register's own row and every lane row)."""
         if raws is None:
@@ -2824,7 +2897,7 @@ class SkmapUiApp(App):
 
         def writer(idx: int, raw: bool):
             if raw or not reg.has_v_convert:
-                # the bits of the register, without the v_convert
+                # the bits of the register, without the value conversion
                 return (
                     reg.write_idx_sint
                     if reg.value_type.kind is ValueKind.sint

@@ -1123,7 +1123,7 @@ def make_edit_top():
                 Reg(
                     self, "TEMP", vt_s16, acc=Acc.rw, desc="scaled",
                     # the value of the module user is a float, the register
-                    # holds it scaled by 16 (a recipe v_convert)
+                    # holds it scaled by 16 (a recipe v_convert_wr)
                     v_type=VType.f,
                     v_check=ValueCheck(lambda v: -1000 <= v <= 1000,
                                        "((v >= -1000) && (v <= 1000))", VType.f),
@@ -1323,7 +1323,7 @@ def test_edit_failing_v_check_aborted():
 
 
 def test_edit_v_convert_float():
-    """A reg with a recipe ``v_convert`` is shown, prefilled and edited with
+    """A reg with a recipe value conversion is shown, prefilled and edited with
     the value of the module user (a float for ``v_type = 'f'``), not with the
     raw value stored in the register."""
     async def run():
@@ -1373,7 +1373,7 @@ def test_edit_v_convert_float():
             cell = app.table.get_cell_at(Coordinate(4, DESC))
             assert [span.style for span in cell.spans] == [Ass.none.color, "blue"]
             assert cell.spans[0].end == len("={ v * 16 } ")
-            # a register without a v_convert has a plain description (a Text
+            # a register without a value conversion has a plain description (a Text
             # with only the blue style of the row, nothing is highlighted)
             cell_other = app.table.get_cell_at(Coordinate(0, DESC))
             assert cell_other.plain == top.arr_reg_var[0].desc
@@ -3308,5 +3308,146 @@ def test_step_keys_hold_writes_each_value_once():
                 await pilot.pause()
             vals = [int.from_bytes(w[:4], "little") for w in writes[4:]]
             assert vals == [start + 3, start + 2]
+
+    _run(run())
+
+
+def test_v_check_printed_in_passed_color():
+    """The printed v_check uses the Ass.passed color when the cached
+    value passes the check, the assert color when it does not."""
+    top = make_edit_top()
+    lmt = next(r for r in top.arr_reg_var if r.name == "LMT")
+    assert lmt.v_check is not None   # (v >= 2) && (v <= 100)
+
+    # a passing value: the check string is printed in the passed color
+    lmt.write_uint_cached(50)
+    s = lmt.read_rich_str_cached()
+    assert "(v >= 2) && (v <= 100)" in Text.from_markup(s).plain
+    assert "[green]" in s
+
+    # a failing value (written straight into the cache — write_uint_cached
+    # would abort on the check): printed in the assert color, not green
+    lmt.write_bytes_cached((0).to_bytes(lmt.size, "little"))
+    s = lmt.read_rich_str_cached()
+    assert "(v >= 2) && (v <= 100)" in Text.from_markup(s).plain
+    assert "[green]" not in s
+
+
+def test_step_increment_set_with_s_key():
+    """'s' sets the '+' / '-' step increment via the value input line;
+    the next step jumps by the new increment; esc / invalid input keep
+    the current one."""
+
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(140, 36)) as pilot:
+            await _wait_asserts(app, pilot)
+            v_reset = next(
+                o
+                for o in app._row_objs.values()
+                if getattr(o, "name", "") == "V_RESET"
+            )
+            key = next(k for k, o in app._row_objs.items() if o is v_reset)
+            await _select_node(app, _find_node(app, top), pilot)
+            row = app._row_keys.index(key)
+            app.table.focus()
+            app.table.move_cursor(row=row, column=0)
+            await pilot.pause()
+
+            # record every device write to the register's address
+            writes: list[bytes] = []
+            real_write = top._regio.dev_write
+
+            async def spy_write(addr, data):
+                if addr == v_reset.addr:
+                    writes.append(bytes(data))
+                return await real_write(addr, data)
+
+            top._regio.dev_write = spy_write
+
+            assert app._step_value == 1
+
+            # 's' opens the prompt in the value input line, prefilled
+            # with the current increment; esc keeps it
+            await pilot.press("s")
+            await pilot.pause()
+            assert app._step_prompt
+            assert app.focused is app.value_input
+            assert app.value_input.value == "1"
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not app._step_prompt
+            assert app._step_value == 1
+
+            # set an hex increment: one '+' step jumps by 0x10
+            await pilot.press("s")
+            app.value_input.value = "0x10"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app._step_value == 16
+            assert app.value_input.value == ""
+            assert app.value_input.placeholder == SkmapUiApp._VALUE_PLACEHOLDER
+            assert app.focused is app.table
+
+            start = v_reset.read_uint_cached()
+            await pilot.press("+")
+            for _ in range(1000):  # wait for the step queue to drain
+                if not app._step_queue and not app._step_pumping:
+                    break
+                await pilot.pause()
+            assert [int.from_bytes(w[:4], "little") for w in writes] == [
+                start + 16
+            ]
+
+            # a text that is not a number, and a number below one, are
+            # rejected: the increment stays
+            await pilot.press("s")
+            app.value_input.value = "1e9"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app._step_value == 16
+            await pilot.press("s")
+            app.value_input.value = "0"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app._step_value == 16
+            assert len(writes) == 1   # no further step went out
+
+    _run(run())
+
+
+def test_value_col_resize_refits_row_heights():
+    """Resizing the value | description boundary re-measures the height
+    of every row: a wide value that wrapped at the old width takes one
+    line when the column is widened (and wraps again when narrowed)."""
+
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(200, 30)) as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            await pilot.pause()
+            # BIG's 34-char hex value does not fit the default 22-wide
+            # Value column: the auto-height row grew over lines
+            assert app.table.get_row_height("r0") >= 2
+
+            # wide enough for the whole value: the row must collapse back
+            # to one line (the resize re-measures every auto-height row)
+            app.table.set_value_col_width(40)
+            await pilot.pause()
+            assert app.table.value_col_width() == 40
+            assert app.table.get_row_height("r0") == 1
+
+            # narrow again: the value wraps over multiple lines
+            app.table.set_value_col_width(8)
+            await pilot.pause()
+            assert app.table.get_row_height("r0") >= 3
+
+            # the reset (double-click) re-fits too
+            app.table.reset_value_col_width()
+            await pilot.pause()
+            assert app.table.get_row_height("r0") >= 2
 
     _run(run())
