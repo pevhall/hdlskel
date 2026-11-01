@@ -173,6 +173,7 @@ import asyncio
 import importlib.util
 import logging
 import random
+import sys
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -3134,19 +3135,30 @@ def auto_int(s: str) -> int:
     return int(s, 0)
 
 
-def _import_module_file(path) -> None:
-    """Import a generated skmap module ``.py`` file.
+def _import_module_spec(spec : str) -> None:
+    """Import a generated skmap module so it registers with the factory.
 
     Executing the module registers its ``skmap.Module`` subclasses
     (``skmap.register_Module``), so ``make_module`` can instantiate the
     head IDs found in the regio / cache file.
+
+    ``spec`` is a python module name (``pkg.recipe_test_bench_module``)
+    or the path of a generated ``.py`` file, which is loaded from the
+    file (same ``-I`` behavior as ``skmap_ui_plot_regs``).
     """
-    path = Path(path).resolve()
-    spec = importlib.util.spec_from_file_location(path.stem, path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot import module file: {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    path = Path(spec)
+    if spec.endswith(".py") or path.is_file():
+        if not path.is_file():
+            raise SystemExit(f"-I: skmap module file not found: {spec}")
+        path = path.resolve()
+        spec_obj = importlib.util.spec_from_file_location(path.stem, path)
+        if spec_obj is None or spec_obj.loader is None:
+            raise ImportError(f"cannot import module file: {path}")
+        module = importlib.util.module_from_spec(spec_obj)
+        sys.modules[path.stem] = module   # keep a later import consistent
+        spec_obj.loader.exec_module(module)
+    else:
+        importlib.import_module(spec)
 
 
 async def _smoke(app: "SkmapUiApp") -> None:
@@ -3189,11 +3201,14 @@ def main() -> None:
         help="Module regio address (defaults to 0)",
     )
     parser.add_argument(
-        "-m", "--module-file",
-        type=Path,
-        default=None,
-        help="Generated skmap module .py file to import first "
-             "(registers the module classes; needed for -f/--file and -i/--host)",
+        "-I", "--import",
+        dest="imports",
+        action="append",
+        default=[],
+        metavar="MODULE|FILE.py",
+        help="Import a python module or a generated skmap module .py file "
+             "first (registers the module classes; repeatable, needed for "
+             "-f/--file and -i/--host)",
     )
     parser.add_argument(
         "--smoke",
@@ -3227,8 +3242,8 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.module_file is not None:
-        _import_module_file(args.module_file)
+    for module_spec in args.imports:
+        _import_module_spec(module_spec)
 
     if args.demo:
         print("mode: built-in demo module")

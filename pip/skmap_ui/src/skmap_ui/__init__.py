@@ -15,7 +15,7 @@ Run the built-in demo::
 
 Or a module from a skelregi cache file (see ``test.sh``)::
 
-    skmap-ui -f tree.skmap -m test_skmap_tree_module.py
+    skmap-ui -f tree.skmap -I test_skmap_tree_module.py
 
 Or your own module::
 

@@ -14,7 +14,7 @@
 # (Ctrl+Q) the whole simulation (run.py + nvc) is killed.
 #
 # Override the server location with HOST / PORT environment vars:
-#   HOST=127.0.0.1 PORT=39600 bash test_skmap_tree_sim.sh
+#   HOST=127.0.0.1 PORT=39600 bash demo_skmap_recipe_sim.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -59,4 +59,6 @@ fi
 echo "simulation server is up; starting TUI (Ctrl+Q to quit)"
 
 # no exec: the EXIT trap must fire to clean up the simulation
-python3 -m skmap_ui -i "$HOST" -p "$PORT" -m $TB_DIR/recipe_test_bench_module.py
+# find the skmap_ui package next to this directory, no install needed
+export PYTHONPATH="$(cd "$(dirname "$0")/../src" && pwd)${PYTHONPATH:+:$PYTHONPATH}"
+python3 -m skmap_ui -i "$HOST" -p "$PORT" -I $TB_DIR/recipe_test_bench_module.py

@@ -546,6 +546,9 @@ class {recipe.sw_module}(skmap.Module):
         py_f.write("""
     def _init_reg_map_k(self):
 """)
+        if len(recipe.k) == 0:
+            # an empty register map still needs a function body
+            py_f.write("        pass\n\n")
         for kv in recipe.k:
             name_k = name_to_reg_k(kv.name)
             if kv.flags is not None:
@@ -565,6 +568,9 @@ class {recipe.sw_module}(skmap.Module):
             py_f.write(f"        self._add_reg_k({name_k})\n\n")
 
         py_f.write("""    def _init_reg_map_var(self):\n""")
+        if len(recipe.var) == 0:
+            # an empty register map still needs a function body
+            py_f.write("        pass\n\n")
         for varv in recipe.var:
             name_var = name_to_reg_var(varv.name)
             # if varv.t.kind == ValueKind.flag:

@@ -320,8 +320,8 @@ The CLI can build the top module from a **skelregi cache file** (via the
 `regio` package) or a **live TCP regio**:
 
 ```bash
-skmap-ui -f tree.skmap -m test_skmap_tree_module.py       # cache file
-skmap-ui -i <host> -p <port> -a 0x40000000 -m module.py  # live TCP
+skmap-ui -f tree.skmap -I test_skmap_tree_module.py       # cache file
+skmap-ui -i <host> -p <port> -a 0x40000000 -I module.py  # live TCP
 ```
 
 | flag | meaning |
@@ -329,7 +329,7 @@ skmap-ui -i <host> -p <port> -a 0x40000000 -m module.py  # live TCP
 | `-f/--file` | build the module from a skelregi cache file (writes are applied to the in-memory cache) |
 | `-i/--host`, `-p/--port` | connect to a live regio over TCP |
 | `-a/--addr` | module regio address (default `0`, decimal or `0x`-prefixed) |
-| `-m/--module-file` | generated skmap module `.py` to import first (its `skmap.register_Module` calls make the head IDs known) |
+| `-I/--import` | python module name **or** generated skmap module `.py` path to import first (its `skmap.register_Module` calls make the head IDs known); repeatable; replaces the old `-m/--module-file` |
 | `--asserts-level` | initial assert level (see *Assert log*); cycle at runtime with `l` |
 | `--refresh` | initial refresh (update) period in seconds, `0` = off (see *Assert log*); cycle at runtime with `u` |
 | `--smoke` | headless: start, wait for the assert check, print the result and exit |
@@ -337,19 +337,42 @@ skmap-ui -i <host> -p <port> -a 0x40000000 -m module.py  # live TCP
 With neither `-f` nor `-i`, the built-in demo is used. `regio`'s
 `--debug-print-regio` flag is also available.
 
-### Example: `src/skmap_ui/test_skmap_tree_file.sh`
+## Plot registers over time (`skmap_ui_plot_regs`)
 
-`src/skmap_ui/` contains symlinks `tree.skmap` and
-`test_skmap_tree_module.py` into a generated `tb/` directory; the script
-runs the TUI against the cache file:
+`src/skmap_ui_plot_regs.py` is a pyqtgraph GUI that samples `var`
+registers periodically and plots amplitude against time (one color
+per signal, a legend, red triangles mark samples that fail a
+`v_check`, `rc` registers are cleared after each read):
 
 ```bash
-cd src/skmap_ui
-bash test_skmap_tree_file.sh            # interactive TUI on the tree.skmap cache
-bash test_skmap_tree_file.sh --smoke    # headless: prints e.g. "smoke OK: ... worst=passed asserts=0"
+python3 src/skmap_ui_plot_regs.py -p 39601 -I <generated_module>.py \
+    0 temp regs_rw            # <addr> <reg> [reg vec[idx] ...], repeatable
+
+# example: -t 0.5 (sample every 0.5 s), -l 200 (keep 200 samples)
+python3 src/skmap_ui_plot_regs.py -t 0.5 -l 200 -p 39601 -I module.py 0 temp
 ```
 
-### Example: live simulation (`src/skmap_ui/test_skmap_tree_sim.sh`)
+Requires `pyqtgraph` + a Qt binding (`pip install skmap-ui[plot]` or
+`pip install pyqtgraph`). The `demo/demo_skmap_plot_regs_sim.sh`
+script starts a simulated module (cocotb testbench), a headless
+`regio_ui` proxy and then **both** this plot and the `skmap_ui` TUI
+against it, so registers can be edited in the TUI and are seen live
+on the plot.
+
+### Example: `demo/demo_skmap_tree_file.sh`
+
+`demo/` contains symlinks `tree.skmap` (the regio cache the
+tree testbench writes) and `test_skmap_tree_module.py` into a generated
+`tb/` directory; the script runs the TUI against the cache file (build
+`fw/tb/skmap/tb_py_skmap_tree` once first):
+
+```bash
+cd demo
+bash demo_skmap_tree_file.sh            # interactive TUI on the tree.skmap cache
+bash demo_skmap_tree_file.sh --smoke    # headless: prints e.g. "smoke OK: ... worst=passed asserts=0"
+```
+
+### Example: live simulation (`demo/demo_skmap_tree_sim.sh`)
 
 The script starts the cocotb testbench
 (`fw/tb/skmap/tb_py_skmap_tree/run.py -s`), which simulates the module
@@ -357,8 +380,8 @@ with nvc and serves it over regio TCP, waits until the server port
 accepts connections, then runs the TUI against the live server:
 
 ```bash
-cd src/skmap_ui
-bash test_skmap_tree_sim.sh     # Ctrl+Q quits and kills the simulation
+cd demo
+bash demo_skmap_tree_sim.sh     # Ctrl+Q quits and kills the simulation
 ```
 
 Every trigger / edit then does real regio I/O against the simulation.
