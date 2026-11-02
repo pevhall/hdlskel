@@ -53,4 +53,10 @@ inline int ceil(double value) {
     return static_cast<int>(std::ceil(value));
 }
 
+// floor of a float, the nearest integer below it (recipe `$floor`,
+// mirrors floor() of recipe_functions.py, std::floor semantics)
+inline int floor(double value) {
+    return static_cast<int>(std::floor(value));
+}
+
 }

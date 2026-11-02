@@ -180,6 +180,17 @@ static void test_recipe_values(autogen::RecipeTestBenchModule & m) {
     CHECK(m.RO_LEN() == 3);
     CHECK(m.RW_LEN() == 3);
     CHECK(m.RW_MULT() == 2);
+    // the recipe float built-ins, mirrors of recipe_functions.py (round is
+    // half away from zero like std::round, not the banker's python round)
+    CHECK(recipe_functions::round(2.5)   == 3);
+    CHECK(recipe_functions::round(-2.5)  == -3);
+    CHECK(recipe_functions::round(10.4)  == 10);
+    CHECK(recipe_functions::ceil(10.1)   == 11);
+    CHECK(recipe_functions::ceil(-10.1)  == -10);
+    CHECK(recipe_functions::ceil(3.0)    == 3);
+    CHECK(recipe_functions::floor(10.9)  == 10);
+    CHECK(recipe_functions::floor(-10.1) == -11);
+    CHECK(recipe_functions::floor(3.0)   == 3);
     CHECK(m.ctrl_flag_0_read_cached() == true);
     CHECK(m.ctrl_flag_8_read_cached() == false);
 

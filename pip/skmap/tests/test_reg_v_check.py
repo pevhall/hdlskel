@@ -460,7 +460,7 @@ def test_k_parameters_are_resolved_when_printed():
 def test_round_ceil_evaluate():
     """$round rounds to the nearest integer, halves away from zero (the
     rounding of the runtime and of std::round), $ceil gives the nearest
-    integer above the value."""
+    integer above the value, $floor the nearest integer below it."""
     from skmap.code_generator_parse_resolvable import parse_resolvable
     assert resolvable_to_int(parse_resolvable("$round(2.5)", {})) == 3
     assert resolvable_to_int(parse_resolvable("$round(-2.5)", {})) == -3
@@ -470,6 +470,14 @@ def test_round_ceil_evaluate():
     assert resolvable_to_int(parse_resolvable("$ceil(-10.1)", {})) == -10
     assert resolvable_to_int(parse_resolvable("$ceil(3)", {})) == 3
     assert resolvable_to_int(parse_resolvable("$ceil($round(2.6))", {})) == 3
+    assert resolvable_to_int(parse_resolvable("$floor(10.9)", {})) == 10
+    assert resolvable_to_int(parse_resolvable("$floor(-10.1)", {})) == -11
+    assert resolvable_to_int(parse_resolvable("$floor(3)", {})) == 3
+    # the recipe runtime functions behind the built-ins, python mirror of c++
+    import skmap.recipe_functions as rfn
+    assert rfn.round(2.5) == 3 and rfn.round(-2.5) == -3 and rfn.round(10.4) == 10
+    assert rfn.ceil(10.1) == 11 and rfn.ceil(-10.1) == -10
+    assert rfn.floor(10.9) == 10 and rfn.floor(-10.1) == -11
 
 def test_v_check_float_numbers(tmp_path):
     """`v_check` can use float numbers, eg
@@ -670,15 +678,21 @@ def test_float_v_convert_rounds_the_raw_value():
     assert reg.read_sint_cached() == -2
 
 def test_v_convert_round_ceil_wrapper(tmp_path):
-    # $round / $ceil can wrap a conversion on the write side, the wrapper is
-    # dropped for the derived read side (the runtime rounds the write result
-    # to the register value anyway, round / ceil of a register value is the
-    # identity, so the inverse of { $round(v * 2.5) } is { v / 2.5 })
+    # $round / $ceil / $floor can wrap a conversion on the write side, the
+    # wrapper is dropped for the derived read side (the runtime rounds the
+    # write result to the register value anyway, round / ceil / floor of a
+    # register value is the identity, so the inverse of { $round(v * 2.5) }
+    # is { v / 2.5 })
     recipe = make_recipe(tmp_path, var=', v_type="f", v_convert_wr="{ $round(v * 2.5) }"')
     reg = recipe.var[0]
     assert reg.v_convert_wr_str == '$round((v * 2.5))'
     assert reg.v_convert_rd_str == '(v / 2.5)'
-    # the read side is the exact inverse, a $round / $ceil wrapper there is
-    # not invertible (the raw value would not convert back), it is rejected
+    recipe = make_recipe(tmp_path, var=', v_type="f", v_convert_wr="{ $floor(v * 2.5) }"')
+    reg = recipe.var[0]
+    assert reg.v_convert_wr_str == '$floor((v * 2.5))'
+    assert reg.v_convert_rd_str == '(v / 2.5)'
+    # the read side is the exact inverse, a $round / $ceil / $floor wrapper
+    # there is not invertible (the raw value would not convert back), it is
+    # rejected
     with pytest.raises(Exception, match='cannot be reversed'):
         make_recipe(tmp_path, var=', v_type="f", v_convert_rd="{ $ceil(v / 2.5) }"')

@@ -25,3 +25,11 @@ def ceil(value):
     library.
     """
     return math.ceil(value)
+
+def floor(value):
+    """Floor of a value, the nearest integer below it (recipe `$floor`).
+
+    $floor(10.9) = 10, $floor(-10.1) = -11, matches std::floor of the c++
+    library.
+    """
+    return math.floor(value)
