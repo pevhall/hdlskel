@@ -9,7 +9,7 @@ Two recipe options are expressions of the register value `v`:
 
   * `v_check`       a boolean expression, a value that fails it is an assert on
                     a read and is rejected on a write.
-  * `v_convert_wr`  an int expression converting the user value into the raw
+  * `v_convert_wr`  an expression converting the user value into the raw
                     register value (the write side). Its inverse, the read side
                     `v_convert_rd`, is derived here, see invert_resolvable().
   * `v_convert_rd`  the read side given directly (register value -> user
@@ -18,10 +18,13 @@ Two recipe options are expressions of the register value `v`:
 
 All three options can use the constants of the recipe, the `ipkg` values and
 the `k` registers, as parameters of the expression (only `v` and the recipe
-names are allowed, an ipkg / k name resolves to its value).
+names are allowed, an ipkg / k name resolves to its value). Numbers are ints
+or floats, eg v_check="{ (v >= -1000.0) && (v <= $ceil(10.1*MEM_RW_LEN)) }",
+the built-in functions $clog2 / $cdiv / $round / $ceil are available.
 """
 
 import copy
+import math
 import re as _re
 from fractions import Fraction
 from math import gcd
@@ -93,6 +96,8 @@ class BultiInOperation(Enum):
 class BuiltInFunctionEnum(Enum):
     clog2 = auto()
     cdiv = auto()
+    round = auto()
+    ceil  = auto()
 
 @dataclass
 class BuiltInFunction():
@@ -103,8 +108,11 @@ class BuiltInFunction():
 
 function_clog2 = BuiltInFunction(BuiltInFunctionEnum.clog2 ,'clog2', 1)
 function_cdiv  = BuiltInFunction(BuiltInFunctionEnum.cdiv ,'cdiv' , 2)
+function_round = BuiltInFunction(BuiltInFunctionEnum.round,'round', 1)
+function_ceil  = BuiltInFunction(BuiltInFunctionEnum.ceil ,'ceil' , 1)
 
-_BUILTIN_FUNCTIONS = {'clog2': function_clog2, 'cdiv': function_cdiv}
+_BUILTIN_FUNCTIONS = {'clog2': function_clog2, 'cdiv': function_cdiv,
+                      'round': function_round, 'ceil' : function_ceil}
 
 class ResolvableValueParam():
     """Leaf for a named parameter of a resolvable expression.
@@ -149,6 +157,18 @@ class ResolvableFunctionBuiltIn:
         return f"${self.func.name}({', '.join([str(p) for p in self.params])})" #type: ignore
 
 def make_resolvable_function(lhs : ResolvableT, op : BultiInOperation, rhs : ResolvableT) -> ResolvableT:
+    if isinstance(lhs, (int, float)) and not isinstance(lhs, bool) \
+            and isinstance(rhs, (int, float)) and not isinstance(rhs, bool) \
+            and (isinstance(lhs, float) or isinstance(rhs, float)):
+        # float constant folding, a recipe number can be a float, eg
+        # v_check="{ v <= $ceil(10.1*MEM_RW_LEN) }". The recipe `/` is a true
+        # division as soon as a float is involved
+        match op:
+            case BultiInOperation.add  : return lhs + rhs
+            case BultiInOperation.sub  : return lhs - rhs
+            case BultiInOperation.mult : return lhs * rhs
+            case BultiInOperation.div  : return lhs / rhs
+            case BultiInOperation.power: return lhs ** rhs
     if isinstance(rhs, int):
         if isinstance(lhs, int):
             match op:
@@ -169,6 +189,7 @@ def make_resolvable_function(lhs : ResolvableT, op : BultiInOperation, rhs : Res
 _TOKEN_SPEC = [
     ('NAME',   r'[A-Za-z_][A-Za-z0-9_]*'),
     ('FUNC',   r'\$[A-Za-z_][A-Za-z0-9_]*'),
+    ('FLOAT',  r'\d+\.\d*|\.\d+'),   # must precede NUMBER, eg 1000.0 / .5
     ('NUMBER', r'\d+'),
     ('POWER',  r'\*\*'),          # must precede MUL, else "**" tokenizes as two "*"
     ('EQ',     r'=='),            # must precede the single character ops
@@ -301,6 +322,9 @@ class _RecipeExprParser:
         if tok.kind == 'NUMBER':
             self._advance(); return int(tok.value)
 
+        if tok.kind == 'FLOAT':
+            self._advance(); return float(tok.value)
+
         if tok.kind == 'NAME':
             self._advance()
             name = tok.value
@@ -341,11 +365,11 @@ class _RecipeExprParser:
 
 def parse_resolvable(expr: Union[str, int], name_to_k: NameToKT, params : Optional[dict[str, VType]] = None) -> ResolvableT:
     """Parse a recipe expression ("{NAME}", "$func(...)", + - * / % ** == !=
-    < <= > >= && || !, parens) into a ResolvableT tree. Constant
-    sub-expressions fold to plain ints automatically via
-    make_resolvable_function. `params` maps a parameter name to its VType,
-    those names resolve to a ResolvableValueParam leaf instead of a recipe k
-    value."""
+    < <= > >= && || !, parens) into a ResolvableT tree. Numbers are ints or
+    floats (eg 1000.0, 10.1). Constant sub-expressions fold to plain numbers
+    automatically via make_resolvable_function. `params` maps a parameter name
+    to its VType, those names resolve to a ResolvableValueParam leaf instead of
+    a recipe k value."""
     if isinstance(expr, int):
         return expr
     tokens = _tokenize(expr)
@@ -376,6 +400,8 @@ def parse_resolvable_v_check(expr : Union[str, int], name_to_k : NameToKT, v_typ
     Returns the resolvable tree and the printable source text (names resolved to
     values, see resolvable_print_source). The tree must resolve to a boolean and
     may only reference the value parameter `v` and recipe k / ipkg values.
+    Numbers are ints or floats, a float register (v_type 'f') typically checks
+    float bounds, eg "{ (v >= -1000.0) && (v <= $ceil(10.1*MEM_RW_LEN)) }".
     """
     inner = strip_recipe_expr(expr)
     tree = parse_resolvable(inner, name_to_k, params={V_CHECK_PARAM : v_type})
@@ -448,11 +474,14 @@ def is_bool_expr(node : ResolvableT) -> bool:
 
 
 def contains_float_value(node : ResolvableT) -> bool:
-    """True if the expression evaluates as a float, it uses a float `v`.
+    """True if the expression evaluates as a float, it uses a float `v` or a
+    float literal.
 
     The recipe `/` is an integer division, a float expression needs a float one,
     see the python code generator (c++ divides as a float_t by itself).
     """
+    if isinstance(node, float):
+        return True
     if is_value_param(node):
         return node.v_type.is_float
     if isinstance(node, ResolvableFunctionOperation):
@@ -504,6 +533,8 @@ def resolvable_to_int(node : ResolvableT) -> Union[int, float]:
         return int(node)
     if isinstance(node, int):
         return node
+    if isinstance(node, float):
+        return node
     if isinstance(node, Fraction):
         return node
     if is_value_param(node):
@@ -516,6 +547,10 @@ def resolvable_to_int(node : ResolvableT) -> Union[int, float]:
                 return 0 if v <= 1 else (v-1).bit_length()
             case BuiltInFunctionEnum.cdiv:
                 return ceil_div(args[0], args[1])
+            case BuiltInFunctionEnum.round:
+                return _round_to_int(args[0])
+            case BuiltInFunctionEnum.ceil:
+                return math.ceil(args[0])
         raise ValueError(f'Cannot evaluate built-in {node.func.name}')
     if isinstance(node, ResolvableFunctionOperation):
         lhs = resolvable_to_int(node.lhs)
@@ -524,7 +559,7 @@ def resolvable_to_int(node : ResolvableT) -> Union[int, float]:
             case BultiInOperation.add : return lhs + rhs
             case BultiInOperation.sub : return lhs - rhs
             case BultiInOperation.mult: return lhs * rhs
-            case BultiInOperation.div : return ceil_div(lhs, rhs) if isinstance(lhs, int) else lhs/rhs
+            case BultiInOperation.div : return ceil_div(lhs, rhs) if isinstance(lhs, int) and isinstance(rhs, int) else lhs/rhs
             case BultiInOperation.power: return lhs ** rhs
             case BultiInOperation.mod : return lhs % rhs
             case BultiInOperation.eq  : return int(lhs == rhs)
@@ -560,6 +595,8 @@ def resolvable_print_source(node : ResolvableT) -> str:
         return str(int(node))
     if isinstance(node, int):
         return str(node)
+    if isinstance(node, float):
+        return repr(node)
     if isinstance(node, Fraction):
         return str(node)
     if is_value_param(node):
@@ -598,14 +635,28 @@ def _is_int(node : ResolvableT, value : int) -> bool:
     return isinstance(node, int) and node == value
 
 def _is_num(node) -> bool:
-    """True for the numeric affine coefficients (an int or an exact fraction)."""
-    return isinstance(node, (int, Fraction)) and not isinstance(node, bool)
+    """True for the numeric affine coefficients (an int, a float or an exact
+    fraction)."""
+    return isinstance(node, (int, float, Fraction)) and not isinstance(node, bool)
 
 def _norm_num(num):
     """A Fraction with denominator 1 is an int (keeps the printed text plain)."""
     if isinstance(num, Fraction) and num.denominator == 1:
         return int(num)
     return num
+
+def _fraction_as_number(fr : Fraction):
+    """The number of an exact fraction: an int for a whole value, a float when
+    the fraction has an exact decimal spelling (denominator 2^a * 5^b), None
+    when it has none (a third has no decimal, it would lose its value)."""
+    if fr.denominator == 1:
+        return fr.numerator
+    d = fr.denominator
+    while d % 2 == 0:
+        d //= 2
+    while d % 5 == 0:
+        d //= 5
+    return float(fr) if d == 1 else None
 
 def _try_int(node : ResolvableT) -> ResolvableT:
     """Numeric value of a constant tree (ipkg / k names resolved), the node
@@ -657,9 +708,11 @@ def _expr_div(lhs : ResolvableT, rhs : ResolvableT) -> ResolvableT:
     if _is_int(lhs, 0): return 0
     if _is_int(rhs, 1): return lhs
     if _is_num(lhs) and _is_num(rhs):
-        # an exact division stays an int, the rest keeps its value as an exact
+        # a float division stays a float, the rest keeps its value as an exact
         # fraction (1 / 16 is not 0 here, the divisor of a conversion is
         # evaluated exactly and not as the truncated recipe `/`)
+        if isinstance(lhs, float) or isinstance(rhs, float):
+            return lhs / rhs
         return _norm_num(Fraction(lhs) / Fraction(rhs))
     return ResolvableFunctionOperation(lhs, BultiInOperation.div, rhs)
 
@@ -714,6 +767,19 @@ def _inverse_affine(coef : ResolvableT, offset : ResolvableT, expr : Union[str, 
     v = ResolvableValueParam(V_CHECK_PARAM)
     coef = _try_int(coef)
     offset = _try_int(offset)
+    if _is_num(coef) and (isinstance(coef, float) or isinstance(offset, float)):
+        # a conversion with a float number is derived as a float expression,
+        # the natural spelling of the recipe literals (the inverse of { v * 2.5 }
+        # is { v / 2.5 }, the inverse of { v / 2.5 } is { v * 2.5 }, the
+        # reciprocal of the float taken as the exact decimal it is written as)
+        tree = v if offset == 0 else _expr_sub(v, offset)
+        if coef == 1:
+            return tree
+        if abs(coef) < 1:
+            recip = _fraction_as_number(1 / Fraction(str(coef)))
+            if recip is not None:
+                return tree if recip == 1 else _expr_mult(tree, recip)
+        return _expr_div(tree, coef)
     if _is_num(coef) and _is_num(offset):
         coef_f = Fraction(coef)
         off_f  = Fraction(offset)
@@ -735,12 +801,21 @@ def _inverse_affine(coef : ResolvableT, offset : ResolvableT, expr : Union[str, 
 
 
 def invert_resolvable(node : ResolvableT, expr : Union[str, int] = '') -> ResolvableT:
-    """Inverse of an affine `v` expression: v -> (v - offset) / coef."""
+    """Inverse of an affine `v` expression: v -> (v - offset) / coef.
+
+    An outer $round / $ceil wrapper is dropped before the inversion: the write
+    side is rounded to the register value by the runtime anyway (a register
+    value is an int) and round / ceil of an int is the identity, so the
+    inverse of { $round(v * 2.5) } is { v / 2.5 }.
+    """
+    if isinstance(node, ResolvableFunctionBuiltIn) and node.func in (function_round, function_ceil) \
+            and len(node.params) == 1:
+        node = node.params[0]
     try:
         coef, offset = affine_in_v(node)
     except NotInvertibleError as e:
         raise NotInvertibleError(f'recipe v_convert_wr / v_convert_rd {expr!r}: {e}') from None
-    if _is_int(coef, 0) or (isinstance(coef, Fraction) and coef == 0):
+    if _is_int(coef, 0) or (isinstance(coef, (Fraction, float)) and coef == 0):
         raise NotInvertibleError(f'recipe v_convert_wr / v_convert_rd {expr!r} does not use the value, it cannot be reversed')
     return _inverse_affine(coef, offset, expr)
 
@@ -810,6 +885,8 @@ if __name__ == '__main__':
             return str(int(node))
         if isinstance(node, int):
             return str(node)
+        if isinstance(node, float):
+            return repr(node)
         if isinstance(node, ResolvableFunctionOperation):
             if node.op.is_unary:
                 return f'({node.op}{to_python_source(node.lhs)})'
@@ -839,6 +916,10 @@ if __name__ == '__main__':
     
     # "$cdiv({DATA_W},2**3)"                  -> ResolvableFunctionBuiltIn(function_cdiv, [DATA_W, 8])  # 2**3 folded to 8
     f = parse_resolvable("$cdiv(DATA_W,2**3)", name_to_k)
+    print(to_python_source(f))
+    # a v_check with float numbers, $round / $ceil turn a float into the
+    # nearest integer, eg "$ceil(10.1*DATA_W)"
+    f = parse_resolvable("$ceil(10.1*DATA_W) + $round(2.5)", name_to_k)
     print(to_python_source(f))
     # A `v_check` expression, the register value is the parameter v
     f, s = parse_resolvable_v_check("{ (v % RW_MULT) == 0}", {'RW_MULT' : 'RW_MULT'})

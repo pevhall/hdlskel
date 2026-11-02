@@ -455,6 +455,65 @@ def test_k_parameters_are_resolved_when_printed():
         reg.check_value_limit(1)
     assert '((v % 3) == 0)' in str(e.value)
 
+# ---------- float values and the $round / $ceil built-ins ----------
+
+def test_round_ceil_evaluate():
+    """$round rounds to the nearest integer, halves away from zero (the
+    rounding of the runtime and of std::round), $ceil gives the nearest
+    integer above the value."""
+    from skmap.code_generator_parse_resolvable import parse_resolvable
+    assert resolvable_to_int(parse_resolvable("$round(2.5)", {})) == 3
+    assert resolvable_to_int(parse_resolvable("$round(-2.5)", {})) == -3
+    assert resolvable_to_int(parse_resolvable("$round(10.4)", {})) == 10
+    assert resolvable_to_int(parse_resolvable("$round(3)", {})) == 3
+    assert resolvable_to_int(parse_resolvable("$ceil(10.1)", {})) == 11
+    assert resolvable_to_int(parse_resolvable("$ceil(-10.1)", {})) == -10
+    assert resolvable_to_int(parse_resolvable("$ceil(3)", {})) == 3
+    assert resolvable_to_int(parse_resolvable("$ceil($round(2.6))", {})) == 3
+
+def test_v_check_float_numbers(tmp_path):
+    """`v_check` can use float numbers, eg
+    "{ (v >= -1000.0) && (v <= $ceil(10.1*SCALE)) }", the ipkg resolves in the
+    printed text and the $ceil is generated into both languages."""
+    from skmap.code_generator_py import to_python_source
+    from skmap.code_generator_cpp import to_cpp_source
+    recipe = make_recipe(tmp_path,
+                         ipkg = '{name = "SCALE", value = 8 },',
+                         var  = (', v_type="f", v_convert_wr="{ v * 2 }"'
+                                 ', v_check="{ (v >= -1000.0) && (v <= $ceil(10.1*SCALE)) }"'))
+    reg = recipe.var[0]
+    assert reg.v_check_str == '((v >= -1000.0) && (v <= $ceil((10.1 * 8))))'
+    py = to_python_source(reg.v_check)
+    assert '(v >= -1000.0)' in py
+    assert 'skmap.recipe_functions.ceil((10.1 * self.SCALE))' in py
+    cpp = to_cpp_source(reg.v_check)
+    assert '(v >= -1000.0)' in cpp
+    assert 'recipe_functions::ceil((10.1 * SCALE()))' in cpp
+
+def test_v_check_float_bounds():
+    """The runtime checks float values against a `v_check` with float bounds."""
+    reg = make_reg(v_type=skmap.VType.f,
+                   v_check=ValueCheck(lambda v: (v >= -1000.0) and (v <= 324.0),
+                                      '((v >= -1000.0) && (v <= $ceil((10.1 * 32))))', skmap.VType.f))
+    reg.check_value_limit(100.5)
+    reg.check_value_limit(-1000.0)
+    with pytest.raises(ValueError) as e:
+        reg.check_value_limit(500.0)
+    assert 'v <= $ceil((10.1 * 32))' in str(e.value)
+
+def test_v_convert_float_scale(tmp_path):
+    """A `v_convert_wr` / `v_convert_rd` of a float register can use a float
+    scale, the other side is its exact inverse ({ v * 2.5 } <-> { v / 2.5 })."""
+    recipe = make_recipe(tmp_path, var=', v_type="f", v_convert_wr="{ v * 2.5 }"')
+    reg = recipe.var[0]
+    assert reg.v_convert_wr_str == '(v * 2.5)'
+    assert reg.v_convert_rd_str == '(v / 2.5)'
+    # the same conversion written from the read side derives the same pair
+    recipe = make_recipe(tmp_path, var=', v_type="f", v_convert_rd="{ v / 2.5 }"')
+    reg = recipe.var[0]
+    assert reg.v_convert_wr_str == '(v * 2.5)'
+    assert reg.v_convert_rd_str == '(v / 2.5)'
+
 # ---------- unique names ----------
 
 def write_named_recipe(tmp_path : Path, ipkg : str, k : str, var : str, mem : str = '') -> Path:
@@ -609,3 +668,17 @@ def test_float_v_convert_rounds_the_raw_value():
     assert reg.read_converted_cached() == 25 / 16
     reg.write_converted_cached(-1.5/16)  # raw -1.5 -> -2
     assert reg.read_sint_cached() == -2
+
+def test_v_convert_round_ceil_wrapper(tmp_path):
+    # $round / $ceil can wrap a conversion on the write side, the wrapper is
+    # dropped for the derived read side (the runtime rounds the write result
+    # to the register value anyway, round / ceil of a register value is the
+    # identity, so the inverse of { $round(v * 2.5) } is { v / 2.5 })
+    recipe = make_recipe(tmp_path, var=', v_type="f", v_convert_wr="{ $round(v * 2.5) }"')
+    reg = recipe.var[0]
+    assert reg.v_convert_wr_str == '$round((v * 2.5))'
+    assert reg.v_convert_rd_str == '(v / 2.5)'
+    # the read side is the exact inverse, a $round / $ceil wrapper there is
+    # not invertible (the raw value would not convert back), it is rejected
+    with pytest.raises(Exception, match='cannot be reversed'):
+        make_recipe(tmp_path, var=', v_type="f", v_convert_rd="{ $ceil(v / 2.5) }"')

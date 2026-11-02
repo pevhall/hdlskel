@@ -1,6 +1,7 @@
 #pragma once
 // Recipe functions available to generated skmap modules.
 // Mirrors pip/skmap/src/skmap/recipe_functions.py
+#include <cmath>
 
 namespace hdlskel::skmap::recipe_functions {
 
@@ -37,6 +38,19 @@ inline int cdiv(int n, int d) {
 // clog2(1)=0, clog2(2)=1, clog2(3)=2, clog2(5)=3, clog2(8)=3
 inline int clog2(int x) {
     return bit_length(static_cast<long long>(x) - 1);
+}
+
+// round a float to the nearest integer, halves away from zero (recipe
+// `$round`, mirrors round() of recipe_functions.py, std::round semantics, the
+// rounding the runtime uses for a float v_convert_wr)
+inline int round(double value) {
+    return static_cast<int>(std::round(value));
+}
+
+// ceiling of a float, the nearest integer above it (recipe `$ceil`,
+// mirrors ceil() of recipe_functions.py, std::ceil semantics)
+inline int ceil(double value) {
+    return static_cast<int>(std::ceil(value));
 }
 
 }

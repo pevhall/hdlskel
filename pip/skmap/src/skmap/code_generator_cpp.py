@@ -42,6 +42,9 @@ def to_cpp_source(node: ResolvableT) -> str:
     #     return str(int(node))
     if isinstance(node, int):
         return str(node)
+    if isinstance(node, float):
+        # a recipe float literal, printed so c++ reads it as a double, eg 10.1
+        return repr(node)
     if isinstance(node, str):   # plain-string leaf (e.g. name_to_k[name] = name)
         return node
     if isinstance(node, RecipeIpkg):

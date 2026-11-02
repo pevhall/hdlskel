@@ -105,13 +105,14 @@ static void test_v_check_vec(autogen::RecipeTestBenchModule & m) {
 static void test_v_convert_scalar(autogen::RecipeTestBenchModule & m) {
     // temp: v_type 'f', v_convert_wr "{ v * RO_VAL_W }", the scale is a k
     // register, its value comes from the firmware (12 in this cached image),
-    // the v_check uses the k register MEM_RW_LEN (32 in this image)
+    // the v_check uses a float number and the float built-in $ceil of the k
+    // register MEM_RW_LEN (32 in this image, $ceil(10.1*32) = 324)
     const sint_t scale = m.RO_VAL_W();
     ASSERT(scale == 12);
     ASSERT(m.MEM_RW_LEN() == 32);
     // printing resolves the k parameters of the expressions to their numbers,
     // only `v` stays (the v_check is printed with the value of MEM_RW_LEN)
-    const std::string temp_check = "((v >= -1000) && (v <= (10 * 32)))";
+    const std::string temp_check = "((v >= -1000.0) && (v <= $ceil((10.1 * 32))))";
     auto temp = m.temp_inst();
     CHECK(temp->has_v_convert());
     CHECK(temp->v_type() == VType::f);
@@ -119,7 +120,7 @@ static void test_v_convert_scalar(autogen::RecipeTestBenchModule & m) {
     // runtime), they are resolved when printed, see resolve_expr_names
     ASSERT(temp->v_convert()->str == "(v * RO_VAL_W)");
     ASSERT(temp->v_convert()->str_inv == "(v / RO_VAL_W)");
-    ASSERT(temp->v_check()->str == "((v >= -1000) && (v <= (10 * MEM_RW_LEN)))");
+    ASSERT(temp->v_check()->str == "((v >= -1000.0) && (v <= $ceil((10.1 * MEM_RW_LEN))))");
     ASSERT(temp->resolve_expr_names("(v * RO_VAL_W)") == "(v * 12)");
 
     // the default functions are the user domain (float_t), the *_raw ones the
@@ -138,8 +139,9 @@ static void test_v_convert_scalar(autogen::RecipeTestBenchModule & m) {
     CHECK(m.temp_read_cached_raw() == -2);
 
     // the user value is v_check'ed before it is converted (the bound is
-    // 10*MEM_RW_LEN = 320, far below the s16 overflow of the converted value,
-    // so a user value that does not fit the register is not reachable here)
+    // $ceil(10.1*MEM_RW_LEN) = 324, far below the s16 overflow of the converted
+    // value, so a user value that does not fit the register is not reachable
+    // here)
     CHECK_THROWS(m.temp_write(2000.0));
 
     // a raw write gets the value of the register, its user value is checked too

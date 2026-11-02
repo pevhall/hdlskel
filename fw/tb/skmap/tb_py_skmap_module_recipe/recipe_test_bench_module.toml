@@ -59,8 +59,10 @@ var = [
   # the scale is the k register RO_VAL_W, its value comes from the firmware.
   # The same conversion can be written from the other side,
   # v_convert_rd = "{ v / RO_VAL_W }", it is the inverse of v_convert_wr,
-  # a register never has both.
-  {name = "temp",     t = "s16", acc = "rw", desc = "Temp, float scale", v_type = "f", v_convert_wr = "{ v * RO_VAL_W }", v_check = "{ (v >= -1000) && (v <= 10*MEM_RW_LEN) }"},
+  # a register never has both. A v_check of a float register can use float
+  # numbers and the $round / $ceil built-in functions, here $ceil(10.1*MEM_RW_LEN)
+  # with the k register MEM_RW_LEN (32) is 324.
+  {name = "temp",     t = "s16", acc = "rw", desc = "Temp, float scale", v_type = "f", v_convert_wr = "{ v * RO_VAL_W }", v_check = "{ (v >= -1000.0) && (v <= $ceil(10.1*MEM_RW_LEN)) }"},
   # A wt register is a trigger, the write that reaches the regio is
   # <reg>_write_trigger (<reg>_write_trigger_idx for a vector), while
   # <reg>_write_cached only writes the cache of the module.

@@ -108,7 +108,7 @@ check_has "external mem rows"           "Mem size:"                 "$TMP/recipe
 check_has_f "v_check of regs_rw shown"  "(((v >= (-1 * 2)) && (v <= 100)) && ((v % 2) == 0))" "$TMP/recipe.txt"
 # temp has a v_convert_wr, the map shows the value of the module user (a float),
 # not the raw value of the register
-check_has_f "v_convert_wr prints the user value" "((v >= -1000) && (v <= (10 * 32))) -4.25" "$TMP/recipe.txt"
+check_has_f "v_convert_wr prints the user value" "((v >= -1000.0) && (v <= \$ceil((10.1 * 32)))) -4.25" "$TMP/recipe.txt"
 # the description of a reg with a value conversion starts with it (like
 # the python reg map), the marker is not printed anywhere else, the k
 # parameter RO_VAL_W (12) is resolved in the marker

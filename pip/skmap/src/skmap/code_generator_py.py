@@ -55,6 +55,9 @@ def to_python_source(node: ResolvableT) -> str:
     #     return str(int(node))
     if isinstance(node, int):
         return str(node)
+    if isinstance(node, float):
+        # a recipe float literal, eg the 10.1 of "{ v <= $ceil(10.1*MEM_RW_LEN) }"
+        return repr(node)
     # if isinstance(node, str):   # plain-string leaf (e.g. name_to_k[name] = name)
     #     return f'"{node}"'
     if isinstance(node, RecipeIpkg):
