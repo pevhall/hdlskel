@@ -625,7 +625,8 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
     module->align_byte_idx(word_size);
     if( module->m_byte_idx != byte_idx_expected ) {
         std::ostringstream oss;
-        oss << "make_module::k end idx (got "<<module->m_byte_idx<<", expected "<<byte_idx_expected<<")";
+        oss << "make_module::k end idx (got "<<module->m_byte_idx<<", expected "<<byte_idx_expected<<")\n";
+        oss << "    base_addr "<<module->base_addr()<<", name "<<module->name();
         throw std::runtime_error(oss.str());
     }
     // assert(module->m_byte_idx == byte_idx_expected);
@@ -637,7 +638,8 @@ std::shared_ptr<Module> Module::make_module(std::shared_ptr<regio::Regio> regio,
     module->align_byte_idx(word_size);
     if( module->m_byte_idx != byte_idx_expected ) {
         std::ostringstream oss;
-        oss << "make_module::var end idx (got "<<module->m_byte_idx<<", expected "<<byte_idx_expected<<")";
+        oss << "make_module::var end idx (got "<<module->m_byte_idx<<", expected "<<byte_idx_expected<<")\n";
+        oss << "    base_addr "<<module->base_addr()<<", name "<<module->name();
         throw std::runtime_error(oss.str());
     }
     assert(module->m_byte_idx == byte_idx_expected);

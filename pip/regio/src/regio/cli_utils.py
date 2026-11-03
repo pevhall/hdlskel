@@ -1,6 +1,8 @@
 
 import argparse
 from pathlib import Path
+
+from regio.regio import REGIO_MTU_DEFAULT
 from . import Regio
 from .tcp import PORT_DEFAULT
 from .options import RegioOptions
@@ -37,9 +39,9 @@ def add_parser_args(parser : argparse.ArgumentParser):
     )
     parser.add_argument(
         "--mtu",
-        type=int,
-        default=None,
-        help="Maximum Transmission Unit, used to split operation"
+        type=auto_int,
+        default=(REGIO_MTU_DEFAULT),
+        help=f"Maximum Transmission Unit, used to split operation (default: {REGIO_MTU_DEFAULT})"
     )
 
 async def make_regio_from_args(args) -> Regio:

@@ -5,13 +5,14 @@ from dataclasses import dataclass
 from . import Regio
 from . import cache
 from . import tcp_client
+from .regio import REGIO_MTU_DEFAULT
 
 @dataclass
 class RegioOptions:
     tcp_host : Optional[str] = None
     tcp_port : int = tcp_client.PORT_DEFAULT
     load_cache_file : Optional[Path] = None
-    mtu : Optional[int] = None
+    mtu : int = REGIO_MTU_DEFAULT
 
     def check(self):
         assert self.tcp_host is None or self.load_cache_file is None, "One read option at a time"
