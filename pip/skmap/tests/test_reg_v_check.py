@@ -478,6 +478,11 @@ def test_round_ceil_evaluate():
     assert rfn.round(2.5) == 3 and rfn.round(-2.5) == -3 and rfn.round(10.4) == 10
     assert rfn.ceil(10.1) == 11 and rfn.ceil(-10.1) == -10
     assert rfn.floor(10.9) == 10 and rfn.floor(-10.1) == -11
+    # $float converts an int into a float
+    assert resolvable_to_int(parse_resolvable("$float(3)", {})) == 3.0
+    assert isinstance(resolvable_to_int(parse_resolvable("$float(3)", {})), float)
+    assert rfn.float(3) == 3.0 and isinstance(rfn.float(3), float)
+    assert rfn.float(2.5) == 2.5
 
 def test_v_check_float_numbers(tmp_path):
     """`v_check` can use float numbers, eg
@@ -696,3 +701,24 @@ def test_v_convert_round_ceil_wrapper(tmp_path):
     # rejected
     with pytest.raises(Exception, match='cannot be reversed'):
         make_recipe(tmp_path, var=', v_type="f", v_convert_rd="{ $ceil(v / 2.5) }"')
+
+def test_v_convert_float_builtin(tmp_path):
+    # $float converts an int into a float, { v * $float(2) } is a float
+    # scale like { v * 2.0 }, the derived read side is the float inverse
+    recipe = make_recipe(tmp_path, var=', v_type="f", v_convert_wr="{ v * $float(2) }"')
+    reg = recipe.var[0]
+    assert reg.v_convert_wr_str == '(v * $float(2))'
+    assert reg.v_convert_rd_str == '(v / 2.0)'
+    from skmap.code_generator_parse_resolvable import _eval_with
+    assert _eval_with(reg.v_convert_wr, 1.5) == 3.0
+    assert _eval_with(reg.v_convert_rd, 3) == 1.5
+    # in a v_check of an int register, $float keeps a bound out of the
+    # integer division, { v <= $float(7) / 2 } is v <= 3.5, the generated
+    # python uses skmap.recipe_functions.float and a true division
+    from skmap.code_generator_py import to_python_source
+    recipe = make_recipe(tmp_path, var=', v_check="{ v <= $float(7) / 2 }"')
+    reg = recipe.var[0]
+    assert reg.v_check_str == '(v <= ($float(7) / 2))'
+    fn = eval(f'lambda v: {to_python_source(reg.v_check)}', {'skmap': skmap})
+    assert fn(3) == True
+    assert fn(4) == False

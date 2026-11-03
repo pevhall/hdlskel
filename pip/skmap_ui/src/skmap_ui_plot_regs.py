@@ -31,9 +31,26 @@ generated .py file), eg:
 
 Run with: python3 skmap_ui_plot_regs.py [options] <addr> <reg> ...
 
+The axis ranges are fixed when the first samples arrive and are not
+rescaled after every update (the time axis spans the whole -l window).
+
+Third party applications can drive the plot themselves with the
+`SkmapUiPlotReg` class: import the generated skmap modules, make the
+modules and add registers (a scalar `Reg`, or `RegVec` elements) to the
+plot, then call `run()`:
+
+    import skmap
+    from skmap_ui_plot_regs import SkmapUiPlotReg
+
+    plot = SkmapUiPlotReg(period=0.5, length=200)
+    plot.add_reg(module.temp)              # a scalar Reg
+    plot.add_reg_vec_all(module.adc_vals)  # every element of a RegVec
+    plot.add_reg_vec_idx(module.status, 2) # one element of a RegVec
+    plot.run()                             # opens the window, blocks
+
 This application lives in the skmap_ui project (the skmap package itself does
-not depend on pyqtgraph). Requires pyqtgraph and a Qt binding (PyQt6 /
-PySide6).
+not depend on pyqtgraph). Requires pyqtgraph and a Qt binding (PyQt6 is the
+`skmap-ui[plot]` dependency, PySide6 also works).
 """
 
 import argparse
@@ -264,6 +281,30 @@ def find_reg(module : skmap.Module, name : str) -> skmap.Reg:
                      f'0x{module.base_addr:x}, available: {available}')
 
 
+def checked_traces(module : skmap.Module, reg : skmap.Reg,
+                   idxs : list[Optional[int]]) -> list[Trace]:
+    """One trace per entry of `idxs` (None = the whole scalar register).
+
+    Rejects char registers, warns about the acc types of `ACC_WARN` and
+    reports the v_check / v_convert handling of the register.
+    """
+    if reg.value_type.kind == ValueKind.char:
+        raise SystemExit(f'register "{reg.name}" of module "{module.name()}" holds chars, '
+                          'it cannot be plotted')
+
+    traces = []
+    for trace_idx in idxs:
+        trace = Trace(module, reg, trace_idx)
+        if reg.acc in ACC_WARN:
+            console.print(f'[yellow]warning: {trace.label} {ACC_WARN[reg.acc]}[/]')
+        if reg.v_check is not None:
+            logger.info('%s has a v_check, failing samples are marked in red', trace.label)
+        if reg.has_v_convert:
+            logger.info('%s is plotted with its v_convert_rd conversion', trace.label)
+        traces.append(trace)
+    return traces
+
+
 def make_traces(module : skmap.Module, token : str) -> list[Trace]:
     """The traces of one command line register spec.
 
@@ -286,21 +327,7 @@ def make_traces(module : skmap.Module, token : str) -> list[Trace]:
             raise SystemExit(f'"{token}": an index is only allowed on a vector register')
         idxs = [None]
 
-    if reg.value_type.kind == ValueKind.char:
-        raise SystemExit(f'register "{name}" of module "{module.name()}" holds chars, '
-                          'it cannot be plotted')
-
-    traces = []
-    for trace_idx in idxs:
-        trace = Trace(module, reg, trace_idx)
-        if reg.acc in ACC_WARN:
-            console.print(f'[yellow]warning: {trace.label} {ACC_WARN[reg.acc]}[/]')
-        if reg.v_check is not None:
-            logger.info('%s has a v_check, failing samples are marked in red', trace.label)
-        if reg.has_v_convert:
-            logger.info('%s is plotted with its v_convert_rd conversion', trace.label)
-        traces.append(trace)
-    return traces
+    return checked_traces(module, reg, idxs)
 
 
 async def build_traces(args : argparse.Namespace) -> list[Trace]:
@@ -340,6 +367,7 @@ class PlotApp(QtCore.QObject):
         self.period  = period
         self.length  = length
         self.t0      = time.monotonic()
+        self._ranges_fixed = False        # the axis ranges are set once
         # the io loop the regio was created on, run everything on it
         self.loop = loop
 
@@ -395,7 +423,7 @@ class PlotApp(QtCore.QObject):
         self.samples_ready.emit(results)
 
     def on_samples(self, results : list):
-        """Signal handler on the GUI thread, update the curves and the axes."""
+        """Signal handler on the GUI thread, update the curves."""
         self._inflight = False
         t = time.monotonic() - self.t0
         for idx, value, check_ok, error in results:
@@ -411,23 +439,120 @@ class PlotApp(QtCore.QObject):
             trace.add_sample(t, value, check_ok, self.length)
             trace.curve.setData(trace.xs, trace.ys)
             trace.scatter.setData(trace.bad_xs, trace.bad_ys)
-        self._update_ranges(t)
+        # the ranges are set once, when the first samples arrive, they are
+        # not rescaled after every update
+        if not self._ranges_fixed:
+            self._set_fixed_ranges()
 
-    def _update_ranges(self, t : float):
-        # fixed width time window, scrolling once it is filled
-        span = (self.length - 1) * self.period
-        x0 = max(0.0, t - span)
-        self.plot.setXRange(x0, x0 + span * 1.04 + self.period, padding=0)
+    def _set_fixed_ranges(self):
+        """Fix the axis ranges once, no rescaling afterwards.
+
+        The time axis spans the whole `-l` sample window from t=0, the
+        value axis the range of the samples seen so far. Waiting for the
+        first plotted sample also disables pyqtgraph's auto range before
+        any curve moves.
+        """
         ys = [y for trace in self.traces for y in trace.ys]
-        if ys:
-            lo, hi = min(ys), max(ys)
-            if lo == hi:
-                lo, hi = lo - 1, hi + 1
-            self.plot.setYRange(lo, hi, padding=0.1)
+        if not ys:
+            return                          # wait for the first sample
+        span = (self.length - 1) * self.period
+        self.plot.setXRange(0, span * 1.04 + self.period, padding=0)
+        lo, hi = min(ys), max(ys)
+        if lo == hi:
+            lo, hi = lo - 1, hi + 1
+        self.plot.setYRange(lo, hi, padding=0.1)
+        self._ranges_fixed = True
 
     def close(self):
         self.timer.stop()
         self.loop.call_soon_threadsafe(self.loop.stop)
+
+
+# ---------------------------------------------------------------------------
+# third party entry point
+
+
+class SkmapUiPlotReg:
+    """Register plot driven from a third party python application.
+
+    The application imports the generated skmap modules it wants to
+    access, makes the modules on any regio and hands the registers to
+    plot to this class, then calls `run()` to open the window (which
+    blocks until it is closed):
+
+        import skmap
+        from skmap_ui_plot_regs import SkmapUiPlotReg
+
+        plot = SkmapUiPlotReg(period=0.5, length=200)
+        plot.add_reg(module.temp)              # a scalar Reg
+        plot.add_reg_vec_all(module.adc_vals)  # every element of a RegVec
+        plot.add_reg_vec_idx(module.status, 2) # one element of a RegVec
+        plot.run()
+
+    The same sampling as the command line application is used: the
+    `v_convert_rd` is applied, a failing `v_check` marks the sample in
+    red and an `rc` register is cleared after it is read.
+    """
+
+    def __init__(self, period : float = 1.0, length : int = 100):
+        self.traces : list[Trace] = []
+        self.period = period              # sample period in seconds
+        self.length = length              # number of samples per curve
+
+    def add_reg(self, reg : skmap.Reg):
+        """Add one scalar register (use the add_reg_vec_* for a RegVec)."""
+        if isinstance(reg, skmap.RegVec):
+            raise TypeError(f'"{reg.name}" is a RegVec, add it with '
+                            'add_reg_vec_all() or add_reg_vec_idx()')
+        self.traces.extend(checked_traces(reg.module, reg, [None]))
+
+    def add_reg_vec_all(self, reg_vec : skmap.RegVec):
+        """Add every element of a `RegVec`, one curve per element."""
+        self.traces.extend(checked_traces(reg_vec.module, reg_vec,
+                                          list(range(reg_vec.value_type.vec_len))))
+
+    def add_reg_vec_idx(self, reg_vec : skmap.RegVec, idx : int):
+        """Add one element of a `RegVec` by its index."""
+        vec_len = reg_vec.value_type.vec_len
+        if not 0 <= idx < vec_len:
+            raise SystemExit(f'index {idx} out of range for the {vec_len} element '
+                             f'vector "{reg_vec.name}" of module '
+                             f'"{reg_vec.module.name()}"')
+        self.traces.extend(checked_traces(reg_vec.module, reg_vec, [idx]))
+
+    def run(self):
+        """Open the plot window and block until it is closed (exit code)."""
+        if not self.traces:
+            raise SystemExit('SkmapUiPlotReg: no registers added, nothing to plot')
+        return run_plot_app(self.traces, self.period, self.length, make_io_loop())
+
+# ---------------------------------------------------------------------------
+# application entry
+
+
+def make_io_loop() -> asyncio.AbstractEventLoop:
+    """A background asyncio loop for the regio access (the io loop).
+
+    The regio (a possible TCP connection) is bound to the loop it is
+    made on, so create it on the same background loop the plot samples
+    on, the GUI runs on the Qt thread.
+    """
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, daemon=True,
+                     name='skmap-plot-io').start()
+    return loop
+
+
+def run_plot_app(traces : list[Trace], period : float, length : int,
+                 loop : asyncio.AbstractEventLoop) -> int:
+    """Open the plot window for `traces`, block until it is closed."""
+    pg.mkQApp('skmap_ui_plot_regs')
+    pg.setConfigOption('antialias', True)
+    gui = PlotApp(traces, period, length, loop)
+    gui.plot.show()
+    gui.tick()                          # the first sample, then the timer
+    QtCore.QCoreApplication.instance().aboutToQuit.connect(gui.close)
+    return exec_()
 
 
 def main():
@@ -441,20 +566,9 @@ def main():
     for module_spec in args.imports:
         import_generated_module(module_spec)
 
-    # the regio (a possible TCP connection) is bound to the loop it is made
-    # on, so create it on the same background loop the plot samples on
-    loop = asyncio.new_event_loop()
-    threading.Thread(target=loop.run_forever, daemon=True,
-                     name='skmap-plot-io').start()
+    loop = make_io_loop()
     traces = asyncio.run_coroutine_threadsafe(build_traces(args), loop).result()
-
-    pg.mkQApp('skmap_ui_plot_regs')
-    pg.setConfigOption('antialias', True)
-    gui = PlotApp(traces, args.time, args.length, loop)
-    gui.plot.show()
-    gui.tick()                          # the first sample, then the timer
-    QtCore.QCoreApplication.instance().aboutToQuit.connect(gui.close)
-    sys.exit(exec_())
+    sys.exit(run_plot_app(traces, args.time, args.length, loop))
 
 
 if __name__ == '__main__':

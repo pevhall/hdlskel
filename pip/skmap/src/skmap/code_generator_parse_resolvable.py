@@ -20,7 +20,8 @@ All three options can use the constants of the recipe, the `ipkg` values and
 the `k` registers, as parameters of the expression (only `v` and the recipe
 names are allowed, an ipkg / k name resolves to its value). Numbers are ints
 or floats, eg v_check="{ (v >= -1000.0) && (v <= $ceil(10.1*MEM_RW_LEN)) }",
-the built-in functions $clog2 / $cdiv / $round / $ceil / $floor are available.
+the built-in functions $clog2 / $cdiv / $round / $ceil / $floor / $float are
+available, $float converts an int into a float.
 """
 
 import copy
@@ -99,6 +100,7 @@ class BuiltInFunctionEnum(Enum):
     round = auto()
     ceil  = auto()
     floor = auto()
+    float = auto()
 
 @dataclass
 class BuiltInFunction():
@@ -112,10 +114,11 @@ function_cdiv  = BuiltInFunction(BuiltInFunctionEnum.cdiv ,'cdiv' , 2)
 function_round = BuiltInFunction(BuiltInFunctionEnum.round,'round', 1)
 function_ceil  = BuiltInFunction(BuiltInFunctionEnum.ceil ,'ceil' , 1)
 function_floor = BuiltInFunction(BuiltInFunctionEnum.floor,'floor', 1)
+function_float = BuiltInFunction(BuiltInFunctionEnum.float,'float', 1)
 
 _BUILTIN_FUNCTIONS = {'clog2': function_clog2, 'cdiv': function_cdiv,
                       'round': function_round, 'ceil' : function_ceil,
-                      'floor': function_floor}
+                      'floor': function_floor, 'float': function_float}
 
 class ResolvableValueParam():
     """Leaf for a named parameter of a resolvable expression.
@@ -492,6 +495,9 @@ def contains_float_value(node : ResolvableT) -> bool:
             return True
         return node.rhs is not None and contains_float_value(node.rhs)
     if isinstance(node, ResolvableFunctionBuiltIn):
+        if node.func is function_float:
+            # $float(x) is a float whatever its argument is
+            return True
         return any(contains_float_value(p) for p in node.params)
     return False
 
@@ -556,6 +562,8 @@ def resolvable_to_int(node : ResolvableT) -> Union[int, float]:
                 return math.ceil(args[0])
             case BuiltInFunctionEnum.floor:
                 return math.floor(args[0])
+            case BuiltInFunctionEnum.float:
+                return float(args[0])
         raise ValueError(f'Cannot evaluate built-in {node.func.name}')
     if isinstance(node, ResolvableFunctionOperation):
         lhs = resolvable_to_int(node.lhs)
@@ -808,12 +816,12 @@ def _inverse_affine(coef : ResolvableT, offset : ResolvableT, expr : Union[str, 
 def invert_resolvable(node : ResolvableT, expr : Union[str, int] = '') -> ResolvableT:
     """Inverse of an affine `v` expression: v -> (v - offset) / coef.
 
-    An outer $round / $ceil / $floor wrapper is dropped before the inversion:
-    the write side is rounded to the register value by the runtime anyway (a
-    register value is an int) and round / ceil / floor of an int is the
-    identity, so the inverse of { $round(v * 2.5) } is { v / 2.5 }.
+    An outer $round / $ceil / $floor / $float wrapper is dropped before the
+    inversion: the write side is rounded to the register value by the runtime
+    anyway (a register value is an int) and round / ceil / floor / float of an
+    int is the identity, so the inverse of { $round(v * 2.5) } is { v / 2.5 }.
     """
-    if isinstance(node, ResolvableFunctionBuiltIn) and node.func in (function_round, function_ceil, function_floor) \
+    if isinstance(node, ResolvableFunctionBuiltIn) and node.func in (function_round, function_ceil, function_floor, function_float) \
             and len(node.params) == 1:
         node = node.params[0]
     try:

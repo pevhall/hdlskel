@@ -1,5 +1,7 @@
 import math
 
+_float = float    # the built-in, kept under a name the float() below does not shadow
+
 def cdiv(n, d):
     return - (n // -d)
 
@@ -33,3 +35,12 @@ def floor(value):
     library.
     """
     return math.floor(value)
+
+def float(value):
+    """Convert a value to a float (recipe `$float`).
+
+    $float(8) = 8.0, it takes an int (eg an ipkg / k value) and gives a
+    float, so an expression becomes a float one. The c++ runtime function is
+    named to_float, `float` is a keyword there.
+    """
+    return _float(value)

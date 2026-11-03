@@ -59,4 +59,10 @@ inline int floor(double value) {
     return static_cast<int>(std::floor(value));
 }
 
+// convert an int into a float (recipe `$float`, mirrors float() of
+// recipe_functions.py; named to_float, `float` is a keyword in c++)
+inline float_t to_float(double value) {
+    return static_cast<float_t>(value);
+}
+
 }

@@ -191,6 +191,7 @@ static void test_recipe_values(autogen::RecipeTestBenchModule & m) {
     CHECK(recipe_functions::floor(10.9)  == 10);
     CHECK(recipe_functions::floor(-10.1) == -11);
     CHECK(recipe_functions::floor(3.0)   == 3);
+    CHECK(recipe_functions::to_float(3)  == 3.0);
     CHECK(m.ctrl_flag_0_read_cached() == true);
     CHECK(m.ctrl_flag_8_read_cached() == false);
 

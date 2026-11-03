@@ -10,6 +10,9 @@ textual TUI:
 
     python3 regio_proxy_headless.py -p 39600 --listen-port 39601
 
+This script lives in the regio project (``pip/regio/src``) and requires
+the ``regio_ui`` package for ``RegioProxy``.
+
 Every operation still flows through the same relay code regio_ui uses,
 only nothing is displayed (add ``--debug-print-regio`` to log every
 operation on stdout instead).

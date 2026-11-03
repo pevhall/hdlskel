@@ -34,6 +34,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_DIR="$SCRIPT_DIR/../src"
+REGIO_SRC_DIR="$SCRIPT_DIR/../../regio/src"   # regio_proxy_headless.py lives in the regio project
 cd "$SCRIPT_DIR"
 
 TB_DIR="../../../fw/tb/skmap/tb_py_skmap_module_recipe"
@@ -48,7 +49,7 @@ setsid python3 "$TB_DIR/run.py" -s &
 SIM_PID=$!
 
 # --- start the headless regio proxy (simulation -> many clients) -----
-setsid python3 "$SRC_DIR/regio_proxy_headless.py" -i "$HOST" -p "$SIM_PORT" \
+setsid python3 "$REGIO_SRC_DIR/regio_proxy_headless.py" -i "$HOST" -p "$SIM_PORT" \
     --listen-port "$PROXY_PORT" &
 PROXY_PID=$!
 

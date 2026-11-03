@@ -29,7 +29,8 @@ dev = [
 ]
 # skmap_ui_plot_regs (src/skmap_ui_plot_regs.py), the pyqtgraph register plot
 plot = [
-  "pyqtgraph>=0.13"
+  "pyqtgraph>=0.13",
+  "PyQt6>=6.5",
 ]
 
 [project.scripts]
