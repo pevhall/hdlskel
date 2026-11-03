@@ -40,14 +40,19 @@ Or programmatically::
 The UI is also reusable as a plain widget (:class:`RegioUiView`) so
 another Textual app can host it as a tab — a host that already owns a
 ``regio.Regio`` device feeds the view with :class:`RegioTap` (this is
-how ``skmap_ui`` embeds regio_ui on its *regio* tab).
+how ``skmap_ui`` embeds regio_ui on its *regio* tab).  The view also
+reports the address its cursor points at
+(:meth:`RegioUiView.current_op_address` — the selected log row, or the
+form's address field), which a host with a register map can look up;
+regio_ui itself has no use for it (``skmap_ui``'s ``m`` reg map key
+uses it).
 
 The log **capture** can be toggled at runtime (``p`` key) and started
 on or off (``--no-capture`` / ``RegioUiView(capture=...)``): while off
 operations pass by without being logged.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from regio_ui.app import RegioUiApp, main
 from regio_ui.tap import RegioTap

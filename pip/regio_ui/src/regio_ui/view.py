@@ -383,6 +383,27 @@ class RegioUiView(Vertical):
             return
         self._fill_form(op)
 
+    def current_op_address(self) -> int | None:
+        """Address the cursor currently points at, for embedding apps.
+
+        With the operations log focused that is the address of the row
+        under its cursor, with the form's address field focused the
+        address typed in it — None when neither gives an address.
+
+        regio_ui itself has no use for this; an app that embeds the view
+        next to a register map can use it to look the address up (skmap_ui's
+        ``m`` reg map key does).
+        """
+        if self.addr_input.has_focus:
+            parsed = parse_num(self.addr_input.value)
+            return None if parsed is None else parsed[0]
+        row = self.ops.cursor_row
+        if 0 <= row < len(self._row_keys):
+            op = self._row_ops.get(self._row_keys[row])
+            if op is not None:
+                return op.addr
+        return None
+
     # ------------------------------------------------------------------
     # sending
     # ------------------------------------------------------------------

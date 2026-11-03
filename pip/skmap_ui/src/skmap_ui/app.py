@@ -40,8 +40,10 @@ Pass a real ``skmap.Module`` (e.g. built with ``make_module``):
     SkmapUiApp(module).run()
 
 On start (and with the ``a`` key) the app runs ``make_tree()`` and
-``check_assert_tree_cached()``.  The bottom log view is an *event
-log* of the triggered register assets (skmap's "asserts": registers
+``check_assert_tree_cached()``; the top module's register map is shown
+right away and the **cursor starts in the module tree**.  The bottom log
+view is an *event log* of the triggered register assets (skmap's
+"asserts": registers
 / flags whose value is set and that carry an ``Ass`` level):
 every assert check that finds triggered asserts appends one block —
 a time stamp followed by a table with one row per triggered assert
@@ -52,7 +54,14 @@ triggered asserts append nothing.  The register map table mirrors
 type, access, name, value, description; ``k`` registers are shown
 (value is fixed, never read from the device).
 
-Assert options: ``--asserts-level`` / the ``l`` key selects the
+The log has its own **log cursor** (``l`` key): with the cursor inside
+the log ``up`` / ``down`` move it over the logged asserts (the log
+scrolls with it and the selected assert is shown in the log's border
+title), ``enter`` moves the register map cursor onto that assert (the
+shown module is switched when needed) and ``l`` / ``escape`` / ``tab``
+move the cursor back out of the log to the panel it was in.
+
+Assert options: ``--asserts-level`` / the ``L`` key selects the
 ``Ass`` level at which asserts are logged (debug -> info -> warn
 -> error -> fatal; lower levels are still evaluated, just not
 logged).  ``--refresh SECS`` / the ``u`` (update) key periodically
@@ -62,7 +71,13 @@ the register map, then clears all ``rc`` registers of the *selected*
 module (``clear_reg_rc()`` — the register map only shows that
 module) and the triggered asserts of the *whole tree*
 (``clear_assert_tree()`` — the log checks recursively) so the next
-refresh only logs new events (0 = off).  The ``R`` (read all) key
+refresh only logs new events (0 = off).  The ``U`` (update, no RC) key
+cycles the *same* update periods as ``u``, but the periodic update then
+does **not** clear anything: it reads all registers and re-checks / logs
+the triggered asserts, but neither ``clear_reg_rc()`` nor
+``clear_assert_tree()`` is called — for a SoC where other software also
+clears the ``rc`` registers and the TUI must not clash with it (the log
+title shows ``keep RC``).  The ``R`` (read all) key
 does a one-shot read: it calls ``Module.read_all()`` on *every*
 module (registers + external mem caches, from the device), then
 re-checks the asserts (appending a block to the log if any are
@@ -143,8 +158,12 @@ header row it opens one input per lane; ``rc`` lanes are cleared
 are *written* (a register with a ``v_check`` picks a random value that
 *passes* it), read-only ones are *read* (skmap's "trigger" =
 register write).  ``tab`` / ``shift+tab`` move the focus between the
-two panels only (the tree and the register map table).  In the bits
-(``v``) display, hex values have ``ceil_div(value_type.width, 4)``
+two panels only (the tree and the register map table).  On the **regio
+tab** the ``m`` (reg map) key shows the skmap tab with the register that
+contains the address under the regio cursor: with the regio operations
+log focused that row's address, with the form's address field focused
+the address typed in it (the vanilla ``regio_ui`` has no such key).  In
+the bits (``x``) display, hex values have ``ceil_div(value_type.width, 4)``
 digits and ``sint`` values are sign-extended (a 4-bit -2 shows as
 ``0xE``).  All
 register / flag / mem device accesses use skmap's async *non-cached*
@@ -174,7 +193,7 @@ import importlib.util
 import logging
 import random
 import sys
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
@@ -204,6 +223,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.geometry import Region
 from textual.message import Message
 from textual.timer import Timer
 from textual.widgets import (
@@ -304,6 +324,82 @@ def _is_hex_literal(text: str) -> bool:
     """True if ``text`` is a 0x-prefixed integer literal (``int(t, 0)``
     with a hex prefix, optionally signed)."""
     return text.strip().lower().lstrip("+-").startswith("0x")
+
+
+@dataclass
+class _LogBlock:
+    """One appended block of the assert log.
+
+    The block keeps the pieces written to the log (its header line and
+    the table of triggered asserts) plus the triggered asset of every
+    table row — the ``l`` log cursor selects one of those rows, and
+    ``enter`` shows it in the register map (see ``AssertLog``).
+    """
+
+    header: Text
+    table: Table
+    assets: list = field(default_factory=list)
+
+
+class AssertLog(RichLog):
+    """The triggered-assert log, with the ``l`` log cursor.
+
+    A plain :class:`~textual.widgets.RichLog` only scrolls, so it has no
+    cursor of its own: the app keeps the logged asserts (one per table
+    row of every :class:`_LogBlock`) and this widget hands the keys over
+    to it while the log cursor is *inside* the log (see
+    :meth:`SkmapUiApp.action_log_cursor`) — ``up`` / ``down`` move the
+    cursor over the logged asserts, ``enter`` asks the app to highlight
+    the selected assert in the register map and ``l`` / ``escape`` /
+    ``tab`` ask it to leave the log again.
+
+    NB: the base RichLog has no cursor and no ``key_up`` / ``key_down``
+    handler of its own — it takes those keys as the ``scroll_up`` /
+    ``scroll_down`` *bindings* it inherits from ScrollableContainer.  So
+    while the log cursor is not inside the log every handler below
+    returns False (key not handled), the key falls through to those
+    bindings and the log keeps scrolling as it always did.
+    """
+
+    def _cursor_in_log(self) -> bool:
+        """Is the app's log cursor currently inside this log?"""
+        app = self.app
+        return isinstance(app, SkmapUiApp) and app._log_nav
+
+    def _nav_key(self, event: events.Key, action: str, *args) -> bool:
+        """Run one of the app's log cursor actions.
+
+        Returns False (key not handled) when the log cursor is not inside
+        the log, which lets the key through to the plain RichLog bindings
+        — that is how ``up`` / ``down`` keep scrolling the log.
+        """
+        if not self._cursor_in_log():
+            return False
+        event.stop()
+        getattr(self.app, action)(*args)
+        return True
+
+    def key_up(self, event: events.Key) -> bool:
+        return self._nav_key(event, "log_cursor_move", -1)
+
+    def key_down(self, event: events.Key) -> bool:
+        return self._nav_key(event, "log_cursor_move", 1)
+
+    def key_enter(self, event: events.Key) -> bool:
+        return self._nav_key(event, "log_cursor_select")
+
+    def key_l(self, event: events.Key) -> bool:
+        return self._nav_key(event, "log_cursor_exit")
+
+    def key_escape(self, event: events.Key) -> bool:
+        return self._nav_key(event, "log_cursor_exit")
+
+    def key_tab(self, event: events.Key) -> bool:
+        # inside the log, tab leaves the log instead of cycling panels
+        return self._nav_key(event, "log_cursor_exit")
+
+    def _key_shift_tab(self, event: events.Key) -> bool:
+        return self._nav_key(event, "log_cursor_exit")
 
 
 class ModuleTree(Tree):
@@ -628,6 +724,27 @@ class ValueInput(Input):
         self.post_message(self.Canceled())
 
 
+class RegioAddrInput(Input):
+    """The regio tab's address field, as skmap_ui uses it.
+
+    An :class:`~textual.widgets.Input` consumes every printable key, so
+    an app-level ``m`` binding never reaches the form while this field is
+    focused (the vanilla ``regio_ui`` view uses a plain ``Input``, and
+    there ``m`` is typed like any other character).  skmap_ui swaps this
+    subclass in (see :meth:`SkmapUiApp._install_regio_addr_hook`) so that
+    ``m`` asks the app to show the entered address in the skmap register
+    map instead — see :meth:`SkmapUiApp.action_locate_regmap`.
+    """
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "m":
+            event.stop()
+            event.prevent_default()
+            self.app.action_locate_regmap()  # type: ignore[attr-defined]
+            return
+        await super()._on_key(event)
+
+
 class SkmapUiApp(App):
     """Register map browser for a real ``skmap.Module`` tree."""
 
@@ -661,16 +778,21 @@ class SkmapUiApp(App):
     BINDINGS = [
         ("a", "check_asserts", "Check asserts"),
         ("c", "clear_log", "Clear log"),
-        ("l", "cycle_asserts_level", "Assert level"),
+        # 'L' cycles the assert level, 'l' moves the cursor into the log
+        # (see AssertLog) — the shift key is what distinguishes the two
+        ("L", "cycle_asserts_level", "Assert level"),
+        ("l", "log_cursor", "Log cursor"),
         ("R", "read_all_modules", "Read all"),
         ("r", "read_selected", "Read"),
         ("+", "value_step_up", "v++"),
         ("-", "value_step_down", "v--"),
         ("s", "set_step_value", "Step"),
         ("u", "cycle_refresh", "Update"),
+        ("U", "cycle_refresh_no_rc", "Update keep RC"),
         ("C", "clear_triggered", "Clear RC"),
         ("x", "toggle_value_bits", "Hex"),
         ("e", "toggle_expand_vec", "Expand vec"),
+        ("m", "locate_regmap", "Reg map"),
         ("1", "show_skmap_tab", "skmap tab"),
         ("2", "show_regio_tab", "regio tab"),
         Binding("enter", "edit_selected_value", "Edit value", show=False),
@@ -679,14 +801,18 @@ class SkmapUiApp(App):
         # focus to the value input / log.  Instead the two panels (tree /
         # table) each install a key_tab / _key_shift_tab handler (see
         # ModuleTree / RegMapTable) that cycles between the two panels only.
+        # NB: 'm' (reg map) is only enabled on the regio tab (see
+        # check_action), and the regio address field consumes printable
+        # keys, so there RegioAddrInput handles the key instead.
     ]
 
     #: the value input line's default placeholder — a class constant so
     #: the 's' step-increment prompt can restore it (see
     #: action_set_step_value / on_input_submitted)
     _VALUE_PLACEHOLDER = (
-        "enter: edit (rw/wt) / clear (rc) | l: assert "
-        "level | u: update | R: read all | r: read | "
+        "enter: edit (rw/wt) / clear (rc) | L: assert level | "
+        "l: log cursor | u: update | U: update (keep RC) | "
+        "R: read all | r: read | "
         "+/-: step value | s: step increment | C: clear RC | tab: panels | "
         "a: check asserts | x: show hex | "
         "e: expand vec | 2: regio view"
@@ -712,6 +838,18 @@ class SkmapUiApp(App):
         # and break Textual internals (e.g. screen removal when the keys
         # screen is closed: parent.refresh(layout=True) -> TypeError).
         self.refresh_period = refresh
+        # 'u' (update) periodically reads all registers AND clears the
+        # triggered registers; 'U' (update, no RC) runs the same periodic
+        # update but leaves the clearing to someone else (see
+        # _refresh_worker, so skmap_ui does not clash with other software
+        # that owns the rc clears)
+        self._update_clears_rc = True
+        # the 'l' log cursor (see AssertLog): the logged asserts per block,
+        # the cursor index into them, and the focus to restore on leaving
+        self._log_blocks: list[_LogBlock] = []
+        self._log_nav = False
+        self._log_nav_idx = -1
+        self._log_nav_return = None
         self._refresh_timer: Timer | None = None
         self.last_asserts: list[Union[RFlag, Reg]] = []
         self.last_worst_ass: Ass = Ass.passed
@@ -824,7 +962,7 @@ class SkmapUiApp(App):
                 # the assert log lives inside the registers pane (not
                 # below the tabs): the regio tab then uses the full
                 # page and shows no assert log
-                yield RichLog(id="log", markup=True, min_width=0)
+                yield AssertLog(id="log", markup=True, min_width=0)
             with TabPane("2 regio", id="tab-regio"):
                 # the embedded regio_ui view fills the whole page
                 # (the registers pane's workspace / inputs / log are
@@ -837,7 +975,7 @@ class SkmapUiApp(App):
         self.table = self.query_one("#registers", RegMapTable)
         self.value_input = self.query_one("#value-input", ValueInput)
         self.value_inputs = self.query_one("#value-inputs", Horizontal)
-        self.log_view = self.query_one("#log", RichLog)
+        self.log_view = self.query_one("#log", AssertLog)
         self.workspace = self.query_one("#workspace", Horizontal)
         self.header = self.query_one(Header)
         self.footer = self.query_one(Footer)
@@ -880,9 +1018,13 @@ class SkmapUiApp(App):
             # which would leave the table empty for a moment at boot
             self.tree_view.select_node(root_node)
             self._show_module(self.top_module)
-        # the table gets the initial focus (otherwise the value input
-        # line swallows the single-key shortcuts l / r / x)
-        self.table.focus()
+        # the module tree gets the initial focus — the cursor starts
+        # where the browsing starts, and tab / shift+tab cycle the two
+        # panels from there.  NB: never the value input line, an Input
+        # consumes the printable keys and would swallow the single-key
+        # shortcuts l / r / x
+        self.tree_view.focus()
+        self._install_regio_addr_hook()
         self._set_refresh_timer()
         self.run_worker(self._check_asserts(), name="check_asserts", exclusive=False)
 
@@ -1455,16 +1597,42 @@ class SkmapUiApp(App):
                     item.desc,
                 )
         self.log_view.write(table)
+        # the log keeps its own model of what it wrote, one asset per
+        # table row: the 'l' log cursor selects one of those rows (see
+        # AssertLog / _log_render)
+        self._log_blocks.append(
+            _LogBlock(header=rich_header, table=table, assets=list(log_f))
+        )
 
     def _update_log_title(self) -> None:
-        """Border title of the log pane: current assert option values."""
+        """Border title of the log pane: current assert option values,
+        plus where the 'l' log cursor sits."""
         update = (
             f"update: {self.refresh_period:g} s"
             if self.refresh_period
             else "update: off"
         )
+        if self.refresh_period and not self._update_clears_rc:
+            # 'U' update: the periodic update leaves the clears alone
+            update += "  ·  keep RC"
+        cursor = ""
+        if self._log_nav:
+            # the log cursor is inside the log: show the selected assert
+            entries = self._log_entries()
+            if 0 <= self._log_nav_idx < len(entries):
+                block, row = entries[self._log_nav_idx]
+                asset = self._log_blocks[block].assets[row]
+                # a flag is named through its register (like the log rows)
+                name = (
+                    f"{asset.reg_flags.name}.{asset.name}"
+                    if isinstance(asset, RFlag)
+                    else asset.name
+                )
+                cursor = (
+                    f"  ·  cursor {self._log_nav_idx + 1}/{len(entries)} {name}"
+                )
         self.log_view.border_title = (
-            f"asserts (level >= {self.asserts_level.name})  ·  {update}"
+            f"asserts (level >= {self.asserts_level.name})  ·  {update}{cursor}"
         )
 
     def _update_row_value(self, key: str, value: Text) -> None:
@@ -1566,8 +1734,38 @@ class SkmapUiApp(App):
         )
 
     def action_cycle_refresh(self) -> None:
-        """'u' (update) key: cycle the refresh period (off -> 1 -> 5 -> 30 s)."""
-        idx = refresh_intervals.index(self.refresh_period)
+        """'u' (update) key: cycle the refresh period (off -> 1 -> 5 -> 30 s).
+
+        The periodic update also clears the triggered registers, so the log
+        only grows with *new* events (see action_cycle_refresh_no_rc for
+        the variant that keeps them).
+        """
+        self._set_update(clears_rc=True)
+
+    def action_cycle_refresh_no_rc(self) -> None:
+        """'U' (update, no RC) key: the same periodic update as the 'u' key,
+        but the update does **not** call ``Module.clear_reg_rc()`` /
+        ``Module.clear_assert_tree()``.
+
+        Use it when other software on the SoC reads (and clears) the
+        ``rc`` registers too: skmap_ui then only reads and re-checks / logs
+        the triggered asserts, so it cannot clear an ``rc`` register that
+        the other software has not served yet.  Note that skmap_ui keeps
+        logging the *same* triggered assert on every tick until it is
+        cleared (by whoever owns the clearing).
+        """
+        self._set_update(clears_rc=False)
+
+    def _set_update(self, clears_rc: bool) -> None:
+        """'u' / 'U' keys: cycle the update period and (re-)select whether
+        the periodic update clears the triggered registers."""
+        self._update_clears_rc = clears_rc
+        try:
+            idx = refresh_intervals.index(self.refresh_period)
+        except ValueError:
+            # started with a --refresh period that is not one of the
+            # cycled intervals: restart the cycle from off
+            idx = 0
         self.refresh_period = refresh_intervals[(idx + 1) % len(refresh_intervals)]
         self._set_refresh_timer()
         self._update_log_title()
@@ -1722,12 +1920,14 @@ class SkmapUiApp(App):
         {
             "check_asserts",
             "cycle_asserts_level",
+            "log_cursor",
             "read_all_modules",
             "read_selected",
             "value_step_up",
             "value_step_down",
             "set_step_value",
             "cycle_refresh",
+            "cycle_refresh_no_rc",
             "clear_triggered",
             "toggle_value_bits",
             "toggle_expand_vec",
@@ -1745,6 +1945,12 @@ class SkmapUiApp(App):
             getattr(self, "_active_tab", None) == "tab-regio"
             and action in self._SKMAP_ACTIONS
         ):
+            return False
+        if (
+            getattr(self, "_active_tab", None) != "tab-regio"
+            and action == "locate_regmap"
+        ):
+            # 'm' (reg map) is the regio tab's own key
             return False
         return super().check_action(action, parameters)
 
@@ -1793,6 +1999,7 @@ class SkmapUiApp(App):
     def _focus_tab(self, pane_id: str) -> None:
         """Focus the main widget of a tab's pane."""
         if pane_id == "tab-regio":
+            self._install_regio_addr_hook()
             self._regio_view.ops.focus()
         elif self.table.row_count:
             self.table.focus()
@@ -1842,8 +2049,9 @@ class SkmapUiApp(App):
         """Periodic tick: read all registers from the device, re-check
         the asserts (appending a time-stamped block to the log if any
         are triggered, so the log grows), update the register map, and
-        clear the ``rc`` registers so the next tick only logs new
-        events."""
+        clear the ``rc`` registers so the next tick only logs new events
+        — unless the 'U' update option keeps them (see
+        ``_update_clears_rc``)."""
         self._refresh_idle.clear()
         try:
             try:
@@ -1855,15 +2063,21 @@ class SkmapUiApp(App):
                 return
             await self._recheck_asserts()
             self._refresh_shown_values()
-            try:
-                # clear the rc registers shown in the register map (the
-                # selected module only), and the triggered asserts of
-                # the whole tree (the log checks recursively)
-                if self._row_module is not None:
-                    await self._row_module.clear_reg_rc()
-                await self.top_module.clear_assert_tree()
-            except Exception as err:  # noqa: BLE001
-                logging.warning("clear triggered failed: %s", err, exc_info=True)
+            if self._update_clears_rc:
+                # the 'u' update clears the triggered registers; the 'U'
+                # update (no RC) does not, so other software reading and
+                # clearing them never looses an event to this TUI
+                try:
+                    # clear the rc registers shown in the register map (the
+                    # selected module only), and the triggered asserts of
+                    # the whole tree (the log checks recursively)
+                    if self._row_module is not None:
+                        await self._row_module.clear_reg_rc()
+                    await self.top_module.clear_assert_tree()
+                except Exception as err:  # noqa: BLE001
+                    logging.warning(
+                        "clear triggered failed: %s", err, exc_info=True
+                    )
         finally:
             # register writes held by _wait_refresh_idle() may now go out
             self._refresh_idle.set()
@@ -2400,6 +2614,228 @@ class SkmapUiApp(App):
     def action_check_asserts(self) -> None:
         self.run_worker(self._check_asserts(), name="check_asserts", exclusive=False)
 
+    # ------------------------------------------------------------------
+    # the 'l' log cursor (see AssertLog)
+    # ------------------------------------------------------------------
+
+    def _log_entries(self) -> list[tuple[int, int]]:
+        """Every logged assert as a (block, row) index, oldest first."""
+        return [
+            (index, row)
+            for index, block in enumerate(self._log_blocks)
+            for row in range(len(block.assets))
+        ]
+
+    def _log_render(self, scroll: bool) -> None:
+        """Redraw the assert log from its blocks.
+
+        The block tables are kept, so this only re-renders them (no asset
+        is read again).  While the log cursor is inside the log its row is
+        drawn reversed, and with *scroll* the log is scrolled so that row
+        is visible.
+
+        This is the (more expensive) cursor path: appending a block only
+        writes that block (see _append_assert_log), so a log that grows on
+        every update tick stays cheap as long as nobody moves the cursor.
+        """
+        log = self.log_view
+        entries = self._log_entries()
+        if not entries:
+            self._log_nav_idx = -1
+        elif self._log_nav_idx >= len(entries):
+            self._log_nav_idx = len(entries) - 1
+        cursor = entries[self._log_nav_idx] if self._log_nav_idx >= 0 else None
+        log.clear()
+        auto_scroll = log.auto_scroll
+        log.auto_scroll = False  # else every write jumps to the newest line
+        target = None
+        for index, block in enumerate(self._log_blocks):
+            for row, _asset in enumerate(block.assets):
+                block.table.rows[row].style = (
+                    "reverse" if cursor == (index, row) else ""
+                )
+            log.write(block.header)
+            # a box=None table renders as its header line plus one line
+            # per row, so the cursor row's line is easy to point at
+            table_start = len(log.lines)
+            log.write(block.table)
+            if cursor is not None and cursor[0] == index:
+                target = table_start + 1 + cursor[1]
+        log.auto_scroll = auto_scroll
+        self._update_log_title()
+        if scroll and target is not None:
+            log.scroll_to_region(Region(0, target, 1, 1), animate=False)
+
+    def action_log_cursor(self) -> None:
+        """'l' key: move the cursor into the assert log.
+
+        While the cursor is inside the log, up / down move it over the
+        logged asserts (the log scrolls with it, the selected assert is
+        named in the log's border title), enter highlights the selected
+        assert in the register map and 'l' / escape / tab move the cursor
+        back out of the log (see AssertLog).
+        """
+        if self._log_nav:
+            self.log_cursor_exit()
+            return
+        entries = self._log_entries()
+        if not entries:
+            self.notify("assert log is empty", severity="warning")
+            return
+        self._log_nav = True
+        # start at the most recent assert
+        self._log_nav_idx = len(entries) - 1
+        self._log_nav_return = self.focused
+        self.log_view.focus()
+        self._log_render(scroll=True)
+
+    def log_cursor_exit(self) -> None:
+        """Leave the log: the cursor goes back to the panel it came from."""
+        if not self._log_nav:
+            return
+        widget = self._log_nav_return
+        self._log_nav = False
+        self._log_nav_idx = -1
+        self._log_nav_return = None
+        self._log_render(scroll=False)
+        if widget is not None and widget.is_mounted and widget.can_focus:
+            widget.focus()
+        else:
+            self.table.focus()
+
+    def log_cursor_move(self, delta: int) -> None:
+        """Move the log cursor over the logged asserts (log focused)."""
+        entries = self._log_entries()
+        if not entries:
+            return
+        if self._log_nav_idx < 0:
+            self._log_nav_idx = 0 if delta > 0 else len(entries) - 1
+        else:
+            self._log_nav_idx = max(
+                0, min(self._log_nav_idx + delta, len(entries) - 1)
+            )
+        self._log_render(scroll=True)
+
+    def log_cursor_select(self) -> None:
+        """Enter inside the log: put the register map cursor on the
+        selected assert (switching the shown module when needed)."""
+        entries = self._log_entries()
+        if not entries or self._log_nav_idx < 0:
+            return
+        index, row = entries[self._log_nav_idx]
+        self._show_asset(self._log_blocks[index].assets[row])
+
+    def _show_asset(self, obj: RowObj) -> bool:
+        """Show an asset's row in the register map and put the table cursor
+        on it, switching the shown module / mem when needed.
+
+        Returns False when the asset has no row to show.
+        """
+        if isinstance(obj, ExternalMem):
+            node = self._node_for(obj)
+            if self._row_mem is not obj:
+                self._show_mem(obj)
+            if node is not None:
+                self.tree_view.select_node(node)
+            return bool(self._row_keys)
+        reg = obj.reg_flags if isinstance(obj, RFlag) else obj
+        module = reg.module
+        if module is None:
+            return False
+        if self._row_module is not module:
+            self._show_module(module)
+        node = self._node_for(module)
+        if node is not None:
+            # highlight before select_node: the (async) NodeSelected then
+            # sees the module it already shows and only restores the table
+            # cursor (see _restore_cursor_key) instead of rebuilding it
+            self.tree_view.set_highlighted(node)
+            self.tree_view.select_node(node)
+        key = next((k for k, o in self._row_objs.items() if o is obj), None)
+        if key is None and isinstance(obj, RFlag):
+            # a flag field is no row of its own: put the cursor on the
+            # RegFlags register that holds it
+            key = next(
+                (k for k, o in self._row_objs.items() if o is obj.reg_flags),
+                None,
+            )
+        if key is None:
+            self.notify(f"{obj.name}: no row to highlight", severity="warning")
+            return False
+        # select_node()'s (async) NodeSelected must not reset the cursor
+        self._restore_cursor_key = key
+        self.table.move_cursor(row=self._row_keys.index(key), column=0)
+        return True
+
+    # ------------------------------------------------------------------
+    # the regio tab's 'm' (reg map) key
+    # ------------------------------------------------------------------
+
+    def _install_regio_addr_hook(self) -> None:
+        """Let the regio form's address field use 'm' (reg map) too.
+
+        An Input consumes every printable key, so the app's 'm' binding
+        never fires while the field is focused; skmap_ui swaps its own
+        subclass in (the vanilla regio_ui view keeps the plain Input,
+        where 'm' is typed normally).  Idempotent.
+        """
+        view = self._regio_view
+        if view is None:
+            return
+        addr_input = view.addr_input
+        if type(addr_input) is Input:
+            addr_input.__class__ = RegioAddrInput
+
+    def _asset_at(self, addr: int) -> RowObj | None:
+        """The register / external mem containing the regio address
+        ``addr``, searched over the whole module tree."""
+
+        def walk(module: Module) -> RowObj | None:
+            for reg in list(module.arr_reg_k) + list(module.arr_reg_var):
+                if reg.addr is None:
+                    continue
+                if reg.addr <= addr < reg.addr + reg.size:
+                    return reg
+            for mem in module.arr_external_mem:
+                if mem.base_addr <= addr < mem.base_addr + mem.size:
+                    return mem
+            for kid in module.kids_cached():
+                if kid is None:
+                    continue
+                found = walk(kid)
+                if found is not None:
+                    return found
+            return None
+
+        return walk(self.top_module)
+
+    def action_locate_regmap(self) -> None:
+        """'m' (reg map) key, regio tab only: show the skmap tab with the
+        register that contains the address under the regio cursor.
+
+        With the regio operations log focused that is the address of the
+        row under its cursor, with the form's address field focused the
+        address typed in it (see RegioAddrInput).  The vanilla regio_ui
+        has no such key.
+        """
+        view = self._regio_view
+        if view is None or self._active_tab != "tab-regio":
+            return
+        addr = view.current_op_address()
+        if addr is None:
+            self.notify("reg map: no address", severity="warning")
+            return
+        obj = self._asset_at(addr)
+        if obj is None:
+            self.notify(f"no register at {hex(addr)}", severity="warning")
+            return
+        # _activate_tab moves the focus into the skmap pane first, or
+        # TabbedContent (whose active tab follows the focus) would switch
+        # straight back to the regio tab
+        self._activate_tab("tab-registers")
+        self._show_asset(obj)
+        self.notify(f"{hex(addr)} -> {obj.name}")
+
     def action_clear_log(self) -> None:
         # 'c' clears the log of the *shown* tab: on the regio tab that
         # is the regio operations log (the focused regio view normally
@@ -2410,7 +2846,13 @@ class SkmapUiApp(App):
             self._regio_view.action_clear_log()
             return
         self._log_lines.clear()
+        self._log_blocks.clear()
+        if self._log_nav:
+            # the logged asserts the cursor walks over are gone as well
+            self.log_cursor_exit()
+        self._log_nav_idx = -1
         self.log_view.clear()
+        self._update_log_title()
 
     # ------------------------------------------------------------------
     # value editing (enter on a table row -> input line -> write/clear)
@@ -3226,7 +3668,7 @@ def main() -> None:
         default="debug",
         choices=[ass.name for ass in asserts_levels],
         help="Assert level (default: debug); asserts at or above this "
-             "level are logged. Cycle at runtime with the 'l' key.",
+             "level are logged. Cycle at runtime with the 'L' key.",
     )
     parser.add_argument(
         "--refresh",
@@ -3234,7 +3676,9 @@ def main() -> None:
         default=0.0,
         help="Periodically read all registers (read_all_tree) and "
              "re-check the asserts every N seconds (0 = off, default: 0). "
-             "Cycle at runtime with the 'u' (update) key; the 'r' "
+             "Cycle at runtime with the 'u' (update) key, which also "
+             "clears the triggered registers, or the 'U' key which runs "
+             "the same update without clearing them; the 'R' "
              "(read all) key does a one-shot read of all modules."
     )
 

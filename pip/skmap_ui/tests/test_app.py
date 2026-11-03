@@ -583,6 +583,7 @@ def test_external_mem_node():
             await _wait_cell(app, pilot, 1, VALUE, "0")
 
             # enter on a lane row prefills the current value
+            app.table.focus()
             app.table.move_cursor(row=1, column=0)
             await pilot.press("enter")
             await pilot.pause()
@@ -1953,9 +1954,9 @@ def test_cycle_asserts_level():
             n0 = _n_blocks(app._log_lines)
             assert n0 == 1  # the initial check appended one block
 
-            # l: info -> all three still logged (V_EVENT is info);
+            # L: info -> all three still logged (V_EVENT is info);
             # the check appends a new block (the log grows)
-            await pilot.press("l")
+            await pilot.press("L")
             await pilot.pause()
             assert app.asserts_level == Ass.info
             await _wait_log(
@@ -1965,8 +1966,8 @@ def test_cycle_asserts_level():
             )
             assert "3 triggered, worst: error" in _last_block(app._log_lines)[0]
 
-            # l: warn -> V_EVENT (info) drops out of the new block
-            await pilot.press("l")
+            # L: warn -> V_EVENT (info) drops out of the new block
+            await pilot.press("L")
             await pilot.pause()
             assert app.asserts_level == Ass.warn
             await _wait_log(
@@ -1976,8 +1977,8 @@ def test_cycle_asserts_level():
             )
             assert "V_EVENT" not in "\n".join(_last_block(app._log_lines))
 
-            # l: error -> only STATUS in the new block
-            await pilot.press("l")
+            # L: error -> only STATUS in the new block
+            await pilot.press("L")
             await pilot.pause()
             assert app.asserts_level == Ass.error
             await _wait_log(
@@ -2957,8 +2958,9 @@ def test_tab_focus_toggles_tree_and_table():
         app = SkmapUiApp(make_demo())
         async with app.run_test() as pilot:
             await _wait_asserts(app, pilot)
-            # the table has the initial focus
-            assert app.app.focused is app.table
+            # the tree has the initial focus (the cursor starts in the
+            # module tree, tab moves it to the register map)
+            assert app.app.focused is app.tree_view
 
             def focus_panel():
                 """The panel (tree / table) that has the focus."""
@@ -2971,24 +2973,24 @@ def test_tab_focus_toggles_tree_and_table():
                     return app.table
                 return None
 
-            assert focus_panel() is app.table
-            # tab -> the tree, tab again -> back to the table
-            await pilot.press("tab")
-            await pilot.pause()
             assert focus_panel() is app.tree_view
+            # tab -> the table, tab again -> back to the tree
             await pilot.press("tab")
             await pilot.pause()
             assert focus_panel() is app.table
-            # shift+tab -> the tree as well (only two panels)
-            await pilot.press("shift+tab")
+            await pilot.press("tab")
             await pilot.pause()
             assert focus_panel() is app.tree_view
+            # shift+tab -> the table as well (only two panels)
             await pilot.press("shift+tab")
             await pilot.pause()
             assert focus_panel() is app.table
+            await pilot.press("shift+tab")
+            await pilot.pause()
+            assert focus_panel() is app.tree_view
             # the input and the log never receive the focus
             assert app.app.focused is not app.value_input
-            assert app.app.focused is not app.log
+            assert app.app.focused is not app.log_view
 
     _run(run())
 
@@ -3195,10 +3197,11 @@ def test_regio_tab_footer_and_clear():
             await pilot.pause()
             assert view.capture is True
 
-            # regio tab footer: only 'c' (clear) and 'p' (capture) —
-            # the skmap actions are disabled (and hidden), the tab
-            # keys 1/2 keep working while staying out of the footer
-            assert shown() == {"c", "p"}
+            # regio tab footer: only 'c' (clear), 'p' (capture) and 'm'
+            # (reg map) — the skmap actions are disabled (and hidden),
+            # the tab keys 1/2 keep working while staying out of the
+            # footer
+            assert shown() == {"c", "p", "m"}
 
             # 'c' clears the log of the *shown* tab: the regio log goes
             # empty while the assert log (skmap tab) is untouched
@@ -3513,5 +3516,323 @@ def test_write_does_not_read_back():
 
             # the shown cell is refreshed from the cache (no read needed)
             await _wait_cell(app, pilot, row, VALUE, "0x00001234")
+
+    _run(run())
+
+
+# ---------------------------------------------------------------------------
+# initial tree cursor, 'l' log cursor, 'U' update without RC, 'm' reg map
+# ---------------------------------------------------------------------------
+
+
+def test_cursor_starts_in_the_tree():
+    """The cursor starts in the module tree (not in the register map)."""
+
+    async def run():
+        app = SkmapUiApp(make_demo())
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            assert app.app.focused is app.tree_view
+            # the register map of the top module is shown already
+            assert app._row_module is app.top_module
+            assert app.tree_view.cursor_node is app.tree_view.root
+
+    _run(run())
+
+
+def test_log_cursor_moves_and_leaves():
+    """'l' moves the cursor into the assert log: up / down move it over
+    the logged asserts (named in the log's border title, the row drawn
+    reversed), 'l' leaves it back to the panel it came from — and 'l' no
+    longer cycles the assert level (that is 'L' now)."""
+
+    async def run():
+        app = SkmapUiApp(make_demo())
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_asserts(app, pilot)
+            level = app.asserts_level
+            n = len(app._log_entries())
+            assert n >= 3  # the boot check logged the demo's three asserts
+
+            def selected():
+                """(asset, row style) the log cursor sits on."""
+                block, row = app._log_entries()[app._log_nav_idx]
+                blk = app._log_blocks[block]
+                return blk.assets[row], blk.table.rows[row].style
+
+            await pilot.press("l")
+            await pilot.pause()
+            assert app.app.focused is app.log_view
+            assert app._log_nav is True
+            # the cursor starts at the most recent assert
+            assert app._log_nav_idx == n - 1
+            # 'l' is the log cursor now, it does not cycle the level
+            assert app.asserts_level is level
+            # the selected assert is named in the log's border title
+            asset, style = selected()
+            assert style == "reverse"
+            title = app.log_view.border_title
+            assert f"cursor {n}/{n}" in title
+            assert asset.name in title
+
+            # up: one assert back; only the new row is reversed
+            await pilot.press("up")
+            await pilot.pause()
+            assert app._log_nav_idx == n - 2
+            asset_up, style_up = selected()
+            assert asset_up is not asset
+            assert style_up == "reverse"
+            assert asset is not asset_up
+            assert all(
+                blk.table.rows[r].style != "reverse"
+                for blk in app._log_blocks
+                for r in range(len(blk.assets))
+                if (blk, r) != (app._log_blocks[app._log_entries()[app._log_nav_idx][0]],
+                                app._log_nav_idx)
+            )
+
+            # down again
+            await pilot.press("down")
+            await pilot.pause()
+            assert app._log_nav_idx == n - 1
+            assert selected()[0] is asset
+
+            # the cursor cannot leave the logged asserts
+            for _ in range(n + 2):
+                await pilot.press("up")
+                await pilot.pause()
+            assert app._log_nav_idx == 0
+            for _ in range(n + 2):
+                await pilot.press("down")
+                await pilot.pause()
+            assert app._log_nav_idx == n - 1
+
+            # 'l' leaves the log again: the focus goes back to the tree
+            await pilot.press("l")
+            await pilot.pause()
+            assert app._log_nav is False
+            assert app.app.focused is app.tree_view
+            # outside the log cursor no assert row is reversed
+            assert all(
+                row.style != "reverse"
+                for blk in app._log_blocks
+                for row in blk.table.rows
+            )
+            assert "cursor" not in app.log_view.border_title
+
+            # with the cursor outside the log the same keys still scroll
+            # it (they reach the scroll_up / scroll_down bindings the
+            # RichLog inherits — the log itself has no cursor by itself)
+            for _ in range(20):
+                app._append_assert_log(app.last_worst_ass, list(app.last_asserts))
+            await pilot.pause()
+            app.log_view.focus()
+            app.log_view.scroll_end(animate=False)
+            await pilot.pause()
+            y0 = app.log_view.scroll_y
+            assert y0 > 0
+            await pilot.press("up")
+            await pilot.pause()
+            assert app.log_view.scroll_y < y0
+
+    _run(run())
+
+
+def test_log_cursor_enter_highlights_the_assert():
+    """enter inside the log puts the register map cursor on the selected
+    assert — switching the shown module and the tree highlight when the
+    assert lives in another module; tab / escape leave the log again."""
+
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_asserts(app, pilot)
+            pmu = top.kids_cached()[1]
+            v_event = pmu.arr_reg_var[0]
+            assert v_event.name == "V_EVENT"
+            # the assert log checks the whole tree, while the register
+            # map shows the top module: entering that assert must switch
+            assert app._row_module is top
+
+            def selected():
+                block, row = app._log_entries()[app._log_nav_idx]
+                return app._log_blocks[block].assets[row]
+
+            await pilot.press("l")
+            await pilot.pause()
+            assert app.app.focused is app.log_view
+            for _ in range(len(app._log_entries()) + 1):
+                if selected() is v_event:
+                    break
+                await pilot.press("up")
+                await pilot.pause()
+            assert selected() is v_event
+
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app._row_module is pmu
+            assert app._row_objs[app._row_keys[app.table.cursor_row]] is v_event
+            assert app.tree_view.highlighted.data is pmu
+            # the cursor stays in the log (the user can pick another assert)
+            assert app.app.focused is app.log_view
+
+            # tab leaves the log back to the tree (where 'l' was pressed)
+            await pilot.press("tab")
+            await pilot.pause()
+            assert app._log_nav is False
+            assert app.app.focused is app.tree_view
+
+            # ... and so does escape, from the table this time
+            app.table.focus()
+            await pilot.press("l")
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.app.focused is app.table
+
+    _run(run())
+
+
+def test_update_U_does_not_clear_rc():
+    """'U' (update, no RC) cycles the same periods as 'u' and keeps
+    reading and logging, but clears nothing: an rc register somebody
+    else has not served stays triggered (and keeps being logged)."""
+
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            pmu = top.kids_cached()[1]
+            v_event = pmu.arr_reg_var[0]
+            assert v_event.read_uint_cached() == 1  # triggered on start
+
+            await pilot.press("U")
+            await pilot.pause()
+            assert app._update_clears_rc is False
+            assert app.refresh_period  # the update is on
+            assert "keep RC" in app.log_view.border_title
+            app.refresh_period = 0.05  # speed the tick up for the test
+            app._set_refresh_timer()
+
+            # several update ticks: the assert is logged again and again
+            n0 = _n_blocks(app._log_lines)
+            for _ in range(1000):
+                if _n_blocks(app._log_lines) >= n0 + 2:
+                    break
+                await pilot.pause()
+            assert _n_blocks(app._log_lines) >= n0 + 2
+            assert v_event.read_uint_cached() == 1, "'U' must not clear rc"
+            assert "V_EVENT" in "\n".join(_last_block(app._log_lines))
+
+            # 'u' clears the triggered registers again
+            await pilot.press("u")
+            await pilot.pause()
+            assert app._update_clears_rc is True
+            assert "keep RC" not in app.log_view.border_title
+            app.refresh_period = 0.05
+            app._set_refresh_timer()
+            for _ in range(1000):
+                if v_event.read_uint_cached() == 0:
+                    break
+                await pilot.pause()
+            assert v_event.read_uint_cached() == 0
+
+    _run(run())
+
+
+def test_m_key_locates_the_register_of_a_regio_address():
+    """'m' (reg map) on the regio tab shows the skmap tab with the
+    register that contains the address under the regio cursor (the
+    operations log row, or the form's address field — where 'm' is no
+    text).  On the skmap tab the key is not available at all."""
+
+    async def run():
+        app = SkmapUiApp(make_demo())
+        mem = app.top_module.arr_external_mem[0]
+        async with app.run_test(size=(140, 36)) as pilot:
+            await _wait_asserts(app, pilot)
+            view = app._regio_view
+
+            def shown_asset():
+                return app._row_objs[app._row_keys[app.table.cursor_row]]
+
+            # capture + a register read -> one logged operation
+            await pilot.press("2")
+            await pilot.pause()
+            await pilot.press("p")
+            await pilot.pause()
+            await pilot.press("1")
+            await pilot.pause()
+            key, vreset = next(
+                (k, o)
+                for k, o in app._row_objs.items()
+                if getattr(o, "name", "") == "V_RESET"
+            )
+            app.table.move_cursor(row=app._row_keys.index(key), column=0)
+            await pilot.press("r")
+            for _ in range(500):
+                if view.ops.row_count:
+                    break
+                await pilot.pause()
+            assert view.ops.row_count == 1
+
+            # on the skmap tab 'm' is disabled (and not in the footer)
+            await pilot.press("m")
+            await pilot.pause()
+            assert app.tabs.active == "tab-registers"
+            assert "m" not in {
+                k for k, ab in app.screen.active_bindings.items() if ab.binding.show
+            }
+
+            # regio tab, operations log focused: that row's address
+            await pilot.press("2")
+            await pilot.pause()
+            assert app.app.focused is view.ops
+            assert view.current_op_address() == vreset.addr
+            await pilot.press("m")
+            await pilot.pause()
+            assert app.tabs.active == "tab-registers"
+            assert app.app.focused is app.table
+            assert app._row_module is vreset.module
+            assert shown_asset() is vreset
+
+            # regio tab, address field focused: the typed address — an
+            # address inside the register, not on its first byte
+            await pilot.press("2")
+            await pilot.pause()
+            view.addr_input.value = hex(vreset.addr + 1)
+            view.addr_input.focus()
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            assert app.tabs.active == "tab-registers"
+            assert shown_asset() is vreset
+            # 'm' is a command here, not text: the field is unchanged
+            assert view.addr_input.value == hex(vreset.addr + 1)
+
+            # an address inside an external mem opens that mem's view
+            await pilot.press("2")
+            await pilot.pause()
+            view.addr_input.value = hex(mem.base_addr + 3)
+            view.addr_input.focus()
+            await pilot.pause()
+            await pilot.press("m")
+            for _ in range(100):
+                if app._row_mem is not None:
+                    break
+                await pilot.pause()
+            assert app._row_mem is mem
+
+            # an address with nothing behind it: stays on the regio tab
+            await pilot.press("2")
+            await pilot.pause()
+            view.addr_input.value = "0x7fff00"
+            view.addr_input.focus()
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            assert app.tabs.active == "tab-regio"
 
     _run(run())

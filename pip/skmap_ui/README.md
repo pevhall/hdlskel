@@ -40,8 +40,10 @@ currently displayed is **highlighted** (bold bright blue).
 | `enter` | tree: open the register map of the node under the cursor; table: **edit** the value of the row under the cursor (see below) |
 | `left` / `right` | collapse / expand the tree node under the cursor (`space` toggles too) |
 | `a` | re-run `make_tree()` + `check_assert_tree_cached()` and append the triggered asserts to the log |
-| `l` | cycle the **assert level** (debug → info → warn → error → fatal): asserts below the level are no longer logged (see *Assert log*) |
+| `l` | **log cursor**: move the cursor into the assert log (it does not cycle the assert level any more — that is `L`).  While it is inside the log, `up` / `down` move it over the logged asserts (the log scrolls with it and its border title names the selected one), `enter` moves the register map cursor onto that assert (switching the shown module when needed) and `l` / `escape` / `tab` move the cursor back out of the log, to the panel it came from (see *Assert log*) |
+| `L` | cycle the **assert level** (debug → info → warn → error → fatal): asserts below the level are no longer logged (see *Assert log*) |
 | `u` | cycle the **update period** (off → 1 → 5 → 30 s): every period the app calls `Module.read_all_tree()`, re-checks the asserts (appending any triggered ones to the log) and clears the `rc` registers (see *Assert log*) |
+| `U` | **update, no RC**: cycles the *same* update periods as `u` and does the same periodic read + re-check + log, but the update then clears **nothing** (neither `clear_reg_rc()` nor `clear_assert_tree()`), for a SoC where other software serves the `rc` registers too (the log border title shows `keep RC`, see *Assert log*) |
 | `R` | **read all**: a one-shot read — calls `Module.read_all()` on *every* module (registers + external mem caches, from the device), then re-checks the asserts (appending a block to the log if any are triggered) and updates the shown *Value* cells.  Unlike the periodic update it clears **nothing** and does **not** move the row cursor |
 | `r` | **read**: read the currently selected value from the device.  With the **register map** focused it reads the asset under the table cursor (register / flag / external mem) — a flag row (a `RegFlags` or one of its `RFlag` bits) reads the whole `RegFlags` and refreshes **every** flag under it; with the **tree** focused it calls `Module.read_all()` on the module under the tree cursor.  The read refreshes the skmap cache and the shown *Value* cells, and appends a block to the assert log for any read `Reg` / `RFlag` (or module) whose assert is triggered |
 | `+` / `-` | **step value**: add / subtract the **step increment** (1 by default, set with `s`) to the value under the table cursor and write the result.  The step is done on the **bits** of the register (like the hex display and a hex input, so the `v_convert_wr` / `v_convert_rd` of a recipe are not applied), and the result **wraps** in the width of the value (`0xFF` + 1 = `0x00`, `0x00` - 1 = `0xFF`, a `sint` the same way: `0x7F` + 1 = `0x80` = -128).  A bool / flag is one bit, so there a step is a **toggle** — a single bool, an individual flag bit, or every flag of a flag register (what the `t` key used to do, `+` / `-` replace it).  A lane row steps just that lane, the header row of a vector (or `ExternalMemVec`) every lane.  Only `rw` / `wt` values can be stepped; a stepped value that does not pass the `v_check` of the register is rejected by the register (logged, the shown value stays).  **Holding the key is safe**: a press only *queues* the step and a single worker runs the queued steps one at a time — each write finishes (updating the register cache) before the next step computes its value from that cache — so the device sees a strictly stepping series of values, never overlapping operations and never the same value written twice in a row |
@@ -53,9 +55,11 @@ currently displayed is **highlighted** (bold bright blue).
 | `shift` + `left` / `right` | in the register map: scroll horizontally by **5×** the amount a plain `left` / `right` moves the cursor (the cursor does not move); in the tree: scroll horizontally by **5** cells (a plain `left` / `right` expands / collapses the cursor node there instead of scrolling) |
 | `1` / `2` | switch to the **skmap** tab (register map) / the **regio** tab (the embedded regio_ui log — see *Regio tab*); the tab strip shows the labels `1 skmap` / `2 regio` |
 | `p` | on the **regio tab**: start / stop **capturing** the regio operation log (the regio_ui view's own key) |
+| `m` | on the **regio tab** only: **reg map** — switch to the skmap tab and put the register map cursor on the register that contains the regio address under the cursor (the address of the operations-log row under its cursor, or the address typed in the form's address field, see *Regio tab*).  The vanilla `regio_ui` has no such key, and on the skmap tab it is disabled |
 
-On start the top module is selected (its register map is shown right away)
-and the assert check runs automatically.
+On start the top module is selected (its register map is shown right away),
+the assert check runs automatically and the **cursor starts in the module
+tree** (`tab` moves it to the register map).
 
 ### Editing register values
 
@@ -176,6 +180,23 @@ asserts of the whole tree (`clear_assert_tree()`) — the same clear
 step as `C`, only preceded by a device read + re-check — so the next
 update only logs new events.
 
+The `U` key (update, no RC) runs **the same periodic update** but skips
+that clear step, so nothing is cleared at all:
+
+| key | update period | reads / re-checks / logs | `clear_reg_rc()` + `clear_assert_tree()` |
+|-----|---------------|--------------------------|------------------------------------------|
+| `u` | off → 1 → 5 → 30 s | yes | **yes** — the next update only logs new events |
+| `U` | off → 1 → 5 → 30 s | yes | **no** — an assert keeps being logged until *someone else* clears it |
+
+Use `U` when other software on the SoC reads (and clears) the `rc`
+registers too: skmap_ui then only watches them, so it can never clear an
+`rc` register that the other software has not served yet (and loose that
+event for it).  The price is that skmap_ui keeps appending the *same*
+triggered assert on every tick until whoever owns the clearing clears it
+— which is exactly what shows that the event is still unserved.  Both
+keys cycle the same periods, so `u` / `U` also switch back and forth; the
+log border title shows `keep RC` while nothing is cleared.
+
 ## Regio tab (embedded regio_ui)
 
 The workspace is tabbed (the strip shows `1 skmap` / `2 regio`, keys
@@ -205,9 +226,19 @@ On the regio tab the operations log has the focus: `t` toggles the
 form's `wr`/`rd` op, `c` clears the log, `p` toggles the capture, and
 `enter` on a log row autofills the form (see the regio_ui docs).  The
 footer there shows only `c` (clear — clears the log of the **shown**
-tab) and `p` (capture): the register-map keys (`r`, `R`, `a`, `x`, …)
-are *disabled* on the regio tab; the tab keys `1` / `2` — which switch
-between the tabs — keep working while staying out of the footer.
+tab), `p` (capture) and `m` (reg map): the register-map keys (`r`, `R`,
+`a`, `x`, …) are *disabled* on the regio tab; the tab keys `1` / `2` —
+which switch between the tabs — keep working while staying out of the
+footer.
+
+**`m` (reg map)** is the regio tab's own key: it switches to the skmap
+tab and puts the register map cursor on the register that contains the
+regio address under the cursor — the address of the operations-log row
+under its cursor, or the address typed in the form's address field (so
+`m` is a command there, not text; an address with no register / external
+mem behind it is logged and the tab stays put).  The vanilla `regio_ui`
+has no use for this key: the address field of the standalone view stays
+a plain input, and `m` is typed into it normally.
 
 ## Assert log
 
@@ -237,7 +268,25 @@ re-logs an `rc` assert if it was re-triggered in the meantime, while
 `ro`/`rw` asserts keep being logged until their value changes.
 
 The log view's border shows the current options, e.g.
-`asserts (level >= debug)  ·  update: 5 s` (or `update: off`).
+`asserts (level >= debug)  ·  update: 5 s` (or `update: off`, plus
+`·  keep RC` for the `U` update).  While the `l` log cursor is inside
+the log it also names the assert the cursor is on:
+`...  ·  cursor 3/7 SYSCTRL.STATUS`.
+
+### Log cursor (`l`)
+
+A plain log only scrolls; `l` gives it a **cursor over the logged
+asserts** (one entry per table row of every logged block):
+
+| key | inside the log |
+|-----|----------------|
+| `up` / `down` | move the cursor to the previous / next logged assert — the log scrolls with it, the selected row is drawn reversed and named in the border title |
+| `enter` | put the **register map cursor on that assert**: the module / external mem of the assert is shown (its tree node highlighted) and the row cursor lands on its row; the cursor stays inside the log to pick another assert |
+| `l`, `escape`, `tab` | leave the log: the cursor goes back to the panel it came from (the tree or the register map) — inside the log `tab` does **not** cycle the two panels |
+
+Outside of the log cursor `up` / `down` keep scrolling the log as usual,
+and every other key works as it does with the focus on the panel the
+cursor came from.
 
 The log always shows values the way skmap renders them (int for
 `uint` / `sint`, hex for `bits`), independent of the table's `x`
@@ -247,9 +296,10 @@ The four options:
 
 | option | CLI | key | effect |
 |--------|-----|-----|--------|
-| assert level | `--asserts-level {debug,info,warn,error,fatal}` (default `debug`) | `l` | asserts below the level still count for the *worst* level, but are **not** listed in the log |
+| assert level | `--asserts-level {debug,info,warn,error,fatal}` (default `debug`) | `L` | asserts below the level still count for the *worst* level, but are **not** listed in the log; the `l` key is the log cursor (see *Log cursor*) |
 | update period | `--refresh SECS` (default `0` = off) | `u` (cycles off/1/5/30) | every period the app 1. calls `Module.read_all_tree()` (all registers of the whole tree, including external mem caches, are **read from the device**), 2. re-checks the asserts — appending a block to the log if any are triggered — and updates the *Value* cells of the displayed table, and 3. clears all `rc` registers of the *selected* module via `Module.clear_reg_rc()` and the triggered asserts of the *whole tree* via `Module.clear_assert_tree()`, so the next update only logs **new** events. Register writes made while an update / read-all is in progress are **held** until it has finished (see *Editing register values*) |
 | read all | — | `R` | a **one-shot** read: calls `Module.read_all()` on every module (registers + external mem caches, from the device), then re-checks the asserts (appending a block to the log if any are triggered) and updates the shown *Value* cells — clears **nothing** (the `rc` registers stay set) |
+| update, no RC | — | `U` | the same periodic update as `u` (same periods, same read + re-check + log), but the update clears **nothing** — for a SoC where other software serves the `rc` registers (see *Clearing `rc` registers*) |
 | read | — | `r` | reads the currently selected value from the device: the asset under the **register map** cursor (a flag row reads the whole `RegFlags` and refreshes **every** flag under it), or `Module.read_all()` on the **tree**'s selected module — refreshes the skmap cache and the shown *Value* cells, and appends a block to the log for any read `Reg` / `RFlag` (or module) whose assert is triggered |
 | step value | — | `+` / `-` | (register map focused) add / subtract the step increment to the bits of the value under the cursor, wrapping in its width (a bool / flag toggles); a lane row steps that lane, a vector header row every lane; held keys queue their steps and are written one at a time (a strictly stepping series, no duplicate consecutive writes) |
 | step increment | — | `s` | the increment of the `+` / `-` keys (1 by default); the value input line asks for it (decimal or `0x`-hex, `>= 1`, enter sets / esc keeps) |
@@ -330,7 +380,7 @@ skmap-ui -i <host> -p <port> -a 0x40000000 -I module.py  # live TCP
 | `-i/--host`, `-p/--port` | connect to a live regio over TCP |
 | `-a/--addr` | module regio address (default `0`, decimal or `0x`-prefixed) |
 | `-I/--import` | python module name **or** generated skmap module `.py` path to import first (its `skmap.register_Module` calls make the head IDs known); repeatable; replaces the old `-m/--module-file` |
-| `--asserts-level` | initial assert level (see *Assert log*); cycle at runtime with `l` |
+| `--asserts-level` | initial assert level (see *Assert log*); cycle at runtime with `L` |
 | `--refresh` | initial refresh (update) period in seconds, `0` = off (see *Assert log*); cycle at runtime with `u` |
 | `--smoke` | headless: start, wait for the assert check, print the result and exit |
 
@@ -352,12 +402,29 @@ python3 src/skmap_ui_plot_regs.py -p 39601 -I <generated_module>.py \
 python3 src/skmap_ui_plot_regs.py -t 0.5 -l 200 -p 39601 -I module.py 0 temp
 ```
 
-Requires `pyqtgraph` + a Qt binding (`pip install skmap-ui[plot]` or
-`pip install pyqtgraph`). The `demo/demo_skmap_plot_regs_sim.sh`
-script starts a simulated module (cocotb testbench), a headless
-`regio_ui` proxy and then **both** this plot and the `skmap_ui` TUI
-against it, so registers can be edited in the TUI and are seen live
-on the plot.
+Requires `pyqtgraph` + `PyQt6` (`pip install skmap-ui[plot]`). The
+`demo/demo_skmap_plot_regs_sim.sh` script starts a simulated module
+(cocotb testbench), a headless `regio_ui` proxy
+(`pip/regio/src/regio_proxy_headless.py`) and then **both** this plot
+and the `skmap_ui` TUI against it, so registers can be edited in the
+TUI and are seen live on the plot. The axis ranges are fixed when the
+first samples arrive (no rescaling while plotting).
+
+### Use from your own application (`SkmapUiPlotReg`)
+
+A third party script can import the generated skmap modules, make the
+modules itself and hand registers to the plot:
+
+```python
+import skmap
+from skmap_ui_plot_regs import SkmapUiPlotReg
+
+plot = SkmapUiPlotReg(period=0.5, length=200)   # sample period / window
+plot.add_reg(module.temp)              # a scalar Reg
+plot.add_reg_vec_all(module.adc_vals)  # every element of a RegVec
+plot.add_reg_vec_idx(module.status, 2) # one element of a RegVec
+plot.run()                             # opens the window, blocks
+```
 
 ### Example: `demo/demo_skmap_tree_file.sh`
 

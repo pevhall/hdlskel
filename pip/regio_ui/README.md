@@ -116,6 +116,18 @@ view.sender = tap
 
 This is exactly how `skmap_ui` embeds regio_ui on its *regio* tab.
 
+The view also reports **the address its cursor points at** — the row
+under the operations-log cursor, or the address typed in the form's
+address field:
+
+```python
+view.current_op_address()          # int | None
+```
+
+`regio_ui` itself has no use for this (it has no register map to look an
+address up in); a host app can, which is what `skmap_ui`'s `m` *reg map*
+key does on its regio tab.
+
 ## Install
 
 ```bash
