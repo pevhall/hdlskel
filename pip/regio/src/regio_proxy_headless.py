@@ -2,7 +2,7 @@
 """Headless regio_ui proxy: a multi-client regio TCP server in front of one upstream regio TCP server.
 
 The simulation's regio server (``regio.tcp_server_single``) accepts only
-a single client, but a plot (``skmap_ui_plot_regs``) and a TUI
+a single client, but a plot (``skmap_plot_regs``) and a TUI
 (``skmap_ui``) both want to talk to the same module. This proxy is the
 network layer of ``regio_ui`` (its ``RegioProxy``, which is based on the
 multi-client server from ``regio.tcp_server_async_multi``) without the

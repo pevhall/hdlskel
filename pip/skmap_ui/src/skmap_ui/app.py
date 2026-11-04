@@ -3586,7 +3586,7 @@ def _import_module_spec(spec : str) -> None:
 
     ``spec`` is a python module name (``pkg.recipe_test_bench_module``)
     or the path of a generated ``.py`` file, which is loaded from the
-    file (same ``-I`` behavior as ``skmap_ui_plot_regs``).
+    file (same ``-I`` behavior as ``skmap_plot_regs``).
     """
     path = Path(spec)
     if spec.endswith(".py") or path.is_file():

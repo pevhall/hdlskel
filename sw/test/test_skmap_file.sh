@@ -24,9 +24,13 @@ BUILD="${HDSKEL_BUILD_DIR:-../build}"
 RECIPE=../../test/data/test_recipe.skmap
 TREE=../../test/data/test_tree.skmap
 
-# rebuild first when $BUILD is a meson build dir (ctest / a plain run of this
-# script from another build dir builds the binaries itself, nothing to do)
-[ -f "$BUILD/build.ninja" ] && meson compile -C "$BUILD" -v
+# rebuild first when $BUILD is a meson build dir. Another build system (the
+# cmake test sets HDSKEL_BUILD_DIR to its own build dir) built its binaries
+# itself, there is nothing to do; cmake with the ninja generator also has a
+# build.ninja, so the meson-info directory is the marker of a meson build dir
+if [ -d "$BUILD/meson-info" ]; then
+    meson compile -C "$BUILD" -v
+fi
 for app in "$BUILD/app/skmap/skmap" "$BUILD/app/regio_op/regio_op" "$BUILD/test/test_skmap_check"; do
     [ -x "$app" ] || { echo "FAIL: $app is not built (HDSKEL_BUILD_DIR=$BUILD)"; exit 1; }
 done

@@ -27,11 +27,6 @@ dependencies = [
 dev = [
   "pytest>=8"
 ]
-# skmap_ui_plot_regs (src/skmap_ui_plot_regs.py), the pyqtgraph register plot
-plot = [
-  "pyqtgraph>=0.13",
-  "PyQt6>=6.5",
-]
 
 [project.scripts]
 skmap-ui = "skmap_ui:main"

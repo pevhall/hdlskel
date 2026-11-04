@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
 """Plot skmap `var` registers against time with pyqtgraph.
 
 Give one or more modules as a base address followed by the register names to
 plot from that module, eg:
 
-    skmap_ui_plot_regs.py 0x1000 temperature pressure 0x2000 status
+    skmap-plot-regs 0x1000 temperature pressure 0x2000 status
 
 A `RegVec` element is selected with square brackets, `vec_foo_bar[2]`. A
 `RegVec` given without an index plots every element of the vector.
@@ -25,32 +24,40 @@ The generated skmap module of the device has to be registered before the
 modules can be made, import it with `-I` (a module name or the path of a
 generated .py file), eg:
 
-    python3 skmap_ui_plot_regs.py -p 39601 \\
+    python3 -m skmap_plot_regs -p 39601 \\
         -I ../../../fw/tb/skmap/tb_py_skmap_module_recipe/recipe_test_bench_module.py \\
         0 temp regs_rw
 
-Run with: python3 skmap_ui_plot_regs.py [options] <addr> <reg> ...
+Run with: python3 -m skmap_plot_regs [options] <addr> <reg> ...
+
+Or install the skmap-plot-regs project and run it as: skmap-plot-regs
+[options] <addr> <reg> ...
 
 The axis ranges are fixed when the first samples arrive and are not
 rescaled after every update (the time axis spans the whole -l window).
+While the plot runs, the option row above it changes both settings
+live: the sample period (the update rate) and the number of points
+(samples) kept per curve. Both are clamped to the range the option row
+allows, PERIOD_MIN .. PERIOD_MAX seconds and LENGTH_MIN .. LENGTH_MAX
+points, also for -t / -l and for the SkmapPlotRegs constructor.
 
 Third party applications can drive the plot themselves with the
-`SkmapUiPlotReg` class: import the generated skmap modules, make the
+`SkmapPlotRegs` class: import the generated skmap modules, make the
 modules and add registers (a scalar `Reg`, or `RegVec` elements) to the
 plot, then call `run()`:
 
     import skmap
-    from skmap_ui_plot_regs import SkmapUiPlotReg
+    from skmap_plot_regs import SkmapPlotRegs
 
-    plot = SkmapUiPlotReg(period=0.5, length=200)
+    plot = SkmapPlotRegs(period=0.5, length=200)
     plot.add_reg(module.temp)              # a scalar Reg
     plot.add_reg_vec_all(module.adc_vals)  # every element of a RegVec
     plot.add_reg_vec_idx(module.status, 2) # one element of a RegVec
     plot.run()                             # opens the window, blocks
 
-This application lives in the skmap_ui project (the skmap package itself does
-not depend on pyqtgraph). Requires pyqtgraph and a Qt binding (PyQt6 is the
-`skmap-ui[plot]` dependency, PySide6 also works).
+This application lives in its own project, pip/skmap_plot_regs (the skmap
+package itself does not depend on pyqtgraph). It requires pyqtgraph and a Qt
+binding (PyQt6 is the dependency, PySide6 also works).
 """
 
 import argparse
@@ -67,7 +74,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtCore, exec_
+from pyqtgraph.Qt import QtCore, QtWidgets, exec_
 
 import regio.cli_utils
 import skmap
@@ -75,7 +82,7 @@ from skmap.basic_types import Acc, ValueKind
 from skmap.console import console
 from skmap.module import make_module
 
-logger = logging.getLogger('skmap_ui_plot_regs')
+logger = logging.getLogger('skmap_plot_regs')
 
 # reg_name or reg_name[idx]
 REG_SPEC_RE = re.compile(r'^(?P<name>[A-Za-z_]\w*)(?:\[(?P<idx>\d+)\])?$')
@@ -105,12 +112,38 @@ def positive_int(s : str) -> int:
     return v
 
 
+# the sampling period and the number of points per curve, the range of the
+# option row of the plot, -t / -l and the SkmapPlotRegs constructor are
+# clamped to it as well (so an option row never shows another value than the
+# one the plot runs with)
+PERIOD_MIN, PERIOD_MAX = 0.01, 3600.0
+LENGTH_MIN, LENGTH_MAX = 1, 1_000_000
+
+
+def clamp_period(period : float) -> float:
+    """The sample period in seconds, clamped to PERIOD_MIN .. PERIOD_MAX."""
+    value = min(max(float(period), PERIOD_MIN), PERIOD_MAX)
+    if value != period:
+        logger.warning(f'sample period {period} clamped to {value} s '
+                       f'(allowed {PERIOD_MIN} .. {PERIOD_MAX} s)')
+    return value
+
+
+def clamp_length(length : int) -> int:
+    """The number of points per curve, clamped to LENGTH_MIN .. LENGTH_MAX."""
+    value = min(max(int(length), LENGTH_MIN), LENGTH_MAX)
+    if value != length:
+        logger.warning(f'plot length {length} clamped to {value} points '
+                       f'(allowed {LENGTH_MIN} .. {LENGTH_MAX})')
+    return value
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog='skmap_ui_plot_regs',
+        prog='skmap_plot_regs',
         description=__doc__.splitlines()[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='example: skmap_ui_plot_regs.py -t 0.5 -l 200 0x1000 temp '
+        epilog='example: skmap-plot-regs -t 0.5 -l 200 0x1000 temp '
                'adc_vals[3] 0x2000 err_cnt')
     regio.cli_utils.add_parser_args(parser)
     parser.add_argument(
@@ -272,6 +305,21 @@ class Trace:
             self.bad_ys.popleft()
 
 
+def trim_trace(trace : Trace, length : int):
+    """Drop the oldest samples of a trace beyond `length` points.
+
+    Also drops the v_check markers that scrolled out of the window, the
+    same way add_sample does, so the markers stay in step with a
+    shortened plot length.
+    """
+    while len(trace.xs) > length:
+        trace.xs.popleft()
+        trace.ys.popleft()
+    while trace.bad_xs and (not trace.xs or trace.bad_xs[0] < trace.xs[0]):
+        trace.bad_xs.popleft()
+        trace.bad_ys.popleft()
+
+
 def find_reg(module : skmap.Module, name : str) -> skmap.Reg:
     for reg in (*module.arr_reg_var, *module.arr_reg_k):
         if reg.name == name:
@@ -356,6 +404,10 @@ class PlotApp(QtCore.QObject):
     loop on a background thread and the samples are handed to the GUI thread
     through a signal (a queued connection, emitting it from the io thread is
     safe). A tick is skipped while the previous sample is still running.
+
+    The option row above the plot changes the sample period (the update
+    rate) and the number of points per curve live, at any time while
+    the plot runs.
     """
 
     samples_ready = QtCore.pyqtSignal(list)   # list of (trace idx, value, check ok, error)
@@ -364,8 +416,8 @@ class PlotApp(QtCore.QObject):
                  loop : asyncio.AbstractEventLoop):
         super().__init__()
         self.traces  = traces
-        self.period  = period
-        self.length  = length
+        self.period  = clamp_period(period)     # the option row allows the
+        self.length  = clamp_length(length)     # same range as these clamps
         self.t0      = time.monotonic()
         self._ranges_fixed = False        # the axis ranges are set once
         # the io loop the regio was created on, run everything on it
@@ -379,10 +431,15 @@ class PlotApp(QtCore.QObject):
         self.timer = QtCore.QTimer()
         self.timer.setTimerType(QtCore.Qt.TimerType.PreciseTimer)
         self.timer.timeout.connect(self.tick)
-        self.timer.start(max(1, round(period * 1000)))
+        self.timer.start(max(1, round(self.period * 1000)))
+
+        # the option handlers are connected last, once the timer and the plot
+        # exist (they restart the timer and set the axis ranges)
+        self._connect_options()
 
     # -- plot construction --------------------------------------------------
     def _make_plot(self):
+        self._make_options()
         self.plot = pg.PlotWidget(title='skmap registers, a red ▲ marks a v_check failure')
         self.plot.showGrid(x=True, y=True)
         self.plot.setLabel('left', 'Value')
@@ -401,6 +458,63 @@ class PlotApp(QtCore.QObject):
                                                brush=pg.mkBrush(220, 0, 0),
                                                pen=pg.mkPen('k', width=1))
             self.plot.addItem(trace.scatter)
+        # window: the option row above the plot
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel('Update rate (sample period):'))
+        row.addWidget(self.period_box)
+        row.addWidget(QtWidgets.QLabel('Points:'))
+        row.addWidget(self.length_box)
+        row.addStretch(1)
+        self.window = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(self.window)
+        layout.addLayout(row)
+        layout.addWidget(self.plot)
+
+    def _make_options(self):
+        """The live options: the sample period (update rate) and the plot
+        length (number of points per curve), both changeable at any time.
+
+        Only the widgets are made here, the handlers are connected by
+        _connect_options() once the timer and the plot exist.
+        """
+        self.period_box = QtWidgets.QDoubleSpinBox()
+        self.period_box.setDecimals(3)
+        self.period_box.setRange(PERIOD_MIN, PERIOD_MAX)
+        self.period_box.setSingleStep(0.1)
+        self.period_box.setSuffix(' s')
+        self.period_box.setValue(self.period)
+        self.period_box.setToolTip('update rate: the period between samples in '
+                                   f'seconds ({PERIOD_MIN} .. {PERIOD_MAX} s)')
+
+        self.length_box = QtWidgets.QSpinBox()
+        self.length_box.setRange(LENGTH_MIN, LENGTH_MAX)
+        self.length_box.setSingleStep(10)
+        self.length_box.setValue(self.length)
+        self.length_box.setToolTip(f'number of points (samples) plotted per curve '
+                                   f'({LENGTH_MIN} .. {LENGTH_MAX})')
+
+    def _connect_options(self):
+        """Connect the option handlers (called when the plot is built)."""
+        self.period_box.valueChanged.connect(self.on_period_changed)
+        self.length_box.valueChanged.connect(self.on_length_changed)
+
+    # -- options ---------------------------------------------------------------
+    def on_period_changed(self, value : float):
+        """Option: the sample period (update rate), restart the timer."""
+        self.period = clamp_period(value)
+        self.timer.start(max(1, round(self.period * 1000)))
+        # the time axis spans length * period, keep it in step with the
+        # option (this is a user action, not a rescale per update)
+        self._apply_x_range()
+
+    def on_length_changed(self, value : int):
+        """Option: the number of points per curve, trim the data."""
+        self.length = clamp_length(value)
+        for trace in self.traces:
+            trim_trace(trace, self.length)
+            trace.curve.setData(trace.xs, trace.ys)
+            trace.scatter.setData(trace.bad_xs, trace.bad_ys)
+        self._apply_x_range()
 
     # -- sampling -------------------------------------------------------------
     def tick(self):
@@ -447,21 +561,28 @@ class PlotApp(QtCore.QObject):
     def _set_fixed_ranges(self):
         """Fix the axis ranges once, no rescaling afterwards.
 
-        The time axis spans the whole `-l` sample window from t=0, the
-        value axis the range of the samples seen so far. Waiting for the
-        first plotted sample also disables pyqtgraph's auto range before
-        any curve moves.
+        The time axis spans the whole `-l` sample window from t=0 (see
+        _apply_x_range), the value axis the range of the samples seen
+        so far. Waiting for the first plotted sample also disables
+        pyqtgraph's auto range before any curve moves.
         """
         ys = [y for trace in self.traces for y in trace.ys]
         if not ys:
             return                          # wait for the first sample
-        span = (self.length - 1) * self.period
-        self.plot.setXRange(0, span * 1.04 + self.period, padding=0)
+        self._apply_x_range()
         lo, hi = min(ys), max(ys)
         if lo == hi:
             lo, hi = lo - 1, hi + 1
         self.plot.setYRange(lo, hi, padding=0.1)
         self._ranges_fixed = True
+
+    def _apply_x_range(self):
+        """The fixed time window from t=0 over the whole length * period
+        sample window. Applied when the ranges are fixed and when the
+        update rate or the number of points change through the options.
+        """
+        span = (self.length - 1) * self.period
+        self.plot.setXRange(0, span * 1.04 + self.period, padding=0)
 
     def close(self):
         self.timer.stop()
@@ -472,7 +593,7 @@ class PlotApp(QtCore.QObject):
 # third party entry point
 
 
-class SkmapUiPlotReg:
+class SkmapPlotRegs:
     """Register plot driven from a third party python application.
 
     The application imports the generated skmap modules it wants to
@@ -481,23 +602,35 @@ class SkmapUiPlotReg:
     blocks until it is closed):
 
         import skmap
-        from skmap_ui_plot_regs import SkmapUiPlotReg
+        from skmap_plot_regs import SkmapPlotRegs
 
-        plot = SkmapUiPlotReg(period=0.5, length=200)
+        plot = SkmapPlotRegs(period=0.5, length=200)
         plot.add_reg(module.temp)              # a scalar Reg
         plot.add_reg_vec_all(module.adc_vals)  # every element of a RegVec
         plot.add_reg_vec_idx(module.status, 2) # one element of a RegVec
         plot.run()
 
+    A regio lives on the asyncio loop it was made on, pass that loop as
+    `loop` (see `make_io_loop`) when the modules were made on a
+    background loop, eg over a TCP regio; `run()` then samples on it.
+    Without `loop` a new background io loop is made, which fits modules
+    that are not backed by a loop bound regio.
+
     The same sampling as the command line application is used: the
     `v_convert_rd` is applied, a failing `v_check` marks the sample in
     red and an `rc` register is cleared after it is read.
+
+    `period` and `length` are clamped to the range the plot accepts (see
+    clamp_period / clamp_length), the class attributes hold the values that
+    are used.
     """
 
-    def __init__(self, period : float = 1.0, length : int = 100):
+    def __init__(self, period : float = 1.0, length : int = 100,
+                 loop : Optional[asyncio.AbstractEventLoop] = None):
         self.traces : list[Trace] = []
-        self.period = period              # sample period in seconds
-        self.length = length              # number of samples per curve
+        self.period = clamp_period(period)    # sample period in seconds
+        self.length = clamp_length(length)    # number of samples per curve
+        self.loop   = loop                # io loop to sample on, made by run()
 
     def add_reg(self, reg : skmap.Reg):
         """Add one scalar register (use the add_reg_vec_* for a RegVec)."""
@@ -515,16 +648,17 @@ class SkmapUiPlotReg:
         """Add one element of a `RegVec` by its index."""
         vec_len = reg_vec.value_type.vec_len
         if not 0 <= idx < vec_len:
-            raise SystemExit(f'index {idx} out of range for the {vec_len} element '
-                             f'vector "{reg_vec.name}" of module '
-                             f'"{reg_vec.module.name()}"')
+            raise TypeError(f'index {idx} out of range for the {vec_len} element '
+                            f'vector "{reg_vec.name}" of module '
+                            f'"{reg_vec.module.name()}"')
         self.traces.extend(checked_traces(reg_vec.module, reg_vec, [idx]))
 
     def run(self):
         """Open the plot window and block until it is closed (exit code)."""
         if not self.traces:
-            raise SystemExit('SkmapUiPlotReg: no registers added, nothing to plot')
-        return run_plot_app(self.traces, self.period, self.length, make_io_loop())
+            raise SystemExit('SkmapPlotRegs: no registers added, nothing to plot')
+        return run_plot_app(self.traces, self.period, self.length,
+                            self.loop if self.loop is not None else make_io_loop())
 
 # ---------------------------------------------------------------------------
 # application entry
@@ -546,10 +680,10 @@ def make_io_loop() -> asyncio.AbstractEventLoop:
 def run_plot_app(traces : list[Trace], period : float, length : int,
                  loop : asyncio.AbstractEventLoop) -> int:
     """Open the plot window for `traces`, block until it is closed."""
-    pg.mkQApp('skmap_ui_plot_regs')
+    pg.mkQApp('skmap_plot_regs')
     pg.setConfigOption('antialias', True)
     gui = PlotApp(traces, period, length, loop)
-    gui.plot.show()
+    gui.window.show()
     gui.tick()                          # the first sample, then the timer
     QtCore.QCoreApplication.instance().aboutToQuit.connect(gui.close)
     return exec_()

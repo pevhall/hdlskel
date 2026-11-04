@@ -1,11 +1,11 @@
-"""Tests for the skmap_ui_plot_regs application logic (no GUI).
+"""Tests for the skmap_plot_regs application logic (no GUI).
 
 Covers the command line target parsing (`<addr> <reg> ...`, `vec[idx]`), the
 trace expansion of a `RegVec` given without an index, the `v_convert_rd` on
 the plotted value, the `v_check` failure marking, the clear after read of
 an `rc` register, and the `-I` import of a generated module file.
 
-Run with: python3 -m pytest pip/skmap_ui/tests -q
+Run with: python3 -m pytest pip/skmap_plot_regs/tests -q
 Requires pyqtgraph + a Qt binding (the application imports them at module
 level), the plot window itself is not opened by these tests.
 """
@@ -19,13 +19,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'pip' / 'skmap' / 'src'))
 sys.path.insert(0, str(ROOT / 'pip' / 'regio' / 'src'))
-sys.path.insert(0, str(ROOT / 'pip' / 'skmap_ui' / 'src'))
+sys.path.insert(0, str(ROOT / 'pip' / 'skmap_plot_regs' / 'src'))
 
 import skmap                                                     # noqa: E402
 from skmap.basic_types import ValueKind, ValueType, promote_to_sw_w  # noqa: E402
 from skmap.reg import ValueCheck, ValueConvert                   # noqa: E402
 
-import skmap_ui_plot_regs as plot_regs                           # noqa: E402
+import skmap_plot_regs as plot_regs                              # noqa: E402
 
 
 class MemRegio:
@@ -300,6 +300,32 @@ def test_sample_k_uses_cache():
 # plot window handling
 
 
+def test_trim_trace():
+    module = setup_module_stub()
+    reg = make_reg(module, 'r', ValueKind.uint, 32, skmap.Acc.ro, 0x100)
+    reg.v_check = ValueCheck(lambda v: v > 10, 'v > 10')
+    trace = plot_regs.Trace(module, reg, None)
+    for ii in range(10):
+        trace.add_sample(float(ii), ii, ii > 10, length=10)
+    assert list(trace.bad_xs) == list(range(10))   # all of them failed, v > 10
+    for ii in range(10, 20):
+        trace.add_sample(float(ii), ii, ii > 10, length=10)
+    assert list(trace.xs) == list(range(10, 20))
+    assert list(trace.bad_xs) == [10.0]        # only ii == 10 fails (check_ok = ii > 10)
+    # shorten to 3 points, the oldest samples and their markers go
+    plot_regs.trim_trace(trace, 3)
+    assert list(trace.xs) == [17, 18, 19]
+    assert list(trace.ys) == [17, 18, 19]
+    assert list(trace.bad_xs) == []            # the marker at 10 scrolled out
+    # a failing marker that scrolls out with the trim is dropped too
+    trace2 = plot_regs.Trace(module, reg, None)
+    trace2.add_sample(0.0, 1, False, length=10)
+    trace2.add_sample(1.0, 2, True, length=10)
+    plot_regs.trim_trace(trace2, 1)
+    assert list(trace2.xs) == [1.0]
+    assert list(trace2.bad_xs) == []
+
+
 def test_add_sample_keeps_plot_length():
     module = setup_module_stub()
     reg = make_reg(module, 'r', ValueKind.uint, 32, skmap.Acc.ro, 0x100)
@@ -314,3 +340,107 @@ def test_add_sample_keeps_plot_length():
     assert list(trace.bad_xs) == []
     trace.add_sample(30.0, 1, False, length=5)
     assert list(trace.bad_xs) == [30.0]
+
+
+# ---------------------------------------------------------------------------
+# SkmapPlotRegs (third party entry point)
+
+
+def make_vec(module, name, vec_len):
+    reg = skmap.RegVec(module, name=name, acc=skmap.Acc.ro, desc='v',
+                       value_type=ValueType(kind=ValueKind.uint, width=8, vec_len=vec_len))
+    reg.addr = 0x200
+    module._arr_reg_var.append(reg)
+    return reg
+
+
+def test_plot_reg_add_reg_scalar():
+    module = setup_module_stub()
+    reg = make_reg(module, 'temp', ValueKind.uint, 32, skmap.Acc.ro, 0x100)
+    plot = plot_regs.SkmapPlotRegs()
+    plot.add_reg(reg)
+    assert [t.idx for t in plot.traces] == [None]
+    assert plot.traces[0].reg is reg
+
+
+def test_plot_reg_add_reg_rejects_vec():
+    module = setup_module_stub()
+    vec = make_vec(module, 'adc', 4)
+    plot = plot_regs.SkmapPlotRegs()
+    with pytest.raises(TypeError):
+        plot.add_reg(vec)
+    assert plot.traces == []
+
+
+def test_plot_reg_add_reg_vec_all():
+    module = setup_module_stub()
+    vec = make_vec(module, 'adc', 4)
+    plot = plot_regs.SkmapPlotRegs()
+    plot.add_reg_vec_all(vec)
+    assert [t.idx for t in plot.traces] == [0, 1, 2, 3]
+    assert all(t.reg is vec for t in plot.traces)
+
+
+def test_plot_reg_add_reg_vec_idx():
+    module = setup_module_stub()
+    vec = make_vec(module, 'adc', 4)
+    plot = plot_regs.SkmapPlotRegs()
+    plot.add_reg_vec_idx(vec, 2)
+    assert [t.idx for t in plot.traces] == [2]
+
+
+def test_plot_reg_add_reg_vec_idx_out_of_range():
+    """A bad index is a programming error of the caller: TypeError."""
+    module = setup_module_stub()
+    vec = make_vec(module, 'adc', 2)
+    plot = plot_regs.SkmapPlotRegs()
+    with pytest.raises(TypeError):
+        plot.add_reg_vec_idx(vec, 2)
+    with pytest.raises(TypeError):
+        plot.add_reg_vec_idx(vec, -1)
+    assert plot.traces == []
+
+
+def test_plot_reg_run_without_regs_exits():
+    with pytest.raises(SystemExit):
+        plot_regs.SkmapPlotRegs().run()
+
+
+# ---------------------------------------------------------------------------
+# the plot settings: the update rate and the number of points
+
+
+def test_clamp_period():
+    assert plot_regs.clamp_period(1.0) == 1.0
+    assert plot_regs.clamp_period(0.0) == plot_regs.PERIOD_MIN
+    assert plot_regs.clamp_period(0.001) == plot_regs.PERIOD_MIN
+    assert plot_regs.clamp_period(1e9) == plot_regs.PERIOD_MAX
+
+
+def test_clamp_length():
+    assert plot_regs.clamp_length(100) == 100
+    assert plot_regs.clamp_length(0) == plot_regs.LENGTH_MIN
+    assert plot_regs.clamp_length(-5) == plot_regs.LENGTH_MIN
+    assert plot_regs.clamp_length(10_000_000) == plot_regs.LENGTH_MAX
+
+
+def test_plot_reg_clamps_its_settings():
+    """The constructor holds the values that are used, not what was asked."""
+    plot = plot_regs.SkmapPlotRegs(period=0.0001, length=0)
+    assert plot.period == plot_regs.PERIOD_MIN
+    assert plot.length == plot_regs.LENGTH_MIN
+    plot = plot_regs.SkmapPlotRegs(period=1e6, length=10_000_000)
+    assert plot.period == plot_regs.PERIOD_MAX
+    assert plot.length == plot_regs.LENGTH_MAX
+
+
+def test_package_exports_its_public_api():
+    """skmap_plot_regs is a package (src/skmap_plot_regs/, as the other pip
+    projects), the public API is reachable on the package."""
+    import skmap_plot_regs
+    assert skmap_plot_regs.SkmapPlotRegs is plot_regs.SkmapPlotRegs
+    assert skmap_plot_regs.main is plot_regs.main
+    assert skmap_plot_regs.__version__
+    for name in skmap_plot_regs.__all__:
+        assert hasattr(skmap_plot_regs, name), name
+

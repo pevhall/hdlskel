@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "skmap-plot-regs"
+version = "0.1.0"
+authors = [
+  { name="Pev Hall", email="pev.hall@gmail.com" },
+]
+description = "hdlskel skmap register plot (pyqtgraph) — samples skmap.Reg / RegVec against time"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Environment :: X11 Applications :: Qt",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "skmap",
+  "regio",
+  "pyqtgraph>=0.13",
+  "PyQt6>=6.5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8"
+]
+
+[project.scripts]
+skmap-plot-regs = "skmap_plot_regs:main"
+
+[project.urls]
+Homepage = "https://github.com/pevhall/hdlskel"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/skmap_plot_regs"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

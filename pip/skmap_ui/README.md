@@ -387,44 +387,15 @@ skmap-ui -i <host> -p <port> -a 0x40000000 -I module.py  # live TCP
 With neither `-f` nor `-i`, the built-in demo is used. `regio`'s
 `--debug-print-regio` flag is also available.
 
-## Plot registers over time (`skmap_ui_plot_regs`)
+## Plot registers over time
 
-`src/skmap_ui_plot_regs.py` is a pyqtgraph GUI that samples `var`
-registers periodically and plots amplitude against time (one color
-per signal, a legend, red triangles mark samples that fail a
-`v_check`, `rc` registers are cleared after each read):
+The pyqtgraph register plot (`skmap_plot_regs`, module
+`pip/skmap_plot_regs`) has moved out of this project into its own
+project — see `pip/skmap_plot_regs/README.md`. Its
+`demo/demo_skmap_plot_regs_sim_cli.sh` / `demo_skmap_plot_regs_sim_class.sh`
+scripts run this TUI and the plot side by side on a simulated module.
 
-```bash
-python3 src/skmap_ui_plot_regs.py -p 39601 -I <generated_module>.py \
-    0 temp regs_rw            # <addr> <reg> [reg vec[idx] ...], repeatable
-
-# example: -t 0.5 (sample every 0.5 s), -l 200 (keep 200 samples)
-python3 src/skmap_ui_plot_regs.py -t 0.5 -l 200 -p 39601 -I module.py 0 temp
-```
-
-Requires `pyqtgraph` + `PyQt6` (`pip install skmap-ui[plot]`). The
-`demo/demo_skmap_plot_regs_sim.sh` script starts a simulated module
-(cocotb testbench), a headless `regio_ui` proxy
-(`pip/regio/src/regio_proxy_headless.py`) and then **both** this plot
-and the `skmap_ui` TUI against it, so registers can be edited in the
-TUI and are seen live on the plot. The axis ranges are fixed when the
-first samples arrive (no rescaling while plotting).
-
-### Use from your own application (`SkmapUiPlotReg`)
-
-A third party script can import the generated skmap modules, make the
-modules itself and hand registers to the plot:
-
-```python
-import skmap
-from skmap_ui_plot_regs import SkmapUiPlotReg
-
-plot = SkmapUiPlotReg(period=0.5, length=200)   # sample period / window
-plot.add_reg(module.temp)              # a scalar Reg
-plot.add_reg_vec_all(module.adc_vals)  # every element of a RegVec
-plot.add_reg_vec_idx(module.status, 2) # one element of a RegVec
-plot.run()                             # opens the window, blocks
-```
+## Examples
 
 ### Example: `demo/demo_skmap_tree_file.sh`
 
