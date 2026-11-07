@@ -74,7 +74,13 @@ def _value_kind_function_str(t : Union[ValueType, ValueTypeUnresolved]) -> str:
             else:
                 return 'uint'
         case _:
-            assert False
+            # a char value is a string in the sw, its functions are named by
+            # _value_type_function_str (char / str), the generators ask for a
+            # kind name only for a per index function, which they only make for
+            # a vector of an int kind: a char register is generated whole
+            assert False, (f'the sw generators have no per index value function for a '
+                           f'{k} value ({t}), a char register is supported as a scalar '
+                           f'and as a whole vector, not lane by lane')
 
 def _value_type_function_str(t : Union[ValueType, ValueTypeUnresolved], sw : Sw) -> str:
     f = ''

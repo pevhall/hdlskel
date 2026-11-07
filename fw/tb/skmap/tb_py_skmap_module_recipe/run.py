@@ -41,8 +41,12 @@ if 0:
     import sys
     sys.exit()
 
+# every file of hdldepends.toml is analysed into the hdlskel library (the design
+# refers to them as work.*, that is the current library of the simulator), so the
+# top of the analysis has to be named in that library too
+LIB        = 'hdlskel'
 top_entity = name
-dep = analyse(config_files ='hdldepends.toml', top_entity=top_entity) #doesn't work
+dep = analyse(config_files ='hdldepends.toml', top_entity=top_entity, top_lib=LIB)
 compile_order = dep.to_dict()['files']
 # print(f'{compile_order=}')
 # print(f'{script_dir=}')
@@ -75,7 +79,7 @@ sim = HdlWorkflow(
            "BIT_BOOL_RW_INIT='1'",
            "REGS_WT_INIT=15",
     ],
-    libraries = 'hdlskel',
+    libraries = LIB,
     cocotb=f'test_skmap_module_recipe',
     pythonpaths=[script_dir]
 )

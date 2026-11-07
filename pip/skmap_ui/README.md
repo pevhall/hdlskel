@@ -31,7 +31,10 @@ the rest, and a too-narrow / too-wide drag is clamped), and a
 **double-click** on that boundary gives the value column its default width
 back. On a terminal too narrow to show the **Description** column the
 boundary is off the table — scroll the register map first (cursor keys or
-shift + mouse wheel) to bring it into view. The tree starts
+shift + mouse wheel) to bring it into view. A read update **never makes a row
+shorter**: a value that needs fewer lines keeps its row as tall as it got, so
+the rows below it do not jump around while a module is read; **resizing a
+column with the mouse is what lets the rows shrink again**. The tree starts
 **fully expanded**, and the tree node of the module whose register map is
 currently displayed is **highlighted** (bold bright blue).
 
@@ -70,7 +73,7 @@ edited in place; input accepts decimal or `0x`-hex:
 
 | row's `Acc` | `enter` does |
 |------|--------|
-| `rw` / `wt` | focuses the input bar and prefills the current value; `enter` writes it to the **device** via `Reg.write_uint` (or `Reg.write_sint` for a `sint` reg); `escape` cancels |
+| `rw` / `wt` | focuses the input bar and prefills the current value; `enter` writes it to the **device** via `Reg.write_uint` (or `Reg.write_sint` for a `sint` reg); `escape` cancels, `tab` or a click elsewhere abandons the edit (nothing is written) |
 | `rc` | **clears** the register immediately (writes zero to the device) |
 | `ro` | nothing (read-only; use `r` (read) to read it from the device) |
 | `k` / `na` | nothing — the value is hardwired / has no access, so it is never read back |
@@ -91,7 +94,10 @@ a single input line; each column is prefilled with its current lane
 value (`Reg.read_idx_value_cached`) and `enter` writes every lane to
 the device with `Reg.write_idx_uint` (or `Reg.write_idx_sint` for
 signed lanes — negative values accepted); `escape` cancels and
-restores the single input line.  With the `e` option on, a vector
+restores the single input line.  `tab` moves to the next lane input, and a
+`tab` past the last one (like a click anywhere else) abandons the edit: the
+lane inputs close and the single input line comes back, so the next edit —
+a scalar register or the same vector again — opens normally.  With the `e` option on, a vector
 register is shown expanded (see *Display options*): `enter` on the
 register's own (header) row still opens all lane inputs, while `enter`
 on a **lane row** prefills and edits just that lane
@@ -142,7 +148,11 @@ are shown in the table's border title, e.g.
   **the same way an `ExternalMemVec` view is shown** — the register's
   own row becomes a header row (full value, all-lane editing) plus
   **one row per vector index** (lane address, `name[idx]`, the lane's
-  value via `Reg.read_idx_value_cached` / `read_idx_uint_cached`).
+  value via `Reg.read_idx_value_cached` / `read_idx_uint_cached`).  A
+  register with a `v_convert` shows the value of the module user of the
+  lane (`Reg.read_converted_idx_cached`), the same value the row of the
+  register itself shows (the `x` hex display keeps showing the bits of
+  the register).
   `enter` on a lane row edits just that lane (`rw`/`wt`) or clears it
   (`rc`, writes zero); `+` / `-` on a lane row step just that lane (a
   bool lane toggles, see *step value*).
@@ -267,10 +277,14 @@ triggered `rc` registers after logging them (see below), a refresh only
 re-logs an `rc` assert if it was re-triggered in the meantime, while
 `ro`/`rw` asserts keep being logged until their value changes.
 
-The log view's border shows the current options, e.g.
-`asserts (level >= debug)  ·  update: 5 s` (or `update: off`, plus
-`·  keep RC` for the `U` update).  While the `l` log cursor is inside
-the log it also names the assert the cursor is on:
+The log view's border shows the **date and time of the last assert check
+and what it found**, plus the current options, e.g.
+`asserts (level >= debug)  ·  last check: 2026-08-30 05:54:04  ·  3
+triggered, worst error  ·  update: 5 s` (or `update: off`, plus
+`·  keep RC` for the `U` update).  A check that found nothing says
+`nothing triggered`, so the empty log of a healthy module is clearly a
+check that ran and not an update that never happened.  While the `l` log
+cursor is inside the log it also names the assert the cursor is on:
 `...  ·  cursor 3/7 SYSCTRL.STATUS`.
 
 ### Log cursor (`l`)
@@ -422,8 +436,21 @@ cd demo
 bash demo_skmap_tree_sim.sh     # Ctrl+Q quits and kills the simulation
 ```
 
+`demo/demo_skmap_recipe_sim.sh` is the same for the recipe testbench
+(`fw/tb/skmap/tb_py_skmap_module_recipe`, the module with the `v_check` /
+`v_convert` registers).
+
 Every trigger / edit then does real regio I/O against the simulation.
-The server location can be overridden with `HOST` / `PORT` env vars.
+The server location can be overridden with `HOST` / `PORT` env vars; both
+scripts refuse to start while something is still listening on `PORT` (a
+leftover simulation would answer instead of the one they start).  Extra
+arguments reach the TUI, as arguments or through `SKMAP_UI_ARGS`, which is
+how they run headless:
+
+```bash
+bash demo_skmap_tree_sim.sh --smoke
+SKMAP_UI_ARGS="--smoke" bash demo_skmap_recipe_sim.sh
+```
 Module build and TUI run happen in a single asyncio loop
 (`App.run_async()`), so the regio TCP connection created while building
 the module stays alive inside the TUI event loop.

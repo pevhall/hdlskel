@@ -1,1 +1,11 @@
-vhdl_files_glob = { 'hdlskel' = [ './fw/lib/vhdl/*.vhd', './fw/lib/vhdl/*/*.vhd' ], 'work' = [ './fw/tb/*/*/*.vhd', ] }
+# everything is compiled into the hdlskel library, the design files reference each other as work.*
+# since work is the current library. Puting everyting in hdlskel prevents name clashes when used
+# within partiy code.
+#
+# a top selected by ENTITY name is looked up in a library, which defaults to work, so a run.py or
+# a hdldepends command line that names the top entity has to say hdlskel as well:
+#   analyse(config_files='hdldepends.toml', top_entity=..., top_lib='hdlskel')
+#   hdldepends hdldepends.toml --top-entity=... --top-vhdl-lib=hdlskel -o compile-order-paths f.txt
+# a top selected by FILE (top_file / --top-file) needs nothing, the file is already in the project.
+
+vhdl_files_glob = { 'hdlskel' = [ './fw/lib/vhdl/*.vhd', './fw/lib/vhdl/*/*.vhd', './fw/tb/*/*/*.vhd', ] }

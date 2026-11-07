@@ -45,7 +45,7 @@ Reg::Reg(const std::string & name, Acc acc, ValueType value_type, const std::str
     , m_v_type(v_type)
 {
     if (v_convert.has_value() && v_check.has_value() && v_convert->v_type != v_check->v_type) {
-        throw std::runtime_error("Reg "" + name + "" has a v_check and a v_convert with a different v_type");
+        throw std::runtime_error("Reg \"" + name + "\" has a v_check and a v_convert with a different v_type");
     }
 }
 
@@ -220,7 +220,7 @@ std::span<const std::byte> Reg::read_bytes_cached() const {
 
 void Reg::write_bytes_cached(std::span<const std::byte> data) {
     if (data.size() != static_cast<size_t>(size())) {
-        throw std::runtime_error("Writing " + std::to_string(data.size()) + " bytes to reg "" + m_name + "" with a size of " + std::to_string(size()));
+        throw std::runtime_error("Writing " + std::to_string(data.size()) + " bytes to reg \"" + m_name + "\" with a size of " + std::to_string(size()));
     }
     std::memcpy(cache_data().data(), data.data(), size());
 }
@@ -386,7 +386,7 @@ sint_t Reg::to_raw_checked(float_t value) const {
     check_value_limit(value);
     float_t value_raw = to_raw(value);
     if (!std::isfinite(value_raw)) {
-        throw std::runtime_error("v_convert of reg "" + m_name + "" returned a value that is not a number");
+        throw std::runtime_error("v_convert of reg \"" + m_name + "\" returned a value that is not a number");
     }
     sint_t value_raw_int = v_round_to_int(value_raw);
     check_value_fits_reg(value_raw_int);
@@ -711,7 +711,7 @@ std::span<const std::byte> RegVec::read_idx_bytes_cached(addr_t idx) const {
 void RegVec::write_idx_bytes_cached(addr_t idx, std::span<const std::byte> data) {
     check_idx(idx);
     if (data.size() != static_cast<size_t>(elem_size())) {
-        throw std::runtime_error("Writing " + std::to_string(data.size()) + " bytes to element " + std::to_string(idx) + " of reg "" + name() + "" with an element size of " + std::to_string(elem_size()));
+        throw std::runtime_error("Writing " + std::to_string(data.size()) + " bytes to element " + std::to_string(idx) + " of reg \"" + name() + "\" with an element size of " + std::to_string(elem_size()));
     }
     std::span<std::byte> cache = cache_data();
     std::memcpy(&cache[idx*elem_off()], data.data(), elem_size());

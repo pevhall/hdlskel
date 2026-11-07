@@ -450,6 +450,118 @@ def test_resize_value_column_redraws_every_row():
     _run(run())
 
 
+def test_expanded_vector_lane_shows_the_user_value():
+    """A lane row of an expanded vector with a v_convert shows the float value
+    of the module user (``read_converted_idx_cached``), like the row of the
+    register itself, not the value of the register."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(200, 40)) as pilot:
+            await _wait_asserts(app, pilot)
+            await pilot.press("enter")        # show the reg map of the module
+            await pilot.pause()
+            fv = next(r for r in top.arr_reg_var if r.name == "FV3")
+            assert fv.read_list_sint_cached() == [-15, 10, 20]
+
+            header = _cell(app, _row_of(app, fv), 4)
+            assert "[ 2.5, 0.0, -1.0 ]" in header, header
+
+            await pilot.press("e")            # expand the vectors
+            await pilot.pause()
+            assert _cell(app, _row_of(app, fv, 0), 4) == "2.5"
+            assert _cell(app, _row_of(app, fv, 1), 4) == "0.0"
+            assert _cell(app, _row_of(app, fv, 2), 4) == "-1.0"
+
+            # the value of the register is what the bits display (x) shows
+            await pilot.press("x")
+            await pilot.pause()
+            assert _cell(app, _row_of(app, fv, 0), 4) == "0xFFF1"
+            assert _cell(app, _row_of(app, fv, 2), 4) == "0x0014"
+    _run(run())
+
+
+def test_update_only_grows_a_row():
+    """A read update never makes a row shorter, the rows below it would jump
+    around on every update.  Only resizing a column with the mouse may shrink
+    the rows again."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test(size=(200, 40)) as pilot:
+            await _wait_asserts(app, pilot)
+            await pilot.press("enter")
+            await pilot.pause()
+            table = app.table
+            wide = next(r for r in top.arr_reg_var if r.name == "WIDE")
+            key = next(k for k, o in app._row_objs.items() if o is wide)
+
+            # a long value: the row wraps over the lines of the value column
+            wide.write_uint_cached(10**19)
+            app._update_reg_rows(wide)
+            await pilot.pause()
+            tall = table.rows[key].height
+            assert tall > 1, tall
+
+            # the same register with a short value: the cell changes, the row
+            # keeps the height it reached
+            wide.write_uint_cached(2)
+            app._update_reg_rows(wide)
+            await pilot.pause()
+            assert _cell(app, _row_of(app, wide), 4) == "(v >= 2) 2"
+            assert table.rows[key].height == tall, "an update never shrinks a row"
+            assert app._row_min_height[key] == tall
+
+            # a manual column resize is what releases the row heights again
+            bx = table.value_col_boundary_screen_x()
+            y = table.region.y + table.header_height + 1
+            await pilot.mouse_down(None, (bx, y))
+            await pilot.hover(None, (bx + 30, y))
+            await pilot.pause()
+            await pilot.mouse_up(None, (table.value_col_boundary_screen_x(), y))
+            assert table.rows[key].height == 1, "a resize may shrink the rows"
+    _run(run())
+
+
+def test_log_title_shows_the_time_of_the_last_assert_check():
+    """The logged asserts show at the top the date and the time of the last
+    assert check and what it found."""
+    async def run():
+        top = make_demo()
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            title = app.log_view.border_title
+            assert app.last_assert_time is not None
+            assert "last check:" in title, title
+            assert app.last_assert_time.strftime("%Y-%m-%d %H:%M:%S") in title, title
+            # the demo module has triggered asserts, it says how many
+            assert f"{len(app.last_asserts)} triggered" in title, title
+            assert f"worst {app.last_worst_ass.name}" in title, title
+
+            # the next check moves the time stamp on
+            app.last_assert_time = app.last_assert_time.replace(year=1999)
+            await pilot.press("a")
+            await _wait_asserts(app, pilot)
+            assert app.last_assert_time.year != 1999, title
+    _run(run())
+
+
+def test_log_title_says_when_the_last_update_flagged_nothing():
+    """Without triggered asserts the title says so, otherwise an empty log
+    looks like no update ever ran."""
+    async def run():
+        top = make_edit_top()      # every register of it passes
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            assert app.last_asserts == []
+            title = app.log_view.border_title
+            assert "last check:" in title, title
+            assert "nothing triggered" in title, title
+    _run(run())
+
+
 def test_tree_structure():
     async def run():
         top = make_demo()
@@ -1085,6 +1197,8 @@ def make_edit_top():
     vt_s2 = ValueType(kind=ValueKind.sint, width=8, vec_len=2)
     vt_lmt = ValueType(kind=ValueKind.bits, width=32)
     vt_s16 = ValueType(kind=ValueKind.sint, width=16)
+    vt_f3 = ValueType(kind=ValueKind.sint, width=16, vec_len=3)
+    vt_u64 = ValueType(kind=ValueKind.uint, width=64)
 
     class _EditTop(_DemoModule):
         mid = edit_mid
@@ -1131,18 +1245,49 @@ def make_edit_top():
                                            "(v * 16)", "(v / 16)", VType.f),
                 )
             )
+            self._add_reg_var(
+                RegVec(
+                    self, "FV3", vt_f3, acc=Acc.rw, desc="scaled vec",
+                    # the same as the regs_rw of the recipe test bench module:
+                    # the value of the module user is a float vector, every
+                    # element of the register holds (10 - v * 10)
+                    v_type=VType.f,
+                    v_check=ValueCheck(lambda v: -2 <= v <= 100,
+                                       '((v >= -2) && (v <= 100))', VType.f),
+                    v_convert=ValueConvert(lambda v: 10 - v * 10,
+                                           lambda v: (10 - v) / 10,
+                                           '(10 - (v * 10))', '((10 - v) / 10)',
+                                           VType.f),
+                )
+            )
+            self._add_reg_var(
+                Reg(
+                    self, "WIDE", vt_u64, acc=Acc.rw, desc="wide checked",
+                    # a long u64 decimal value wraps in the value column, see
+                    # test_update_only_grows_a_row
+                    v_check=ValueCheck(lambda v: v >= 2, '(v >= 2)'),
+                )
+            )
 
     register_Module(_EditTop)
 
     data = (
-        # 16 + 4 + 2 + 4 + 4 = 30 bytes of regs, word padded -> 8 words
-        _head_bytes(edit_mid, 1, 0, len_kids=0, len_sub=0, len_k=0, len_var=8)
+        # 16 + 4 + 2 + 4 + 2 + 6 + 4 + 8 = 46 bytes of regs, word padded
+        # -> 12 words (every register is aligned to its own size)
+        _head_bytes(edit_mid, 1, 0, len_kids=0, len_sub=0, len_k=0, len_var=12)
         + big.to_bytes(16, "little")
         + bytes([0xAA, 0xBB, 0xCC, 0xDD])
         + bytes([5, 0xAB])  # sint lanes: 5 and -85
         + b"\x00" * 2  # LMT is word aligned
         + (30).to_bytes(4, "little")  # LMT passes (2 <= 30 <= 100)
-        + (-68).to_bytes(4, "little", signed=True)  # TEMP raw, -68/16 = -4.25
+        # TEMP is s16, 2 bytes, the vector below starts right after it
+        + (-68).to_bytes(2, "little", signed=True)  # TEMP raw, -68/16 = -4.25
+        # FV3 raw -15, 10, 20: the values of the module user 2.5, 0.0, -1.0
+        + (-15).to_bytes(2, "little", signed=True)
+        + (10).to_bytes(2, "little", signed=True)
+        + (20).to_bytes(2, "little", signed=True)
+        + bytes(4)               # the u64 below is 8 byte aligned
+        + (2).to_bytes(8, "little")  # WIDE passes (2 >= 2)
     )
     regio = MemRegio()
     regio.write_mem(0x70000000, data)
@@ -1213,6 +1358,93 @@ def test_vector_edit_writes_lanes():
             await _wait_cell(app, pilot, 1, VALUE, "[ 170, 187, 240, 221 ]")
             assert v4.read_idx_uint_cached(2) == 0xF0
             assert v4.read_idx_uint_cached(0) == 0xAA
+    _run(run())
+
+
+def test_tab_out_of_a_vector_edit_abandons_it():
+    """``tab`` moves the focus, it neither submits (enter) nor cancels
+    (escape): a tab to the next lane keeps the vector edit open, a tab out of
+    the input row closes it again (the lane inputs go away, the single input
+    comes back, nothing is written).
+
+    Regression: an abandoned vector edit used to leave the lane inputs
+    mounted and the single input removed, so the next scalar edit filled an
+    input that is not mounted (nothing to edit) and the next vector edit
+    mounted lane input ids that already exist (textual DuplicateIds)."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+            v4 = top.arr_reg_var[1]
+            assert v4.name == "V4"
+
+            app.table.focus()
+            app.table.move_cursor(row=1, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert len(app.value_inputs.query("ValueInput.lane")) == 4
+            assert app.value_input.parent is None
+
+            # a tab inside the row only moves to the next lane, the edit stays
+            await pilot.press("tab")
+            await pilot.pause()
+            assert len(app.value_inputs.query("ValueInput.lane")) == 4
+            assert app.focused is app.value_inputs.query("#value-input-1").first()
+
+            # a tab past the last lane leaves the row: the edit is abandoned
+            for _ in range(3):
+                await pilot.press("tab")
+                await pilot.pause()
+            assert len(app.value_inputs.query("ValueInput.lane")) == 0
+            assert app.value_input.parent is app.value_inputs
+            assert app._edit_lane is None
+            assert v4.read_idx_uint_cached(0) == 0xAA  # the edit wrote nothing
+
+            # a scalar register can be edited again, its input is mounted
+            app.table.focus()
+            app.table.move_cursor(row=0, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.value_input.value == "0xDEADBEEFCAFEBABE1234567890ABCDEF"
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # and the vector edit opens again, one input per index, no id twice
+            app.table.focus()
+            app.table.move_cursor(row=1, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            lanes = list(app.value_inputs.query("ValueInput.lane"))
+            assert len(lanes) == 4
+            assert len({lane.id for lane in lanes}) == 4
+    _run(run())
+
+
+def test_tab_out_of_a_scalar_edit_abandons_it():
+    """A scalar edit that is tabbed away is abandoned the same way: the
+    prefilled value is dropped and the focus stays where the tab put it, the
+    app does not pull it back to the table."""
+    async def run():
+        top = make_edit_top()
+        app = SkmapUiApp(top)
+        async with app.run_test() as pilot:
+            await _wait_asserts(app, pilot)
+            await _select_node(app, _find_node(app, top), pilot)
+
+            app.table.focus()
+            app.table.move_cursor(row=0, column=0)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.value_input.value != ""
+            assert app.focused is app.value_input
+
+            await pilot.press("tab")
+            await pilot.pause()
+            assert app.value_input.value == ""
+            assert app.focused is not app.value_input
+            assert app.value_input.parent is app.value_inputs
     _run(run())
 
 
@@ -1480,16 +1712,19 @@ def test_expand_vec_toggle():
         async with app.run_test(size=(90, 30)) as pilot:
             await _wait_asserts(app, pilot)
             await _select_node(app, _find_node(app, top), pilot)
-            # 5 registers -> 5 rows
-            assert len(app._row_keys) == 5
+            # one row per register
+            assert len(app._row_keys) == len(top.arr_reg_var)
             assert app._row_reg_idx == {}
             await pilot.press("e")
             await pilot.pause()
-            # V4: header + 4 lanes (rows 1-5), S2: header + 2 lanes
-            # (rows 6-8) -> 11 rows
-            assert len(app._row_keys) == 11
+            # every vector adds a row per lane (V4 4, S2 2, FV3 3)
+            assert len(app._row_keys) == len(top.arr_reg_var) + sum(
+                r.value_type.vec_len for r in top.arr_reg_var
+                if r.value_type.is_vec)
             assert app._row_reg_idx == {
+                # V4 (r2-r5), S2 (r7-r8) and FV3 (r12-r14) lane rows
                 "r2": 0, "r3": 1, "r4": 2, "r5": 3, "r7": 0, "r8": 1,
+                "r12": 0, "r13": 1, "r14": 2,
             }
             # lane rows: lane address + name[idx] + the lane value
             assert _cell(app, 2, ADDR) == "0x70000020"
@@ -1507,7 +1742,7 @@ def test_expand_vec_toggle():
             # toggle back: one row per register again
             await pilot.press("e")
             await pilot.pause()
-            assert len(app._row_keys) == 5
+            assert len(app._row_keys) == len(top.arr_reg_var)
             assert _cell(app, 1, NAME) == "V4"
             assert app._row_reg_idx == {}
     _run(run())
@@ -1559,7 +1794,9 @@ def test_expand_vec_bits_display():
             await pilot.pause()
             await pilot.press("x")
             await pilot.pause()
-            assert len(app._row_keys) == 11
+            assert len(app._row_keys) == len(top.arr_reg_var) + sum(
+                r.value_type.vec_len for r in top.arr_reg_var
+                if r.value_type.is_vec)
             await _wait_cell(app, pilot, 2, VALUE, "0xAA")
             await _wait_cell(app, pilot, 5, VALUE, "0xDD")
             await _wait_cell(app, pilot, 7, VALUE, "0x05")

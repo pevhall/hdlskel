@@ -34,8 +34,12 @@ module_recipe = script_dir / 'test_skmap_tree_module.toml'
 skmap.generate_vhdl_module(module_recipe, script_dir/'test_skmap_tree_module.vhd')
 skmap.generate_py_module(module_recipe, script_dir/'test_skmap_tree_module.py')
 
+# every file of hdldepends.toml is analysed into the hdlskel library (the design
+# refers to them as work.*, that is the current library of the simulator), so the
+# top of the analysis has to be named in that library too
+LIB        = 'hdlskel'
 top_entity = 'test_skmap_tree_top'
-dep = analyse(config_files ='hdldepends.toml', top_entity=top_entity)
+dep = analyse(config_files ='hdldepends.toml', top_entity=top_entity, top_lib=LIB)
 compile_order = dep.to_dict()['files']
 # print(f'{compile_order=}')
 # print(f'{script_dir=}')
@@ -59,7 +63,7 @@ sim = HdlWorkflow(
         'TREE_DEPTH=16',
         'TREE_WIDTH=15',
     ],
-    libraries = 'hdlskel',
+    libraries = LIB,
     cocotb=f'test_skmap_tree',
     pythonpaths=[script_dir]
 )

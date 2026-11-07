@@ -7,7 +7,7 @@ cd $SCRIPT_DIR/build
 
 TOP=skmap_module
 
-hdldepends hdldepends.toml --top-entity=$TOP --compile-order-path-only=compile_order.txt
+hdldepends hdldepends.toml --top-entity=$TOP --top-vhdl-lib=hdlskel -o compile-order-paths compile_order.txt
 
 export PYTHONPATH="$PYTHONPATH:$SCRIPT_DIR"
 

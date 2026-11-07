@@ -108,8 +108,9 @@ check_has "k reg value"                 "RO_LEN"                    "$TMP/recipe
 check_has "external mem rows"           "Mem size:"                 "$TMP/recipe.txt"
 # The recipe v_check of regs_rw, printed with every recipe name resolved to a
 # value (the recipe is not needed to print a module): min / max of the register
-# value are replaced by the v_check of the value of the module user
-check_has_f "v_check of regs_rw shown"  "(((v >= (-1 * 2)) && (v <= 100)) && ((v % 2) == 0))" "$TMP/recipe.txt"
+# value are replaced by the v_check of the value of the module user, the value
+# column shows the values of the module user (the raw s12 is 10 - user * 10)
+check_has_f "v_check of regs_rw shown"  "((v >= (-1 * 2)) && (v <= 100)) [ 100, -2, 4 ]" "$TMP/recipe.txt"
 # temp has a v_convert_wr, the map shows the value of the module user (a float),
 # not the raw value of the register
 check_has_f "v_convert_wr prints the user value" "((v >= -1000.0) && (v <= \$ceil((10.1 * 32)))) -4.25" "$TMP/recipe.txt"
@@ -117,7 +118,10 @@ check_has_f "v_convert_wr prints the user value" "((v >= -1000.0) && (v <= \$cei
 # the python reg map), the marker is not printed anywhere else, the k
 # parameter RO_VAL_W (12) is resolved in the marker
 check_has_f "value conversion in the description" "={ v * 12 } Temp, float scale" "$TMP/recipe.txt"
-check_absent_f "no marker for a reg without a conversion" "={ v * 12 } RW registers" "$TMP/recipe.txt"
+# a vector converts as well, its marker is the v_convert_wr of the recipe
+check_has_f "value conversion of a vector" "={ 10 - (v * 10) } RW registers" "$TMP/recipe.txt"
+# regs_ro is the same [3]s12 vector without a v_convert, no marker for it
+check_absent_f "no marker for a reg without a conversion" "} RO registers" "$TMP/recipe.txt"
 # RW_LEN has v_check="{ (v % RW_MULT) == 0}" and the firmware value 3 is odd, so
 # the worst assert of the module is the error of that failed check
 check_has "asserts listed"              "Asserts (max error)"       "$TMP/recipe.txt"

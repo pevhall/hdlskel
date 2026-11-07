@@ -15,12 +15,32 @@
 #
 # Override the server location with HOST / PORT environment vars:
 #   HOST=127.0.0.1 PORT=39600 bash demo_skmap_recipe_sim.sh
+# Extra args for the TUI (CI uses --smoke: start, wait for the assert check,
+# print the result and exit, no terminal needed):
+#   SKMAP_UI_ARGS="--smoke" bash demo_skmap_recipe_sim.sh
+# any other argument reaches the TUI as well (bash demo_skmap_recipe_sim.sh --smoke)
 set -euo pipefail
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
 TB_DIR="../../../fw/tb/skmap/tb_py_skmap_module_recipe"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-39600}"   # regio PORT_DEFAULT = 0x9AB0
+REG_MODULE="$TB_DIR/recipe_test_bench_module.py"
+
+# --- the simulation port has to be free before anything is started -----
+# A leftover simulation (for instance of the previous run of this demo) would
+# answer instead of the one started here, the TUI would then talk to another
+# design.  A process of the previous run can still be on its way out, wait for
+# the port instead of failing right away.
+for _ in $(seq 1 20); do
+    (echo > "/dev/tcp/$HOST/$PORT") 2>/dev/null && { sleep 0.5; continue; }
+    break
+done
+if (echo > "/dev/tcp/$HOST/$PORT") 2>/dev/null; then
+    echo "ERROR: something is still listening on $HOST:$PORT (the simulation regio server port), stop it first" >&2
+    exit 1
+fi
 
 # --- start the simulation in its own session / process group ---------
 setsid python3 "$TB_DIR/run.py" -s &
@@ -43,7 +63,7 @@ echo "waiting for the simulation regio server at $HOST:$PORT ..."
 ready=0
 for _ in $(seq 1 120); do
     if ! kill -0 "$SIM_PID" 2>/dev/null; then
-        echo "ERROR: simulation died while waiting for the server" >&2
+        echo "ERROR: simulation died while waiting for the server, its output above says why" >&2
         exit 1
     fi
     if (echo > "/dev/tcp/$HOST/$PORT") 2>/dev/null; then
@@ -61,4 +81,5 @@ echo "simulation server is up; starting TUI (Ctrl+Q to quit)"
 # no exec: the EXIT trap must fire to clean up the simulation
 # find the skmap_ui package next to this directory, no install needed
 export PYTHONPATH="$(cd "$(dirname "$0")/../src" && pwd)${PYTHONPATH:+:$PYTHONPATH}"
-python3 -m skmap_ui -i "$HOST" -p "$PORT" -I $TB_DIR/recipe_test_bench_module.py
+SKMAP_UI_ARGS="${SKMAP_UI_ARGS:-}"
+python3 -m skmap_ui -i "$HOST" -p "$PORT" -I "$REG_MODULE" $SKMAP_UI_ARGS "$@"

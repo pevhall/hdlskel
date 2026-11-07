@@ -148,19 +148,34 @@ async def test_skmap_module_test_acc_types(dut):
         # RW_VAL_W = module.regs_rw_value_type.width 
         assert RW_LEN is not None
         assert RW_VAL_W is not None
-        # the recipe v_check of regs_rw only accepts even values between -2 and
-        # 100, min and max of the register value are replaced by it
+        # the recipe v_check of regs_rw accepts a value of the module user
+        # between -2 and 100 (min and max of the register value are replaced by
+        # it), the recipe v_convert_wr stores (10 - v * 10) in the register
         await module.regs_rw_write_idx(0, 100)
         await module.regs_rw_write_idx(1, -2)
         for ii in range(2,RW_LEN):
             await module.regs_rw_write_idx(ii,2*ii)
-            # await module.regs_rw_write_idx(ii,(1<<RW_VAL_W)-1)
-        # a value that does not pass the v_check is rejected
+
+        # a value of the module user that does not pass the v_check is rejected
         try:
-            await module.regs_rw_write_idx(0, 3)
-            assert False, 'regs_rw_write_idx(0, 3) should have raised, 3 is not even'
+            await module.regs_rw_write_idx(0, 101)
+            assert False, 'regs_rw_write_idx(0, 101) should have raised, 101 is over the v_check'
         except ValueError as e:
             print(f'expected v_check error: {e}')
+        # a raw write gets the value of the register, the value of the module
+        # user it represents is checked as well (the max of a signed
+        # RW_VAL_W bit register is far over the check)
+        try:
+            await module.regs_rw_write_idx_raw(1, (1 << (RW_VAL_W - 1)) - 1)
+            assert False, 'the maximum register value is far over the v_check'
+        except ValueError as e:
+            print(f'expected v_check error: {e}')
+        # what is written is the value of the module user, the register holds
+        # the converted value, reading it back gives the same value
+        await module.regs_rw_write_idx(2, 4)
+        assert await module.regs_rw_read_idx_raw(2) == 10 - (4 * 10)
+        assert await module.regs_rw_read_idx(2) == 4
+
         # temp has a v_convert_wr, it works with a float, the raw register is s16
         await module.temp_write(-4.25)
         # the scale is the k register RO_VAL_W, raw = -4.25 * 12 = -51

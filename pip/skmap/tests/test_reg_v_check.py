@@ -274,11 +274,34 @@ def test_recipe_parses_v_options():
     assert rw_len.v_convert_wr is None
     assert rw_len.v_convert_rd is None
 
+    # regs_rw is a float vector with a value conversion: v_type f makes v a
+    # float, the recipe gives the write side, the read side is its inverse
     regs_rw = by_name['regs_rw']
-    assert regs_rw.v_type == skmap.VType.s
+    assert regs_rw.v_type == skmap.VType.f
     assert 'v <= 100' in str(resolvable_print_source(regs_rw.v_check))
+    assert str(resolvable_print_source(regs_rw.v_convert_wr)) == '(10 - (v * 10))'
+    assert str(resolvable_print_source(regs_rw.v_convert_rd)) == '(((v * -1) + 10) / 10)'
+    assert regs_rw.t.is_vec
+    assert str(regs_rw.t.elem_w) == 'RW_VAL_W'
     with pytest.raises(ValueError):
         resolvable_to_int(regs_rw.v_check)   # it depends on v, it is not a constant
+
+def test_v_options_are_not_for_char_registers():
+    """A char register is a string, the value options are numbers: it is a
+    recipe error, not a compile error of the generated module or a TypeError of
+    the runtime the first time the register is used."""
+    for kind in (skmap.ValueKind.char,):
+        for d in ({'name': 'C', 'v_check': '{ v >= 0 }'},
+                  {'name': 'C', 'v_convert_wr': '{ v * 2 }'},
+                  {'name': 'C', 'v_convert_rd': '{ v / 2 }'},
+                  {'name': 'C', 'v_type': 'f'}):
+            with pytest.raises(AssertionError, match='not supported on a char'):
+                parse_recipe_v_options(d, {}, kind, False)
+    # the same options are fine on an int register (a char vector is a char
+    # kind as well, the vec does not make it a number)
+    assert parse_recipe_v_options({'name': 'R', 'v_check': '{ v >= 0 }'},
+                                  {}, skmap.ValueKind.sint, False)[1] is not None
+
 
 def test_recipe_v_convert_is_invertible():
     recipe = parse_recipe_file(RECIPE)
@@ -610,15 +633,50 @@ def test_generated_module_has_raw_and_converted_functions():
     assert '_max(self)' not in src
     assert '_min(self)' not in src
 
-    # registers without a v_convert keep their old functions
-    assert 'def regs_rw_read_cached(self) -> list[int]:' in src
-    assert 'def regs_rw_read_cached_raw(self)' not in src
-    assert 'def regs_rw_write_idx_cached(self, idx : int, val : int):' in src
+    # a vector with a v_convert converts the whole vector (list[float]) and
+    # every element on its own (float), the raw functions stay on the register
+    # bits (list[int] / int)
+    assert 'def regs_rw_read_cached(self) -> list[float]:' in src
+    assert 'def regs_rw_read_cached_raw(self) -> list[int]:' in src
+    assert 'def regs_rw_write_idx_cached(self, idx : int, val : float):' in src
+    assert 'def regs_rw_write_idx_cached_raw(self, idx : int, val : int):' in src
 
     # the check text is printed with resolved values
     assert "'((v % 2) == 0)'" in src
     assert 'v_check=skmap.ValueCheck(' in src
     assert 'v_convert=skmap.ValueConvert(' in src
+
+
+def test_generated_cpp_vector_uses_the_vector_converted_functions():
+    """A converted vector has to call the RegVec vector functions.
+
+    Reg::read_converted() converts one value and returns a single float_t, it
+    compiles for a scalar register but not for a vector: the generated vector
+    functions must call read_vec_converted / write_vec_converted.
+    """
+    hpp = (ROOT / 'sw' / 'lib' / 'cpp' / 'skmap_autogen_test' / 'include' /
+           'hdlskel' / 'skmap' / 'autogen_test' / 'recipe_test_bench_module.hpp')
+    if not hpp.exists():
+        pytest.skip(f'{hpp} is not generated (sw/lib/cpp/skmap_autogen_test/'
+                    'update_from_toml_recipe.sh)')
+    src = hpp.read_text()
+
+    # regs_rw: a float vector, the whole vector converts element by element
+    assert 'std::vector<float_t> regs_rw_read_cached() const { return m_var_regs_rw->read_vec_converted_cached(); }' in src
+    assert 'std::vector<float_t> regs_rw_read() { return m_var_regs_rw->read_vec_converted(); }' in src
+    assert 'void regs_rw_write_cached( const std::vector<float_t> & value ) { m_var_regs_rw->write_vec_converted_cached(value); }' in src
+    assert 'void regs_rw_write( const std::vector<float_t> & value ) { m_var_regs_rw->write_vec_converted(value); }' in src
+    # one element of it is a scalar, it uses the per index functions
+    assert 'float_t regs_rw_read_idx_cached(addr_t idx) const { return m_var_regs_rw->read_idx_converted_cached(idx); }' in src
+    assert 'void regs_rw_write_idx(addr_t idx, float_t val) { m_var_regs_rw->write_idx_converted(idx, val); }' in src
+    # a vector never asks the Reg scalar conversion (it returns one float)
+    assert 'm_var_regs_rw->read_converted' not in src
+    assert 'm_var_regs_rw->write_converted(' not in src
+    assert 'm_var_regs_rw->read_converted_cached' not in src
+
+    # temp is a scalar, it keeps the Reg conversion functions
+    assert 'float_t temp_read_cached() const { return m_var_temp->read_converted_cached(); }' in src
+    assert 'void temp_write( float_t value ) { m_var_temp->write_converted(value); }' in src
 
 
 # ---------- v_convert marker of the reg map ----------

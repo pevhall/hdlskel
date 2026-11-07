@@ -8,7 +8,11 @@ script_dir = Path(__file__).resolve().parent
 name = 'tb_skmap_module_basic'
 top_entity = name
 top_file = script_dir / f'{name}.vhd'
-dep = analyse(config_files ='hdldepends.toml', top_file=top_file) #doesn't work
+# every file of hdldepends.toml is analysed into the hdlskel library (the design
+# refers to them as work.*, that is the current library of the simulator), so the
+# top of the analysis has to be named in that library too
+LIB = 'hdlskel'
+dep = analyse(config_files ='hdldepends.toml', top_file=top_file, top_lib=LIB)
 dep.print_compile_order()
 compile_order = dep.to_dict()['files']
 if 0:
@@ -25,6 +29,6 @@ if 1:
         path_to_working_directory = script_dir/'build',
         compile_order = compile_order,
         gui = gui,
-        libraries = 'hdlskel',
+        libraries = LIB,
     )
     sim.run()

@@ -31,8 +31,14 @@ if (echo > "/dev/tcp/$HOST/$PORT") 2>/dev/null; then
     exit 1
 fi
 
-# --- start the simulation in its own session / process group ---------
+# The cpp module of this recipe is generated from the very recipe the
+# simulation runs, so a recipe change is compiled against what it changed (a
+# generated file that does not compile, like a vector with a v_type / a
+# v_convert, fails here and not only when someone regenerates it by hand).
 cd "$(dirname "$0")"
+( cd ../lib/cpp/skmap_autogen_test && bash update_from_toml_recipe.sh )
+
+# --- start the simulation in its own session / process group ---------
 setsid python3 "$TB_DIR/run.py" -s &
 SIM_PID=$!
 

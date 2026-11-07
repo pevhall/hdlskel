@@ -49,7 +49,11 @@ every assert check that finds triggered asserts appends one block —
 a time stamp followed by a table with one row per triggered assert
 (same columns as ``print_table_reg_list``) — so the log grows after
 every refresh that contains triggered asserts; checks without
-triggered asserts append nothing.  The register map table mirrors
+triggered asserts append nothing.  The border title of the log always
+shows the date and the time of the last assert check with what it found
+(``N triggered, worst X`` / ``nothing triggered``), so it can be seen at
+a glance if the last update flagged the asserts, also when it flagged
+nothing (which appends no log block).  The register map table mirrors
 ``print_reg_map_cached`` (skmap's ``RegMapTable``): address, value
 type, access, name, value, description; ``k`` registers are shown
 (value is fixed, never read from the device).
@@ -115,7 +119,9 @@ configured ``v_check`` is caught locally (the same condition
 before it reaches the device.  A register with a recipe value conversion
 (see the recipe options ``v_type`` / ``v_check`` / ``v_convert_wr`` /
 ``v_convert_rd``) is
-edited in the domain of the user of the module: a decimal input is the
+edited in the domain of the user of the module (the lane rows of an
+expanded vector show the value of the user of that lane,
+``read_converted_idx_cached``): a decimal input is the
 value of the user and the register converts it, a **0x-prefixed (hex)
 input sets the bits of the register directly** (the same as the
 generated ``<reg>_write_*_raw`` functions, no conversion), so a hex value is
@@ -144,9 +150,18 @@ written with ``Reg.write_sint``)); a *vector*
 register opens one input column per vector index (each prefilled with
 the current lane value via ``Reg.read_idx_value_cached``), written
 lane by lane with ``Reg.write_idx_uint`` / ``Reg.write_idx_sint``;
-``rc`` registers are cleared (writes zero).  Long values wrap over
-multiple lines in the *Value* column, which is left-aligned.  An
-external mem that is an ``ExternalMemVec`` (vec-typed external mem)
+``rc`` registers are cleared (writes zero).  An edit that is neither
+submitted (``enter``) nor cancelled (``escape``) -- ``tab`` moves the focus
+to the next lane input and out of the input row on the last one, a click
+moves it anywhere -- is abandoned: the lane inputs are removed and the
+single input put back (see ``_abandon_value_edit``), nothing is written.
+Long values wrap over multiple lines in the *Value* column, which is
+left-aligned.  A read
+update only ever makes a row taller, a row that would need fewer lines
+keeps the height it reached (the rows below it do not jump around while
+a module is read); only resizing a column with the mouse lets the rows
+shrink again.  An external mem that is an ``ExternalMemVec`` (vec-typed
+external mem)
 opens a vec view: a header row (the border title shows the mem's
 addr, type, acc, name and description) plus one row per vector index
 (the value cells are read with ``ExternalMemVec.read_idx_rich_str_cached``);
@@ -710,7 +725,10 @@ class ValueInput(Input):
     """Input line for a new register value.
 
     ``enter`` submits (posts ``Input.Submitted``); ``escape`` cancels
-    the edit (posts :attr:`Canceled`).
+    the edit (posts :attr:`Canceled`).  ``tab`` does neither, it only moves
+    the focus (to the next lane input, out of the input row on the last
+    one): the app closes the edit when the focus leaves the row, see
+    :meth:`SkmapUiApp.on_descendant_blur`.
     """
 
     BINDINGS = Input.BINDINGS + [
@@ -854,6 +872,14 @@ class SkmapUiApp(App):
         self.last_asserts: list[Union[RFlag, Reg]] = []
         self.last_worst_ass: Ass = Ass.passed
         self.asserts_checked = False
+        # time of the last assert check, shown in the border title of the
+        # logged asserts (the point: see at a glance when the last update ran
+        # and whether it flagged anything)
+        self.last_assert_time: Optional[datetime] = None
+        # height per table row reached so far: an update only ever grows a
+        # row, a row shrinks only when the user resizes a column with the
+        # mouse (see _update_row_value and _release_row_heights)
+        self._row_min_height: dict[str, int] = {}
         self._asserts_checking = False
         self._log_lines: list[str] = []
         self._row_keys: list[str] = []
@@ -1158,12 +1184,19 @@ class SkmapUiApp(App):
 
     def _reg_lane_value_text(self, reg: Reg, idx: int) -> Text:
         """Rich value cell of one lane row of an expanded vector
-        register (see ``_reg_value_text``)."""
+        register (see ``_reg_value_text``).
+
+        A register with a value conversion shows the value of the module
+        user of the lane (``read_converted_idx_cached``), the same value the
+        row of the register itself shows, not the value of the register.
+        """
         kind = reg.value_type.kind
         if self._value_bits and kind in (ValueKind.uint, ValueKind.sint):
             return Text(
                 _bits_str(reg.read_idx_uint_cached(idx), reg.value_type.width, kind)
             )
+        if reg.has_v_convert:
+            return Text(str(reg.read_converted_idx_cached(idx)))
         return Text(str(reg.read_idx_value_cached(idx)))
 
     def _mem_lane_value_text(self, mem: ExternalMemVec, idx: int) -> Text:
@@ -1272,6 +1305,9 @@ class SkmapUiApp(App):
         self._row_reg_idx = {}
         self._mem_view_header = None
         self._edit_lane = None
+        # the rows of another module have nothing to do with the heights the
+        # rows of this one reached (their keys are r0, r1, ...)
+        self._row_min_height.clear()
         self.table.clear(columns=False)
 
         rows: list[tuple[tuple, RowObj, int | None]] = []
@@ -1313,6 +1349,9 @@ class SkmapUiApp(App):
         self._row_reg_idx = {}
         self._mem_view_header = None
         self._edit_lane = None
+        # the rows of another module have nothing to do with the heights the
+        # rows of this one reached (their keys are r0, r1, ...)
+        self._row_min_height.clear()
         self.table.clear(columns=False)
         if isinstance(mem, ExternalMemVec):
             self._show_mem_vec(mem)
@@ -1419,10 +1458,7 @@ class SkmapUiApp(App):
                 )
             else:
                 worst = self._check_asserts_partial(self.top_module, log_f)
-            self.last_asserts = list(log_f)
-            self.last_worst_ass = worst
-            self.asserts_checked = True
-            self._append_assert_log(worst, log_f)
+            self._note_assert_check(worst, log_f)
             self._refresh_shown_values()
             # remember the shown table row: the tree rebuild (and the
             # re-select that follows it) must not move the cursor.  The
@@ -1493,10 +1529,7 @@ class SkmapUiApp(App):
                 )
             else:
                 worst = self._check_asserts_partial(self.top_module, log_f)
-            self.last_asserts = list(log_f)
-            self.last_worst_ass = worst
-            self.asserts_checked = True
-            self._append_assert_log(worst, log_f)
+            self._note_assert_check(worst, log_f)
             self._refresh_shown_values()
         except Exception as err:  # noqa: BLE001
             logging.warning("re-check asserts failed: %s", err)
@@ -1521,6 +1554,21 @@ class SkmapUiApp(App):
     # ------------------------------------------------------------------
     # assert log (appended blocks: time stamp + table of triggered asserts)
     # ------------------------------------------------------------------
+
+    def _note_assert_check(self, worst: Ass, log_f: list) -> None:
+        """Remember what the last assert check found and when it ran.
+
+        The border title of the logged asserts shows the date and time of
+        the last check with what it found (see _update_log_title), so it can
+        be seen at a glance if the last update flagged the asserts, also when
+        it flagged nothing (a log block is only appended when something
+        triggered, see _append_assert_log)."""
+        self.last_asserts = list(log_f)
+        self.last_worst_ass = worst
+        self.asserts_checked = True
+        self.last_assert_time = datetime.now()
+        self._update_log_title()
+        self._append_assert_log(worst, log_f)
 
     def _append_assert_log(self, worst: Ass, log_f: list) -> None:
         """Append a time-stamped block of the triggered asserts to the log.
@@ -1605,8 +1653,23 @@ class SkmapUiApp(App):
         )
 
     def _update_log_title(self) -> None:
-        """Border title of the log pane: current assert option values,
+        """Border title of the log pane: the date and time of the last
+        assert check with what it found, the current assert option values,
         plus where the 'l' log cursor sits."""
+        if self.last_assert_time is None:
+            checked = "last check: never"
+        else:
+            # the whole point of the time stamp: the last update and what it
+            # flagged, also when it flagged nothing
+            checked = (
+                f"last check: {self.last_assert_time:%Y-%m-%d %H:%M:%S}"
+                + (
+                    f"  ·  {len(self.last_asserts)} triggered, "
+                    f"worst {self.last_worst_ass.name}"
+                    if self.last_asserts
+                    else "  ·  nothing triggered"
+                )
+            )
         update = (
             f"update: {self.refresh_period:g} s"
             if self.refresh_period
@@ -1632,7 +1695,8 @@ class SkmapUiApp(App):
                     f"  ·  cursor {self._log_nav_idx + 1}/{len(entries)} {name}"
                 )
         self.log_view.border_title = (
-            f"asserts (level >= {self.asserts_level.name})  ·  {update}{cursor}"
+            f"asserts (level >= {self.asserts_level.name})  ·  {checked}  ·  "
+            f"{update}{cursor}"
         )
 
     def _update_row_value(self, key: str, value: Text) -> None:
@@ -1658,9 +1722,48 @@ class SkmapUiApp(App):
             and old is not None
             and len(old) != len(plain)
         ):
+            # A row is measured again, but an update never makes it shorter:
+            # a value that loses a line (an assert goes away, a number gets
+            # smaller) keeps the row as tall as it was, so the rows below it
+            # do not jump around while the module is read.  Only a manual
+            # column resize releases the minimum again (_release_row_heights).
             row.height = 0
             self.table._update_dimensions([key])  # noqa: SLF001
+            keep = self._row_min_height.get(key, 0)
+            if row.height < keep:
+                # the new value needs fewer lines: the row keeps the height it
+                # reached.  It has to be set after the measurement, measuring
+                # again would give the height of the content back.
+                row.height = keep
+                self.table._clear_caches()  # noqa: SLF001
+                self.table._update_dimensions([])  # noqa: SLF001 (virtual size)
+            self._row_min_height[key] = row.height
             self.table.refresh(layout=True)
+
+    def _release_row_heights(self) -> None:
+        """Let the rows measure themselves again, a manual column resize.
+
+        An update only grows a row (see _update_row_value); the height a row
+        reached is its minimum until the user changes the width of a column
+        with the mouse.  Then the rows are allowed to shrink again, the same
+        value needs fewer lines in a wider value column.
+
+        Nothing to do when no row grew into the memory, a mouse-move during a
+        drag calls it for every event.
+        """
+        if not self._row_min_height:
+            return
+        self._row_min_height.clear()
+        keys = []
+        for key, row in self.table.rows.items():
+            if row.auto_height and row.height != 0:
+                row.height = 0
+                keys.append(key)
+        if keys:
+            # height 0 is what makes the table measure the content again
+            self.table._clear_caches()  # noqa: SLF001
+            self.table._update_dimensions(keys)  # noqa: SLF001
+        self.table.refresh(layout=True)
 
     def _update_reg_rows(self, reg: Reg) -> None:
         """Update all the value cells of a register in the shown table:
@@ -2566,6 +2669,7 @@ class SkmapUiApp(App):
                 and event.time - last[1] < self._DBL_CLICK_TIME
             ):
                 self.table.reset_value_col_width()
+                self._release_row_heights()
                 self._col_click = None
                 event.stop()
                 return
@@ -2588,6 +2692,9 @@ class SkmapUiApp(App):
                     event.screen_x, self._col_drag_scroll
                 )
             )
+            # the width of the value column decides how many lines a value
+            # needs: resizing is what may shrink the rows again
+            self._release_row_heights()
         elif self._drag == "v":
             ws = self.workspace.region
             if ws.width > 0:
@@ -2879,6 +2986,9 @@ class SkmapUiApp(App):
             return
         key = self._row_keys[row]
         obj = self._row_objs[key]
+        # a previous edit that was never closed (tabbed or clicked away, see
+        # on_descendant_blur) must not leak into this one
+        await self._reset_value_inputs()
         if isinstance(obj, ExternalMemVec):
             # an ExternalMemVec view row: one lane, or the header row
             await self._edit_mem_row(key, obj, self._row_mem_idx.get(key))
@@ -2973,6 +3083,60 @@ class SkmapUiApp(App):
             return value
         return str(value)
 
+    async def _reset_value_inputs(self) -> None:
+        """Put the value input row back to its single input, writing nothing.
+
+        A vector edit removes the single input and mounts one input per vector
+        index.  An edit that is neither submitted (``enter``) nor cancelled
+        (``escape``) -- tabbed or clicked away -- would otherwise leave those
+        lane inputs up and the single input removed, and the next edit would
+        break: a scalar one would fill an input that is not mounted (nothing
+        to edit), a vector one would mount lane input ids that already exist
+        (a textual ``DuplicateIds`` error).
+        """
+        for lane in self.value_inputs.query("ValueInput.lane"):
+            await lane.remove()
+        if self.value_input.parent is None:
+            await self.value_inputs.mount(self.value_input)
+
+    async def _end_value_edit(self, *, focus_table: bool = True) -> None:
+        """Close the value edit without writing anything (``escape``, or the
+        focus leaving the input row, see :meth:`_abandon_value_edit`)."""
+        if self._step_prompt:
+            # esc (or a tab away) on the 's' step increment prompt: the
+            # increment stays, the input line goes back to its value role
+            self._step_prompt = False
+            self.value_input.placeholder = self._VALUE_PLACEHOLDER
+        await self._reset_value_inputs()
+        self._edit_lane = None
+        self.value_input.value = ""
+        if focus_table:
+            self.table.focus()
+
+    async def _abandon_value_edit(self) -> None:
+        """Close a value edit the user tabbed or clicked away from.
+
+        Runs deferred (``call_next``): the new focus has to be settled to tell
+        a ``tab`` to the next lane input from a ``tab`` out of the input row.
+        The focus is left where the user put it, only the edit state is
+        cleaned up.
+        """
+        focused = self.focused
+        if isinstance(focused, ValueInput) and focused.parent is self.value_inputs:
+            return  # the focus stayed inside the value input row
+        if (not self.value_inputs.query("ValueInput.lane")
+                and self._edit_lane is None and not self._step_prompt
+                and not self.value_input.value):
+            return  # a submit already closed everything
+        await self._end_value_edit(focus_table=False)
+
+    def on_descendant_blur(self, event: events.DescendantBlur) -> None:
+        """A value edit that lost the focus without a submit or a cancel is
+        abandoned (``tab`` moves it on, a click moves it anywhere)."""
+        if not isinstance(event.widget, ValueInput):
+            return
+        self.call_next(self._abandon_value_edit)
+
     async def _open_value_input(self, row: int, reg: Reg) -> None:
         vt = reg.value_type
         if vt.vec_len:
@@ -2997,7 +3161,9 @@ class SkmapUiApp(App):
         vt = reg.value_type
         container = self.value_inputs
         # hide the single input for the duration of the vector edit
-        await self.value_input.remove()
+        await self._reset_value_inputs()
+        if self.value_input.parent is not None:
+            await self.value_input.remove()
         for idx in range(vt.vec_len):
             lane = ValueInput(
                 id=f"value-input-{idx}",
@@ -3010,11 +3176,7 @@ class SkmapUiApp(App):
 
     async def _close_vector_inputs(self) -> None:
         """Remove the lane inputs and restore the single input."""
-        container = self.value_inputs
-        for lane in container.query("ValueInput.lane"):
-            await lane.remove()
-        if self.value_input.parent is None:
-            await container.mount(self.value_input)
+        await self._reset_value_inputs()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if not isinstance(event.input, ValueInput):
@@ -3127,15 +3289,7 @@ class SkmapUiApp(App):
         )
 
     async def on_value_input_canceled(self, event: ValueInput.Canceled) -> None:
-        if self._step_prompt:
-            # esc on the 's' step increment prompt: the increment stays
-            self._step_prompt = False
-            self.value_input.placeholder = self._VALUE_PLACEHOLDER
-        if self.value_inputs.query("ValueInput.lane"):
-            await self._close_vector_inputs()
-        self._edit_lane = None
-        self.value_input.value = ""
-        self.table.focus()
+        await self._end_value_edit()
 
     @staticmethod
     def _parse_lane(asset, text: str) -> int | float | None:

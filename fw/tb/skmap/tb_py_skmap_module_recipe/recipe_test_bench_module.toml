@@ -52,7 +52,7 @@ var = [
   ]},
   {name = "regs_ro",  t = "[{RO_LEN}]s{RO_VAL_W}", ass = "debug", acc = "ro", desc = "RO registers"},
   # The old min = "{-1*INT_2}" / max = 100 range is now one v_check expression
-  {name = "regs_rw",  t = "[{RW_LEN}]s{RW_VAL_W}", acc = "rw", desc = "RW registers", v_check="{ (v >= (-1*INT_2)) && (v <= 100) && ((v % RW_MULT) == 0) }"},
+  {name = "regs_rw",  t = "[{RW_LEN}]s{RW_VAL_W}", acc = "rw", desc = "RW registers", v_type="f", v_convert_wr="{10-v*10}", v_check="{ (v >= (-1*INT_2)) && (v <= 100) }"},
   # A float register: v_type "f" makes v a float (a double in c++), v_convert_wr
   # (value convert write side) converts the user value into the register value
   # (v * RO_VAL_W) and a read uses its inverse v_convert_rd (v / RO_VAL_W),

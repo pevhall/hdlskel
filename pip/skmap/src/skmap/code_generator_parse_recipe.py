@@ -370,6 +370,12 @@ def parse_recipe_v_options(d : dict, name_to_k : NameToKT, value_kind, is_flag :
     assert not ('v_convert_wr' in d and 'v_convert_rd' in d), \
         (f'{d["name"]}: v_convert_wr and v_convert_rd are inverses of each other, '
          f'give at most one of them and the other side is derived')
+    # a char register is a string in the generated code and its value is not a
+    # number, the value of the module user (v_check / v_convert) is one
+    assert value_kind != ValueKind.char or not ('v_check' in d or 'v_convert_wr' in d
+                                                or 'v_convert_rd' in d or 'v_type' in d), \
+        (f'{d["name"]}: v_type / v_check / v_convert are not supported on a char '
+         f'register, its value is a string, not a number')
     v_type = VType.from_str(d['v_type']) if 'v_type' in d else value_kind_to_v_type(value_kind)
     if 'v_check' in d:
         v_check, v_check_str = parse_resolvable_v_check(d['v_check'], name_to_k, v_type)

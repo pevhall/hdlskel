@@ -18,6 +18,10 @@
 
 using namespace hdlskel::skmap;
 
+// Qualified, this file has `using namespace hdlskel::skmap`, where the
+// unqualified name is also the float_t of <math.h> (see basic_types.hpp).
+using skmap_float_t = hdlskel::skmap::float_t;
+
 static int g_checks = 0;
 static int g_failed = 0;
 
@@ -56,8 +60,9 @@ static std::shared_ptr<autogen::RecipeTestBenchModule> make_module(const std::st
 
 // The recipe checks that RW_MULT (printed as its value 2) divides the value.
 static const std::string RW_LEN_CHECK = "((v % 2) == 0)";
-// regs_rw: (v >= (-1 * 2)) && (v <= 100) && ((v % 2) == 0)
-static const std::string REGS_RW_CHECK = "(((v >= (-1 * 2)) && (v <= 100)) && ((v % 2) == 0))";
+// regs_rw: v_type 'f' and v_check "{ (v >= (-1*INT_2)) && (v <= 100) }", with
+// the recipe v_convert_wr "{10-v*10}" (raw = 10 - user * 10)
+static const std::string REGS_RW_CHECK = "((v >= (-1 * 2)) && (v <= 100))";
 
 static void test_v_check_scalar(autogen::RecipeTestBenchModule & m) {
     // RW_LEN is a constant register (a k reg) of the recipe with a v_check,
@@ -80,26 +85,63 @@ static void test_v_check_scalar(autogen::RecipeTestBenchModule & m) {
 }
 
 static void test_v_check_vec(autogen::RecipeTestBenchModule & m) {
+    // regs_rw: a [3]s12 vector with v_type 'f', the v_check is on the value of
+    // the module user, the recipe v_convert_wr "{10-v*10}" gives
+    // raw = 10 - user * 10, so a raw of 30 is the user value -2 and -990 is 100
     auto regs = m.regs_rw_inst();
     CHECK(regs->v_check().has_value());
     CHECK(regs->v_check()->str == REGS_RW_CHECK);
-    CHECK(regs->v_type() == VType::s);
+    CHECK(regs->v_type() == VType::f);
 
-    // every element is checked, the value of the module user is the value of
-    // the register here (no value conversion)
-    regs->write_vec_sint_cached({2, 4, 6});
-    CHECK_THROWS(regs->write_vec_sint_cached({2, 4, 5}));
-    CHECK_THROWS(regs->write_vec_sint_cached({2, 2, 102}));   // > 100
-    CHECK_THROWS(regs->write_vec_sint_cached({-4, 2, 2}));    // < -2
-    CHECK_THROWS(regs->write_idx_sint_cached(0, 3));
-    regs->write_idx_sint_cached(0, 4);
-    CHECK(regs->read_idx_sint_cached(0) == 4);
+    // the *_raw functions take the register value, the check still applies, to
+    // the user value the register value represents
+    regs->write_vec_sint_cached({10, 30, -990});
+    CHECK_THROWS(regs->write_vec_sint_cached({10, 30, 40}));      // user -3, below -2
+    CHECK_THROWS(regs->write_vec_sint_cached({10, 30, -1000}));   // user 101, above 100
+    CHECK_THROWS(regs->write_idx_sint_cached(0, 40));
+    regs->write_idx_sint_cached(0, 5);
+    CHECK(regs->read_idx_sint_cached(0) == 5);
 
-    // a value that fails is printed with the check and asserts
-    regs->write_vec_sint_cached({2, 4, 6});
+    // the functions of the module user convert, the whole vector with
+    // read_vec_converted / write_vec_converted and one element per index. A
+    // *_cached write only touches the cache, so it is read back with *_cached.
+    m.regs_rw_write_cached({0.5, -2.0, 100.0});
+    CHECK(m.regs_rw_read_cached_raw() == (std::vector<sint_t>{5, 30, -990}));
+    const std::vector<skmap_float_t> user = m.regs_rw_read_cached();
+    ASSERT(user.size() == 3);
+    CHECK(user[0] == 0.5);
+    CHECK(user[1] == -2.0);
+    CHECK(user[2] == 100.0);
+    CHECK(m.regs_rw_read_idx_cached(1) == -2.0);
+    m.regs_rw_write_idx_cached(2, 1.5);
+    CHECK(m.regs_rw_read_idx_cached(2) == 1.5);
+    CHECK(regs->read_idx_sint_cached(2) == -5);        // raw = 10 - 1.5 * 10
+    // the v_check is on the value of the module user, the converted functions
+    // check it before they convert
+    CHECK_THROWS(m.regs_rw_write_cached({0.5, -2.0, 101.0}));
+    CHECK_THROWS(m.regs_rw_write_idx_cached(0, 101.0));
+
+    // the round trip of the non cached functions, the regio sees the converted
+    // values of the register, the read gives the user values back
+    m.regs_rw_write({0.5, 1.0, 2.0});
+    CHECK(m.regs_rw_read_raw() == (std::vector<sint_t>{5, 0, -10}));
+    CHECK(m.regs_rw_read() == (std::vector<skmap_float_t>{0.5, 1.0, 2.0}));
+
+    // the printed values are the values of the module user, not the values of
+    // the register
+    m.regs_rw_write_cached({2.5, 0.0, -1.0});
     CHECK(regs->ass_check_cached(Ass::none, nullptr) == Ass::none);
     auto s = regs->str_value_cached();
-    ASSERT(s == REGS_RW_CHECK + " [ 2, 4, 6 ]");
+    ASSERT(s == REGS_RW_CHECK + " [ 2.5, 0, -1 ]");
+
+    // a firmware can write a value that does not pass the check (the raw bytes
+    // bypass it), reading it back asserts, the check is printed with it
+    const std::array<std::byte, 2> raw_bad = {static_cast<std::byte>(0x0A), static_cast<std::byte>(0x0B)}; // s12 -1270 (0xB0A), user value 128
+    regs->write_idx_bytes_cached(0, raw_bad);
+    CHECK(regs->ass_check_cached(Ass::none, nullptr) == Ass::error);
+    ASSERT(regs->str_value_cached() == REGS_RW_CHECK + " [ 128, 0, -1 ]");
+    // leave a value that passes, the other tests look at this module too
+    m.regs_rw_write_idx_cached(0, 2.5);
 }
 
 static void test_v_convert_scalar(autogen::RecipeTestBenchModule & m) {
@@ -169,11 +211,16 @@ static void test_v_convert_scalar(autogen::RecipeTestBenchModule & m) {
 
 // the value conversion works with float_t, the type of a recipe `v_type = "f"`,
 // so a generated module does not have to change when the float width changes.
-// Qualified, this file has `using namespace hdlskel::skmap`, where the
-// unqualified name is also the float_t of <math.h> (see basic_types.hpp).
-using skmap_float_t = hdlskel::skmap::float_t;
+// Qualified, see the skmap_float_t alias above (the float_t of <math.h>).
 static_assert(std::is_same_v<decltype(std::declval<autogen::RecipeTestBenchModule &>().temp_read_cached()), skmap_float_t>);
 static_assert(std::is_same_v<decltype(std::declval<autogen::RecipeTestBenchModule &>().temp_read()), skmap_float_t>);
+// a converted vector gives the float value of every element (a vector that
+// asked Reg::read_converted for it would not even compile, the code generator
+// has to use the RegVec read_vec_converted / write_vec_converted)
+static_assert(std::is_same_v<decltype(std::declval<autogen::RecipeTestBenchModule &>().regs_rw_read_cached()),
+                             std::vector<skmap_float_t>>);
+static_assert(std::is_same_v<decltype(std::declval<autogen::RecipeTestBenchModule &>().regs_rw_read_idx_cached(0)),
+                             skmap_float_t>);
 
 static void test_recipe_values(autogen::RecipeTestBenchModule & m) {
     // A few plain values of the recipe, to be sure the regio layout did not move
